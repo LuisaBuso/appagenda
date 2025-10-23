@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware  # Importa el middleware CORS
 from dotenv import load_dotenv
 
 # Importar routers de cada módulo
+from app.auth.routes import router as auth_router
 
 load_dotenv()
 
@@ -19,9 +20,10 @@ app.add_middleware(
     allow_methods=["*"],  # Permite todos los métodos HTTP
     allow_headers=["*"],  # Permite todos los headers
 )
-# Incluir todos los routers
 @app.get("/")
 async def read_root():
     return {"message": "Bienvenido a la API de Agenda"}
 
+# Incluir todos los routers
+app.include_router(auth_router, prefix="/auth", tags=["Autenticación"])
 

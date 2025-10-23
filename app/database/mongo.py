@@ -12,7 +12,11 @@ if not uri:
 
 client = AsyncIOMotorClient(uri)
 db = client[db_name]
-collection_auth = db["auth_service"]
+collection_user = db["usuario"]
+collection_superadmin = db["super_admin"]
+collection_estilista = db["estilista"]
+collection_admin_sede = db["admin_sede"]
+collection_admin_franquicia = db["admin_franquicia"]
 
 def connect_to_mongo():
     pass
