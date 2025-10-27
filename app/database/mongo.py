@@ -17,6 +17,12 @@ collection_superadmin = db["super_admin"]
 collection_estilista = db["estilista"]
 collection_admin_sede = db["admin_sede"]
 collection_admin_franquicia = db["admin_franquicia"]
+collection_horarios = db["schedules"]
+collection_block = db["block"]
+collection_citas = db["quotes"]
+collection_servicios = db["services"]
+
+
 
 def connect_to_mongo():
     pass

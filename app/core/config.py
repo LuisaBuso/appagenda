@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 
 # Importar routers de cada módulo
 from app.auth.routes import router as auth_router
+from app.scheduling.routes import app_router as scheduling_router
 
 load_dotenv()
 
@@ -25,5 +26,5 @@ async def read_root():
     return {"message": "Bienvenido a la API de Agenda"}
 
 # Incluir todos los routers
-app.include_router(auth_router, prefix="/auth", tags=["Autenticación"])
-
+app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+app.include_router(scheduling_router, prefix="/scheduling")
