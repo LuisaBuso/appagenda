@@ -21,7 +21,7 @@ collection_horarios = db["schedules"]
 collection_block = db["block"]
 collection_citas = db["quotes"]
 collection_servicios = db["services"]
-
+collection_locales = db["locales"]
 
 
 def connect_to_mongo():
