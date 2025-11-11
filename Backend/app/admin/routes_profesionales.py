@@ -3,7 +3,7 @@ from bson import ObjectId
 
 from app.admin.models import Profesional
 from app.auth.routes import get_current_user
-from app.database.mongo import collection_usuarios  # colección donde guardas usuarios
+from app.database.mongo import collection_user  # colección donde guardas usuarios
 from app.database.mongo import collection_locales  # validar que la sede existe
 
 
@@ -35,7 +35,7 @@ async def crear_profesional(
         raise HTTPException(status_code=404, detail="Sede no encontrada")
 
     # ✅ Validar email único
-    existe = await collection_usuarios.find_one({"email": profesional.email})
+    existe = await collection_user.find_one({"email": profesional.email})
     if existe:
         raise HTTPException(status_code=400, detail="El profesional ya está registrado con ese email")
 
@@ -44,7 +44,7 @@ async def crear_profesional(
     data["rol"] = "estilista"
     data["creado_por"] = current_user["email"]
 
-    result = await collection_usuarios.insert_one(data)
+    result = await collection_user.insert_one(data)
 
     return {
         "msg": "Profesional creado exitosamente",
@@ -65,7 +65,7 @@ async def listar_profesionales(
     if current_user["rol"] == "admin_sede":
         query["sede_id"] = current_user["sede_id"]
 
-    profesionales = await collection_usuarios.find(query).to_list(None)
+    profesionales = await collection_user.find(query).to_list(None)
 
     return [profesional_to_dict(p) for p in profesionales]
 
@@ -78,7 +78,7 @@ async def obtener_profesional(
     profesional_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    profesional = await collection_usuarios.find_one({"_id": ObjectId(profesional_id), "rol": "estilista"})
+    profesional = await collection_user.find_one({"_id": ObjectId(profesional_id), "rol": "estilista"})
 
     if not profesional:
         raise HTTPException(status_code=404, detail="Profesional no encontrado")
@@ -100,7 +100,7 @@ async def actualizar_profesional(
 
     update_data = {k: v for k, v in data.dict().items() if v is not None}
 
-    result = await collection_usuarios.update_one(
+    result = await collection_user.update_one(
         {"_id": ObjectId(profesional_id), "rol": "estilista"},
         {"$set": update_data}
     )
@@ -122,7 +122,7 @@ async def eliminar_profesional(
     if current_user["rol"] not in ["super_admin", "admin_franquicia"]:
         raise HTTPException(status_code=403, detail="No autorizado para eliminar profesionales")
 
-    result = await collection_usuarios.delete_one(
+    result = await collection_user.delete_one(
         {"_id": ObjectId(profesional_id), "rol": "estilista"}
     )
 
