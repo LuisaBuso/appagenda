@@ -7,7 +7,7 @@ from app.auth.routes import router as auth_router
 from app.scheduling.routes import app_router as scheduling_router
 from app.admin.routes_locales import router as admin_locales_router
 from app.admin.routes_servicios import router as admin_servicios_router
-from app.admin.routes_profesionales import router as admin_profesionales_route
+from app.admin.routes_profesionales import router as admin_profesionales_router
 from app.inventary.routes import app_router as inventary_router
 
 load_dotenv()
