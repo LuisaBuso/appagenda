@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.clients_service.models import Cliente, NotaCliente
-from app.database.mongo import collection_clientes, collection_citas
+from app.database.mongo import collection_clients, collection_citas
 from app.auth.routes import get_current_user
 from datetime import datetime
 from typing import List
@@ -38,7 +38,7 @@ async def crear_cliente(
     elif cliente.telefono:
         filtro["telefono"] = cliente.telefono
 
-    existing = await collection_clientes.find_one(filtro)
+    existing = await collection_clients.find_one(filtro)
     if existing:
         raise HTTPException(status_code=400, detail="Cliente ya registrado")
 
@@ -46,7 +46,7 @@ async def crear_cliente(
     data["fecha_creacion"] = datetime.now()
     data["creado_por"] = current_user["email"]
 
-    result = await collection_clientes.insert_one(data)
+    result = await collection_clients.insert_one(data)
     data["_id"] = str(result.inserted_id)
 
     return {"msg": "Cliente creado exitosamente", "cliente": data}
@@ -72,7 +72,7 @@ async def listar_clientes(
     if franquicia_id:
         query["franquicia_id"] = franquicia_id
 
-    clientes = await collection_clientes.find(query).to_list(None)
+    clientes = await collection_clients.find(query).to_list(None)
     return [cliente_to_dict(c) for c in clientes]
 
 
@@ -84,7 +84,7 @@ async def obtener_cliente(
     cliente_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    cliente = await collection_clientes.find_one({"_id": ObjectId(cliente_id)})
+    cliente = await collection_clients.find_one({"_id": ObjectId(cliente_id)})
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     return cliente_to_dict(cliente)
@@ -105,7 +105,7 @@ async def editar_cliente(
 
     update_data = {k: v for k, v in cliente_data.dict().items() if v is not None}
 
-    result = await collection_clientes.update_one(
+    result = await collection_clients.update_one(
         {"_id": ObjectId(cliente_id)},
         {"$set": update_data}
     )
@@ -133,7 +133,7 @@ async def agregar_nota_cliente(
     nota_dict["fecha"] = datetime.now()
     nota_dict["autor"] = current_user["email"]
 
-    result = await collection_clientes.update_one(
+    result = await collection_clients.update_one(
         {"_id": ObjectId(cliente_id)},
         {"$push": {"notas_historial": nota_dict}}
     )

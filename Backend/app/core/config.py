@@ -9,6 +9,8 @@ from app.admin.routes_locales import router as admin_locales_router
 from app.admin.routes_servicios import router as admin_servicios_router
 from app.admin.routes_profesionales import router as admin_profesionales_route
 from app.inventary.routes import app_router as inventary_router
+from app.analytics.routes_churn import router as churn_router
+from app.analytics.routes_analytics import router as analytics_router
 from app.database.indexes import create_indexes
 from app.database.mongo import db  
 from app.database.indexes import create_indexes  
@@ -44,6 +46,8 @@ app.include_router(scheduling_router, prefix="/scheduling")
 app.include_router(admin_locales_router)
 app.include_router(admin_servicios_router)
 app.include_router(admin_profesionales_route)
+app.include_router(churn_router)
+app.include_router(analytics_router)
 app.include_router(inventary_router, prefix="/inventary")
 
 
