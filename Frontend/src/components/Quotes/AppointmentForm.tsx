@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, Plus, Clock } from 'lucide-react';
-import { crearCita } from '../Quotes/citasApi'; // Importar desde tu archivo
-import { useAuth } from '../../components/Auth/AuthContext'; // Usar tu AuthContext
+import { crearCita } from '../Quotes/citasApi';
+import { useAuth } from '../../components/Auth/AuthContext';
+import { getEstilistas, Estilista } from '../../components/Professionales/estilistasApi';
+import { getServiciosEstilista, Servicio } from '../../components/Quotes/serviciosApi';
 
-// Interfaces 
+// Interfaces unificadas
 interface Service {
     id: string;
     name: string;
@@ -11,20 +13,16 @@ interface Service {
     price: number;
 }
 
-interface Stylist {
-    id: string;
-    name: string;
-    email: string;
-    avatar?: string;
-}
-
 interface AppointmentSchedulerProps {
-    onClose: () => void;
-    sedeId: string;
+  onClose: () => void;
+  sedeId: string;
+  estilistaId?: string;
+  fechaSeleccionada?: string;
+  horaSeleccionada?: string;
 }
 
-const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({ onClose, sedeId }) => {
-    const { user } = useAuth(); // Usar el contexto de autenticación
+const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({ onClose, sedeId, estilistaId }) => {
+    const { user } = useAuth();
 
     const [currentDate, setCurrentDate] = useState(new Date());
     const [selectedDate, setSelectedDate] = useState<Date | null>(null);
@@ -34,22 +32,89 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({ onClose, se
     const [error, setError] = useState<string | null>(null);
     const [clientSearch, setClientSearch] = useState('');
     const [selectedService, setSelectedService] = useState<Service | null>(null);
-    const [selectedStylist, setSelectedStylist] = useState<Stylist | null>(null);
+    const [selectedStylist, setSelectedStylist] = useState<Estilista | null>(null);
     const [notes, setNotes] = useState('');
 
-    // Datos de ejemplo
-    const services: Service[] = [
+    // Estados para datos dinámicos
+    const [estilistas, setEstilistas] = useState<Estilista[]>([]);
+    const [servicios, setServicios] = useState<Servicio[]>([]);
+    const [loadingEstilistas, setLoadingEstilistas] = useState(false);
+    const [loadingServicios, setLoadingServicios] = useState(false);
+
+    // Cargar estilistas de la sede
+    useEffect(() => {
+        const cargarEstilistas = async () => {
+            if (!user?.access_token) return;
+            
+            setLoadingEstilistas(true);
+            try {
+                const estilistasData = await getEstilistas(user.access_token, sedeId);
+                setEstilistas(estilistasData);
+                
+                // Si hay un estilista pre-seleccionado, seleccionarlo
+                if (estilistaId) {
+                    const estilistaPreseleccionado = estilistasData.find(e => e._id === estilistaId);
+                    if (estilistaPreseleccionado) {
+                        setSelectedStylist(estilistaPreseleccionado);
+                    }
+                }
+            } catch (error) {
+                console.error("Error al cargar estilistas:", error);
+                setError("Error al cargar los estilistas");
+            } finally {
+                setLoadingEstilistas(false);
+            }
+        };
+
+        cargarEstilistas();
+    }, [sedeId, estilistaId, user?.access_token]);
+
+    // Cargar servicios cuando se selecciona un estilista
+    useEffect(() => {
+        const cargarServiciosEstilista = async () => {
+            if (!selectedStylist || !user?.access_token) {
+                setServicios([]);
+                return;
+            }
+
+            setLoadingServicios(true);
+            try {
+                const serviciosData = await getServiciosEstilista(selectedStylist._id, user.access_token);
+                setServicios(serviciosData);
+                setSelectedService(null); // Resetear servicio seleccionado
+            } catch (error) {
+                console.error("Error al cargar servicios:", error);
+                setError("Error al cargar los servicios del estilista");
+                // En caso de error, usar servicios vacíos
+                setServicios([]);
+            } finally {
+                setLoadingServicios(false);
+            }
+        };
+
+        cargarServiciosEstilista();
+    }, [selectedStylist, user?.access_token]);
+
+    // Función para convertir Servicio API a Service del componente
+    const convertirServicio = (servicio: Servicio): Service => ({
+        id: servicio._id,
+        name: servicio.nombre,
+        duration: servicio.duracion,
+        price: servicio.precio
+    });
+
+    // Datos de ejemplo como fallback
+    const serviciosEjemplo: Service[] = [
         { id: 'servicio_1', name: 'Corte Básico', duration: 30, price: 25 },
         { id: 'servicio_2', name: 'Servicio de Color', duration: 120, price: 85 },
         { id: 'servicio_3', name: 'Reflejos', duration: 90, price: 120 },
         { id: 'servicio_4', name: 'Peinado', duration: 45, price: 35 },
     ];
 
-    const stylists: Stylist[] = [
-        { id: 'estilista_1', name: 'Anita', email: 'anita@salon.com' },
-        { id: 'estilista_2', name: 'Sara Smith', email: 'sara@salon.com' },
-        { id: 'estilista_3', name: 'Jane Doe', email: 'jane@salon.com' },
-    ];
+    // Servicios a mostrar (convertir dinámicos o usar ejemplo)
+    const serviciosAMostrar = servicios.length > 0 
+        ? servicios.map(convertirServicio) 
+        : serviciosEjemplo;
 
     const getWeekDays = (date: Date) => {
         const week = [];
@@ -124,7 +189,6 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({ onClose, se
         return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}`;
     };
 
-    // Función para crear cita - USANDO TU citasApi.ts
     const handleScheduleAppointment = async () => {
         if (!selectedService || !selectedStylist || !selectedDate) {
             setError('Por favor completa todos los campos requeridos');
@@ -140,35 +204,29 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({ onClose, se
         setError(null);
 
         try {
-            // Calcular hora fin
             const endTime = calculateEndTime(selectedTime, selectedService.duration);
 
-            // Formatear fecha correctamente para el backend (YYYY-MM-DD)
             const fechaCita = new Date(selectedDate!);
             const [hours, minutes] = selectedTime.split(':').map(Number);
             fechaCita.setHours(hours, minutes, 0, 0);
 
-
-            // Preparar datos para el backend según tu modelo FastAPI
             const citaData = {
                 sede_id: sedeId,
-                cliente_id: 'nuevo_cliente',       // ⚠ reemplazar con ID real si lo tienes
-                estilista_id: selectedStylist!.id, // usar ID, NO email
-                servicio_id: selectedService!.id,
-                fecha: fechaCita.toISOString(),    // datetime completo ISO
-                hora_inicio: selectedTime + ':00', // 'HH:mm:ss'
-                hora_fin: endTime + ':00',         // 'HH:mm:ss'
+                cliente_id: 'nuevo_cliente',
+                estilista_id: selectedStylist._id,
+                servicio_id: selectedService.id,
+                fecha: fechaCita.toISOString(),
+                hora_inicio: selectedTime + ':00',
+                hora_fin: endTime + ':00',
                 estado: 'pendiente'
             };
 
             console.log("Enviando datos al backend:", citaData);
 
-            // Llamar a la API usando tu función importada
             const resultado = await crearCita(citaData, user.access_token);
 
             console.log("Cita creada exitosamente:", resultado);
 
-            // Reset form y cerrar modal
             setClientSearch('');
             setSelectedService(null);
             setSelectedStylist(null);
@@ -218,14 +276,51 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({ onClose, se
                         </div>
 
                         <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Estilista *</label>
+                            <select
+                                value={selectedStylist?._id || ''}
+                                onChange={(e) => {
+                                    const estilista = estilistas.find(s => s._id === e.target.value) || null;
+                                    setSelectedStylist(estilista);
+                                }}
+                                disabled={loadingEstilistas}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white disabled:bg-gray-100"
+                            >
+                                <option value="">Seleccionar estilista...</option>
+                                {loadingEstilistas ? (
+                                    <option value="">Cargando estilistas...</option>
+                                ) : (
+                                    estilistas.map(stylist => (
+                                        <option key={stylist._id} value={stylist._id}>
+                                            {stylist.nombre}
+                                        </option>
+                                    ))
+                                )}
+                            </select>
+                            {estilistas.length === 0 && !loadingEstilistas && (
+                                <div className="mt-1 text-xs text-gray-500">
+                                    No hay estilistas disponibles en esta sede
+                                </div>
+                            )}
+                        </div>
+
+                        <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">Servicio *</label>
                             <select
                                 value={selectedService?.id || ''}
-                                onChange={(e) => setSelectedService(services.find(s => s.id === e.target.value) || null)}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white"
+                                onChange={(e) => setSelectedService(serviciosAMostrar.find(s => s.id === e.target.value) || null)}
+                                disabled={!selectedStylist || loadingServicios}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white disabled:bg-gray-100"
                             >
-                                <option value="">Seleccionar servicio...</option>
-                                {services.map(service => (
+                                <option value="">
+                                    {!selectedStylist 
+                                        ? 'Selecciona un estilista primero' 
+                                        : loadingServicios 
+                                        ? 'Cargando servicios...' 
+                                        : 'Seleccionar servicio...'
+                                    }
+                                </option>
+                                {serviciosAMostrar.map(service => (
                                     <option key={service.id} value={service.id}>
                                         {service.name}
                                     </option>
@@ -236,22 +331,11 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({ onClose, se
                                     Duración: {selectedService.duration}min | ${selectedService.price}
                                 </div>
                             )}
-                        </div>
-
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Estilista *</label>
-                            <select
-                                value={selectedStylist?.id || ''}
-                                onChange={(e) => setSelectedStylist(stylists.find(s => s.id === e.target.value) || null)}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white"
-                            >
-                                <option value="">Seleccionar estilista...</option>
-                                {stylists.map(stylist => (
-                                    <option key={stylist.id} value={stylist.id}>
-                                        {stylist.name}
-                                    </option>
-                                ))}
-                            </select>
+                            {selectedStylist && serviciosAMostrar.length === 0 && !loadingServicios && (
+                                <div className="mt-1 text-xs text-gray-500">
+                                    No hay servicios disponibles para este estilista
+                                </div>
+                            )}
                         </div>
 
                         <div>
@@ -287,7 +371,6 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({ onClose, se
                                                 </div>
                                             </button>
                                         ))}
-
                                     </div>
                                 )}
                             </div>

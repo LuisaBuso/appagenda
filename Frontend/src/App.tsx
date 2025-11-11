@@ -3,23 +3,15 @@ import Dashboard from "./pages/Dashboard/Dashboard";
 import Performance from "./pages/Perfomance/Perfomance";
 import Appointments from "./pages/Appoinment/Appointment";
 import Products from "./pages/Products/Products";
-import BeauxLogin from "./pages/LoginPage/LoginPage"; // tu nuevo login
+import BeauxLogin from "./pages/LoginPage/LoginPage";
 import { AuthProvider, useAuth } from "./components/Auth/AuthContext";
 import "./App.css";
 
 /** 🔒 Componente para proteger rutas privadas */
 const PrivateRoute = ({ children }: { children: JSX.Element }) => {
-  const { user, loading } = useAuth();
+  const { user } = useAuth(); // Solo obtener user, sin loading
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen text-gray-600">
-        <div className="animate-spin h-6 w-6 border-2 border-gray-400 border-t-transparent rounded-full mr-3"></div>
-        Cargando sesión...
-      </div>
-    );
-  }
-
+  // Si no hay usuario, redirigir al login
   if (!user) {
     return <Navigate to="/" replace />;
   }
