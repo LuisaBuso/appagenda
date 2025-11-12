@@ -26,9 +26,9 @@ router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 
 
-# =========================================================
-# 🔑 GET CURRENT USER FROM TOKEN
-# =========================================================
+# ==============================================================
+# ✅ Obtener usuario autenticado (con sede_id y franquicia_id)
+# ==============================================================
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -43,7 +43,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         if not email or not rol:
             raise credentials_exception
 
-        # Buscar usuario según el rol
+        # Buscar usuario según su rol en la colección correspondiente
         role_collections = {
             "super_admin": collection_superadmin,
             "admin_franquicia": collection_admin_franquicia,
@@ -60,7 +60,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         if not user:
             raise credentials_exception
 
-        return {"email": email, "rol": rol, "nombre": user.get("nombre")}
+        # ✅ Devolver también la sede_id y franquicia_id
+        return {
+            "email": email,
+            "rol": rol,
+            "nombre": user.get("nombre"),
+            "sede_id": user.get("sede_id"),
+            "franquicia_id": user.get("franquicia_id"),
+        }
+
     except JWTError:
         raise credentials_exception
 

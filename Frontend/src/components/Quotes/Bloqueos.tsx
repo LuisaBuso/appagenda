@@ -6,6 +6,9 @@ import { useAuth } from "../../components/Auth/AuthContext";
 // ✅ Props para permitir cerrar el modal desde fuera
 interface BloqueosProps {
   onClose: () => void;
+  estilistaId?: string; // ← Agregar esta prop
+  fecha?: string;
+  horaInicio?: string;
 }
 
 const Bloqueos: React.FC<BloqueosProps> = ({ onClose }) => {
