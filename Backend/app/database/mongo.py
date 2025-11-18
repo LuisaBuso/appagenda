@@ -13,9 +13,9 @@ if not uri:
 client = AsyncIOMotorClient(uri)
 db = client[db_name]
 collection_user = db["estilista"]
-collection_superadmin = db["super_admin"]
+collection_superadmin = db["users_auth"]
 collection_estilista = db["estilista"]
-collection_admin_sede = db["admin_sede"]
+collection_admin_sede = db["users_auth"]
 collection_admin_franquicia = db["admin_franquicia"]
 collection_horarios = db["schedules"]
 collection_block = db["block"]

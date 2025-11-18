@@ -135,9 +135,11 @@ async def login(
     username: str = Form(...),
     password: str = Form(...),
 ):
-    email = username.lower()
+    # Normaliza el correo
+    email = username.strip().lower()
+    print("📧 Intentando login con:", email)
 
-    # Buscar usuario en todas las colecciones
+    # Buscar usuario en todas las colecciones por rol
     role_collections = {
         "super_admin": collection_superadmin,
         "admin_franquicia": collection_admin_franquicia,
@@ -148,44 +150,63 @@ async def login(
 
     user = None
     rol = None
+
     for r, collection in role_collections.items():
-        found_user = await collection.find_one({"correo_electronico": email})
+        try:
+            found_user = await collection.find_one({"correo_electronico": email})
+        except Exception as e:
+            print(f"⚠️ Error buscando en {r}: {e}")
+            continue
+
         if found_user:
             user = found_user
             rol = r
             break
 
     if not user:
+        print("❌ Usuario no encontrado:", email)
         raise HTTPException(status_code=400, detail="Usuario no encontrado")
 
     # Verificar contraseña
-    if not pwd_context.verify(password, user["hashed_password"]):
-        raise HTTPException(status_code=400, detail="Contraseña incorrecta")
+    try:
+        if not pwd_context.verify(password, user["hashed_password"]):
+            print("❌ Contraseña incorrecta para:", email)
+            raise HTTPException(status_code=400, detail="Contraseña incorrecta")
+    except Exception as e:
+        print(f"⚠️ Error al verificar contraseña: {e}")
+        raise HTTPException(status_code=500, detail="Error verificando contraseña")
+
+    print(f"✅ Login correcto para {email} con rol {rol}")
 
     # Crear tokens
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     refresh_token_expires = timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
 
-    access_token = create_access_token(
-        data={"sub": user["correo_electronico"], "rol": rol},
-        expires_delta=access_token_expires,
-    )
+    try:
+        access_token = create_access_token(
+            data={"sub": user["correo_electronico"], "rol": rol},
+            expires_delta=access_token_expires,
+        )
+        refresh_token = create_refresh_token(
+            data={"sub": user["correo_electronico"], "rol": rol},
+            expires_delta=refresh_token_expires,
+        )
+    except Exception as e:
+        print("⚠️ Error creando tokens:", e)
+        raise HTTPException(status_code=500, detail="Error generando tokens")
 
-    refresh_token = create_refresh_token(
-        data={"sub": user["correo_electronico"], "rol": rol},
-        expires_delta=refresh_token_expires,
-    )
-
-    # Guardar refresh token en cookie HttpOnly segura
+    # Guardar refresh token en cookie HttpOnly
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=False,  # ⚠️ Poner True si usas HTTPS
-        samesite="None",  # importante para frontend separado
+        secure=False,  # ⚠️ True si usas HTTPS
+        samesite="None",
         max_age=int(refresh_token_expires.total_seconds()),
-        path="/",  # 🔥 necesario para que el navegador la envíe en /auth/refresh
+        path="/",
     )
+
+    print("✅ Tokens generados y cookie configurada")
 
     return TokenResponse(
         access_token=access_token,
@@ -194,7 +215,6 @@ async def login(
         nombre=user.get("nombre"),
         email=user.get("correo_electronico"),
     )
-
 
 
 # =========================================================

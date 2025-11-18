@@ -9,9 +9,9 @@ from app.admin.routes_locales import router as admin_locales_router
 from app.admin.routes_servicios import router as admin_servicios_router
 from app.admin.routes_profesionales import router as admin_profesionales_router
 from app.inventary.routes import app_router as inventary_router
-from app.database.indexes import create_indexes
+# from app.database.indexes import create_indexes
 from app.database.mongo import db  
-from app.database.indexes import create_indexes  
+# from app.database.indexes import create_indexes  
 
 load_dotenv()
 
@@ -33,17 +33,17 @@ async def read_root():
     return {"message": "Bienvenido a la API de Agenda"}
 
 
-@app.on_event("startup")
-async def startup_event():
-    await create_indexes(db)
-    print("ÍNDICES CREADOS EN MONGODB")
+# @app.on_event("startup")
+# async def startup_event():
+#     await create_indexes(db)
+#     print("ÍNDICES CREADOS EN MONGODB")
 
 # Incluir todos los routers
 app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 app.include_router(scheduling_router, prefix="/scheduling")
 app.include_router(admin_locales_router)
 app.include_router(admin_servicios_router)
-app.include_router(admin_profesionales_route)
+app.include_router(admin_profesionales_router)
 app.include_router(inventary_router, prefix="/inventary")
 
 

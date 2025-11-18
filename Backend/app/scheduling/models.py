@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from datetime import datetime, time
+from datetime import datetime, time, date
 from typing import Optional, List
 
 # === SERVICIO ===
@@ -47,11 +47,11 @@ class Bloqueo(BaseModel):
 
 # === CITA ===
 class Cita(BaseModel):
+    sede_id: str
     cliente_id: str
     estilista_id: str
-    sede_id: str
     servicio_id: str
-    fecha: datetime
-    hora_inicio: time
-    hora_fin: time
-    estado: str = "pendiente"  # pendiente | confirmada | asistida | cancelada
+    fecha: date          # ✅ debe ser date
+    hora_inicio: str
+    hora_fin: str
+    estado: str

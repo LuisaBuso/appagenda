@@ -31,45 +31,47 @@ async def generar_id_unico():
 
 
 # ================================================
-# ✅ Crear Local (Sede) — genera unique_id automáticamente
+# ✅ Crear Local (Sede) — con sede_id tipo SD-XXXXX
 # ================================================
 @router.post("/", response_model=dict)
 async def crear_local(
     local: Local,
     current_user: dict = Depends(get_current_user)
 ):
+    # 🔐 Validar permisos
     if current_user["rol"] not in ["super_admin", "admin_franquicia"]:
         raise HTTPException(status_code=403, detail="No autorizado para crear sedes")
 
-    # 🚫 Verificar si ya existe una sede con el mismo nombre o correo
-    existente = await collection_locales.find_one({
-        "$or": [
-            {"nombre": local.nombre},
-            {"email": local.email}
-        ]
-    })
-    if existente:
-        raise HTTPException(status_code=400, detail="Ya existe una sede con ese nombre o correo")
+    # 🆔 Generar sede_id tipo SD-89958
+    import random
+    random_number = random.randint(10000, 99999)
+    sede_id = f"SD-{random_number}"
 
-    # ⚙️ Generar unique_id incremental tipo 001, 002, 003...
-    ultimo_local = await collection_locales.find_one(sort=[("unique_id", -1)])
-    if not ultimo_local:
-        unique_id = "001"
-    else:
-        ultimo_id = int(ultimo_local["unique_id"])
-        unique_id = str(ultimo_id + 1).zfill(3)
+    # ⏳ Fecha actual
+    from datetime import datetime
+    fecha_actual = datetime.utcnow()
 
-    # 📦 Insertar sede con su nuevo unique_id
-    data = local.dict(exclude_unset=True)
-    data["unique_id"] = unique_id
-    data["created_by"] = current_user["email"]
+    # 📦 Construir documento a insertar
+    data = {
+        "nombre": local.nombre,
+        "direccion": local.direccion,
+        "informacion_adicional": local.informacion_adicional,
+        "zona_horaria": local.zona_horaria,
+        "telefono": local.telefono,
+        "email": local.email,
+        "sede_id": sede_id,
+        "fecha_creacion": fecha_actual,
+        "creado_por": current_user["email"],
+        "activa": True,
+    }
 
+    # 💾 Insertar en Mongo
     result = await collection_locales.insert_one(data)
 
     return {
         "msg": "✅ Local creado exitosamente",
-        "unique_id": unique_id,
-        "mongo_id": str(result.inserted_id)
+        "mongo_id": str(result.inserted_id),
+        "sede_id": sede_id
     }
 
 
@@ -86,24 +88,23 @@ async def list_locals(current_user: dict = Depends(get_current_user)):
 
     return [local_to_dict(l) for l in locales]
 
-
 # ================================================
-# 🔍 Get Local by unique_id
+# 🔍 Get Local by sede_id
 # ================================================
-@router.get("/{unique_id}", response_model=dict)
-async def get_local(unique_id: str, current_user: dict = Depends(get_current_user)):
-    local = await collection_locales.find_one({"unique_id": unique_id})
+@router.get("/{sede_id}", response_model=dict)
+async def get_local(sede_id: str, current_user: dict = Depends(get_current_user)):
+    local = await collection_locales.find_one({"sede_id": sede_id})
     if not local:
         raise HTTPException(status_code=404, detail="Local not found")
     return local_to_dict(local)
 
 
 # ================================================
-# ✏️ Update Local by unique_id
+# ✏️ Update Local by sede_id
 # ================================================
-@router.put("/{unique_id}", response_model=dict)
+@router.put("/{sede_id}", response_model=dict)
 async def update_local(
-    unique_id: str,
+    sede_id: str,
     data: Local,
     current_user: dict = Depends(get_current_user)
 ):
@@ -113,29 +114,33 @@ async def update_local(
     update_data = {k: v for k, v in data.dict().items() if v is not None}
 
     result = await collection_locales.update_one(
-        {"unique_id": unique_id},
+        {"sede_id": sede_id},
         {"$set": update_data}
     )
 
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Local not found")
 
-    return {"msg": "✅ Local updated successfully"}
+    # 🔍 Obtener el local actualizado
+    updated_local = await collection_locales.find_one({"sede_id": sede_id})
+
+    return {
+        "msg": "✅ Local updated successfully",
+        "local": local_to_dict(updated_local)
+    }
 
 
 # ================================================
-# ❌ Delete Local by unique_id
+# ❌ Delete Local by sede_id
 # ================================================
-@router.delete("/{unique_id}", response_model=dict)
-async def delete_local(unique_id: str, current_user: dict = Depends(get_current_user)):
+@router.delete("/{sede_id}", response_model=dict)
+async def delete_local(sede_id: str, current_user: dict = Depends(get_current_user)):
     if current_user["rol"] != "super_admin":
         raise HTTPException(status_code=403, detail="Only super_admin can delete branches")
 
-    result = await collection_locales.delete_one({"unique_id": unique_id})
+    result = await collection_locales.delete_one({"sede_id": sede_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Local not found")
 
     return {"msg": "🗑️ Local deleted successfully"}
-
-
 
