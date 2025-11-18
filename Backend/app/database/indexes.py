@@ -1,4 +1,4 @@
-from motor.motor_asyncio import AsyncIOMotorDatabase
+"""from motor.motor_asyncio import AsyncIOMotorDatabase
 from auth  import logger
 
 async def create_indexes(db: AsyncIOMotorDatabase):
@@ -33,4 +33,4 @@ async def create_indexes(db: AsyncIOMotorDatabase):
         unique=True
     )
 
-    logger.info("Todos los índices creados correctamente")
+    logger.info("Todos los índices creados correctamente")"""

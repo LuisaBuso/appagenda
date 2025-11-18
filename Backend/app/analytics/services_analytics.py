@@ -1,6 +1,5 @@
 from app.database.mongo import collection_citas, collection_clients
 from datetime import timedelta, datetime
-from bson import ObjectId
 from typing import Optional, Dict, List, Set
 import logging
 
@@ -45,11 +44,14 @@ async def get_clientes_periodo(
     """
     Obtiene clientes únicos que tuvieron citas en un período.
     OPTIMIZADO: Una sola query con agregación.
+    
+    ✅ ADAPTADO: Ahora maneja cliente_id como string (CL-00247)
     """
     try:
         match_query = {
             "fecha": {"$gte": start_date, "$lte": end_date},
-            "estado": {"$ne": "cancelada"}
+            "estado": {"$ne": "cancelada"},
+            "cliente_id": {"$exists": True, "$ne": None}  # Asegurar que existe
         }
         if sede_id:
             match_query["sede_id"] = sede_id
@@ -61,7 +63,15 @@ async def get_clientes_periodo(
         ]
 
         result = await collection_citas.aggregate(pipeline).to_list(None)
-        return set(str(doc["cliente_id"]) for doc in result if doc.get("cliente_id"))
+        
+        # ✅ CAMBIO: Ya no convertimos a string con str(), porque cliente_id YA es string
+        clientes_ids = set()
+        for doc in result:
+            cliente_id = doc.get("cliente_id")
+            if cliente_id and isinstance(cliente_id, str):
+                clientes_ids.add(cliente_id)
+        
+        return clientes_ids
     
     except Exception as e:
         logger.error(f"Error en get_clientes_periodo: {e}")
@@ -75,6 +85,8 @@ async def get_primeras_citas_clientes(
     """
     Obtiene la primera cita de cada cliente.
     OPTIMIZADO: UNA SOLA QUERY en lugar de N queries.
+    
+    ✅ ADAPTADO: cliente_id ya es string (CL-00247)
     """
     try:
         match_query = {
@@ -94,7 +106,9 @@ async def get_primeras_citas_clientes(
         ]
 
         result = await collection_citas.aggregate(pipeline).to_list(None)
-        return {str(doc["_id"]): doc["primera_cita"] for doc in result}
+        
+        # ✅ CAMBIO: Ya no necesitamos str() porque _id ya es string
+        return {doc["_id"]: doc["primera_cita"] for doc in result}
     
     except Exception as e:
         logger.error(f"Error en get_primeras_citas_clientes: {e}")
@@ -108,6 +122,8 @@ async def get_ultimas_citas_clientes(
     """
     Obtiene la última cita de cada cliente.
     OPTIMIZADO: UNA SOLA QUERY con agregación.
+    
+    ✅ ADAPTADO: cliente_id ya es string (CL-00247)
     """
     try:
         match_query = {
@@ -127,7 +143,9 @@ async def get_ultimas_citas_clientes(
         ]
 
         result = await collection_citas.aggregate(pipeline).to_list(None)
-        return {str(doc["_id"]): doc["ultima_cita"] for doc in result}
+        
+        # ✅ CAMBIO: Ya no necesitamos str() porque _id ya es string
+        return {doc["_id"]: doc["ultima_cita"] for doc in result}
     
     except Exception as e:
         logger.error(f"Error en get_ultimas_citas_clientes: {e}")
@@ -142,6 +160,8 @@ async def calcular_nuevos_clientes(
     """
     Identifica clientes nuevos (primera cita en el período).
     OPTIMIZADO: Una query en lugar de N queries.
+    
+    ✅ ADAPTADO: Maneja IDs como strings
     """
     try:
         primeras_citas = await get_primeras_citas_clientes(clientes_actuales, sede_id)
@@ -163,7 +183,11 @@ async def get_citas_periodo(
     end_date: datetime,
     sede_id: Optional[str] = None
 ) -> List[Dict]:
-    """Obtiene todas las citas de un período."""
+    """
+    Obtiene todas las citas de un período.
+    
+    ✅ ADAPTADO: Sin cambios necesarios, solo documenta que cliente_id es string
+    """
     try:
         query = {
             "fecha": {"$gte": start_date, "$lte": end_date},
@@ -193,6 +217,8 @@ async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=Non
     """
     Calcula KPIs de clientes para un período específico
     
+    ✅ ADAPTADO: Funciona con IDs cortos (CL-00247) en lugar de ObjectIds
+    
     Args:
         start_date: Fecha inicio del período (ej: 2024-03-01)
         end_date: Fecha fin del período (ej: 2024-03-07)
@@ -218,7 +244,13 @@ async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=Non
     try:
         # ========= PERÍODO ACTUAL =========
         citas_actuales = await get_citas_periodo(start_date, end_date, sede_id)
-        clientes_actuales = set(str(c["cliente_id"]) for c in citas_actuales if c.get("cliente_id"))
+        
+        # ✅ CAMBIO: cliente_id ya es string, no necesitamos conversión
+        clientes_actuales = set()
+        for c in citas_actuales:
+            cliente_id = c.get("cliente_id")
+            if cliente_id and isinstance(cliente_id, str):
+                clientes_actuales.add(cliente_id)
         
         # ========= PERÍODO ANTERIOR =========
         dias_diferencia = (end_date - start_date).days + 1
@@ -226,7 +258,13 @@ async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=Non
         end_anterior = start_date - timedelta(days=1)
         
         citas_anteriores = await get_citas_periodo(start_anterior, end_anterior, sede_id)
-        clientes_anteriores = set(str(c["cliente_id"]) for c in citas_anteriores if c.get("cliente_id"))
+        
+        # ✅ CAMBIO: cliente_id ya es string
+        clientes_anteriores = set()
+        for c in citas_anteriores:
+            cliente_id = c.get("cliente_id")
+            if cliente_id and isinstance(cliente_id, str):
+                clientes_anteriores.add(cliente_id)
         
         # ========= 1. NUEVOS CLIENTES =========
         nuevos_actuales = await calcular_nuevos_clientes(clientes_actuales, start_date, sede_id)
@@ -268,7 +306,13 @@ async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=Non
         end_muy_anterior = end_anterior - timedelta(days=dias_diferencia)
         
         citas_muy_anteriores = await get_citas_periodo(start_muy_anterior, end_muy_anterior, sede_id)
-        clientes_muy_anteriores = set(str(c["cliente_id"]) for c in citas_muy_anteriores if c.get("cliente_id"))
+        
+        # ✅ CAMBIO: cliente_id ya es string
+        clientes_muy_anteriores = set()
+        for c in citas_muy_anteriores:
+            cliente_id = c.get("cliente_id")
+            if cliente_id and isinstance(cliente_id, str):
+                clientes_muy_anteriores.add(cliente_id)
         
         clientes_no_regresaron_anterior = clientes_muy_anteriores - clientes_anteriores
         
@@ -317,10 +361,12 @@ async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=Non
         # Guardar en caché
         set_cache(cache_key, result)
         
+        logger.info(f"✅ KPIs calculados: {len(clientes_actuales)} clientes, {len(nuevos_actuales)} nuevos")
+        
         return result
     
     except Exception as e:
-        logger.error(f"Error en get_kpi_overview: {e}")
+        logger.error(f"Error en get_kpi_overview: {e}", exc_info=True)
         # Retornar valores por defecto en caso de error
         return {
             "nuevos_clientes": {"valor": 0, "crecimiento": "0%"},

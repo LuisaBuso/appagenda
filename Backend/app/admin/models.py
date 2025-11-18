@@ -22,7 +22,8 @@ class Profesional(BaseModel):
     nombre: str
     email: EmailStr
     especialidades: Optional[List[str]] = Field(default_factory=list, description="Lista de unique_id de servicios")
-    activo: bool = True 
+    activo: bool = True
+    comision: Optional[float] = None  # porcentaje de comisión
 
 # ============================================
 # 💅 MODELO: Servicio (Administración)

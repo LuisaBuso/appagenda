@@ -1,6 +1,8 @@
 """
 Routes para análisis de Churn de clientes
 Optimizado con agregaciones y mejor manejo de errores
+
+✅ ADAPTADO: Funciona con IDs cortos (CL-00247, CT-12345, etc.)
 """
 from fastapi import APIRouter, Response, Query, HTTPException
 from datetime import datetime, timedelta
@@ -9,7 +11,6 @@ import pandas as pd
 from io import BytesIO
 import logging
 
-from bson import ObjectId
 from app.database.mongo import collection_clients, collection_citas
 
 logger = logging.getLogger(__name__)
@@ -29,9 +30,14 @@ async def get_clientes_activos_periodo(
     """
     Obtiene clientes únicos que tuvieron citas en un período.
     Usa agregación en lugar de iterar sobre todas las citas.
+    
+    ✅ ADAPTADO: cliente_id ya es string (CL-00247)
     """
     try:
-        match_query = {"estado": {"$ne": "cancelada"}}
+        match_query = {
+            "estado": {"$ne": "cancelada"},
+            "cliente_id": {"$exists": True, "$ne": None}  # Asegurar que existe
+        }
         
         if sede_id:
             match_query["sede_id"] = sede_id
@@ -46,7 +52,15 @@ async def get_clientes_activos_periodo(
         ]
         
         result = await collection_citas.aggregate(pipeline).to_list(None)
-        return [str(doc["cliente_id"]) for doc in result if doc.get("cliente_id")]
+        
+        # ✅ CAMBIO: Ya no convertimos a string, solo validamos que sea string
+        clientes_ids = []
+        for doc in result:
+            cliente_id = doc.get("cliente_id")
+            if cliente_id and isinstance(cliente_id, str):
+                clientes_ids.append(cliente_id)
+        
+        return clientes_ids
     
     except Exception as e:
         logger.error(f"Error en get_clientes_activos_periodo: {e}")
@@ -60,6 +74,8 @@ async def get_ultima_visita_clientes(
     """
     Obtiene la última visita de cada cliente.
     UNA SOLA QUERY con agregación en lugar de N queries.
+    
+    ✅ ADAPTADO: cliente_id ya es string (CL-00247)
     """
     try:
         match_query = {
@@ -79,7 +95,9 @@ async def get_ultima_visita_clientes(
         ]
         
         result = await collection_citas.aggregate(pipeline).to_list(None)
-        return {str(doc["_id"]): doc["ultima_visita"] for doc in result}
+        
+        # ✅ CAMBIO: _id ya es string, no necesitamos conversión
+        return {doc["_id"]: doc["ultima_visita"] for doc in result}
     
     except Exception as e:
         logger.error(f"Error en get_ultima_visita_clientes: {e}")
@@ -94,6 +112,8 @@ async def verificar_visitas_futuras(
     """
     Verifica si los clientes tienen visitas posteriores a una fecha.
     UNA SOLA QUERY con agregación.
+    
+    ✅ ADAPTADO: cliente_id ya es string (CL-00247)
     """
     try:
         match_query = {
@@ -111,7 +131,9 @@ async def verificar_visitas_futuras(
         ]
         
         result = await collection_citas.aggregate(pipeline).to_list(None)
-        clientes_con_visitas = set(str(doc["cliente_id"]) for doc in result)
+        
+        # ✅ CAMBIO: Ya no convertimos a string
+        clientes_con_visitas = set(doc["cliente_id"] for doc in result)
         
         return {cid: cid in clientes_con_visitas for cid in clientes_ids}
     
@@ -123,27 +145,52 @@ async def verificar_visitas_futuras(
 async def get_datos_clientes_batch(clientes_ids: List[str]) -> Dict[str, Dict]:
     """
     Obtiene datos de múltiples clientes en UNA SOLA QUERY.
+    
+    ✅ ADAPTADO: Ahora busca por cliente_id (string) en lugar de _id (ObjectId)
+    Los clientes ahora tienen campo cliente_id = "CL-00247"
     """
     try:
-        # Convertir IDs
-        object_ids = []
-        for cid in clientes_ids:
-            try:
-                if len(cid) == 24:  # ObjectId válido
-                    object_ids.append(ObjectId(cid))
-                else:
-                    object_ids.append(cid)
-            except:
-                object_ids.append(cid)
-        
+        # ✅ CAMBIO CRÍTICO: Buscar por campo cliente_id en lugar de _id
+        # Asumiendo que la colección clients tiene un campo cliente_id con el ID corto
         clientes = await collection_clients.find(
-            {"_id": {"$in": object_ids}}
+            {"cliente_id": {"$in": clientes_ids}}
         ).to_list(None)
         
-        return {str(c["_id"]): c for c in clientes}
+        # Crear diccionario usando cliente_id como clave
+        return {c["cliente_id"]: c for c in clientes if c.get("cliente_id")}
     
     except Exception as e:
         logger.error(f"Error en get_datos_clientes_batch: {e}")
+        
+        # ⚠️ FALLBACK: Si falla, intentar buscar por _id (compatibilidad con datos antiguos)
+        try:
+            logger.warning("Intentando fallback con búsqueda por _id...")
+            from bson import ObjectId
+            
+            # Intentar convertir IDs a ObjectId para datos legacy
+            object_ids = []
+            for cid in clientes_ids:
+                try:
+                    if len(cid) == 24:  # Posible ObjectId
+                        object_ids.append(ObjectId(cid))
+                except:
+                    pass
+            
+            if object_ids:
+                clientes = await collection_clients.find(
+                    {"_id": {"$in": object_ids}}
+                ).to_list(None)
+                
+                # Retornar usando cliente_id si existe, sino _id
+                result = {}
+                for c in clientes:
+                    key = c.get("cliente_id") or str(c.get("_id"))
+                    result[key] = c
+                
+                return result
+        except Exception as fallback_error:
+            logger.error(f"Error en fallback de get_datos_clientes_batch: {fallback_error}")
+        
         return {}
 
 
@@ -158,6 +205,8 @@ async def obtener_churn_clientes(
 ):
     """
     Obtiene lista de clientes en riesgo de abandono (churn).
+    
+    ✅ ADAPTADO: Funciona con IDs cortos (CL-00247)
     
     Un cliente está en churn si:
     - Su última visita fue hace más de CHURN_DAYS (60 días)
@@ -209,6 +258,8 @@ async def obtener_churn_clientes(
                 "mensaje": "No hay clientes en el rango especificado"
             }
         
+        logger.info(f"📊 Analizando churn de {len(clientes_ids)} clientes...")
+        
         # ✅ PASO 2: Obtener última visita de todos los clientes (UNA QUERY)
         ultimas_visitas = await get_ultima_visita_clientes(clientes_ids, sede_id)
         
@@ -232,11 +283,14 @@ async def obtener_churn_clientes(
                     "sede_id": sede_id,
                     "rango_fechas": f"{start_date} a {end_date}" if start_date and end_date else "Todos los registros",
                     "dias_churn": CHURN_DAYS
-                }
+                },
+                "mensaje": "No hay clientes en churn"
             }
         
-        # ✅ PASO 4: Verificar si tienen visitas futuras (UNA QUERY)
-        # Usamos la última visita como fecha de corte
+        logger.info(f"⚠️ {len(clientes_candidatos_churn)} clientes candidatos a churn")
+        
+        # ✅ PASO 4: Verificar si tienen visitas futuras
+        # Para cada cliente, verificamos individualmente (optimización pendiente)
         tienen_visitas_futuras = {}
         for cliente_id in clientes_candidatos_churn:
             ultima = ultimas_visitas[cliente_id]
@@ -265,8 +319,11 @@ async def obtener_churn_clientes(
                     "sede_id": sede_id,
                     "rango_fechas": f"{start_date} a {end_date}" if start_date and end_date else "Todos los registros",
                     "dias_churn": CHURN_DAYS
-                }
+                },
+                "mensaje": "Todos los clientes tienen visitas futuras programadas"
             }
+        
+        logger.info(f"🔴 {len(clientes_en_churn)} clientes en churn real")
         
         # ✅ PASO 5: Obtener datos de clientes en batch (UNA QUERY)
         clientes_data_map = await get_datos_clientes_batch(clientes_en_churn)
@@ -278,7 +335,18 @@ async def obtener_churn_clientes(
             cliente_data = clientes_data_map.get(cliente_id)
             
             if not cliente_data:
-                logger.warning(f"Cliente {cliente_id} no encontrado en BD")
+                logger.warning(f"⚠️ Cliente {cliente_id} no encontrado en BD de clientes")
+                # Agregar con datos básicos aunque no encontremos el registro completo
+                clientes_perdidos.append({
+                    "cliente_id": cliente_id,
+                    "nombre": "Desconocido",
+                    "correo": "N/A",
+                    "telefono": "N/A",
+                    "sede_id": sede_id or "N/A",
+                    "ultima_visita": ultimas_visitas[cliente_id].strftime("%Y-%m-%d"),
+                    "dias_inactivo": (hoy - ultimas_visitas[cliente_id]).days,
+                    "nota": "Cliente no encontrado en base de datos"
+                })
                 continue
             
             ultima_visita = ultimas_visitas[cliente_id]
@@ -296,6 +364,8 @@ async def obtener_churn_clientes(
         
         # Ordenar por días de inactividad (más críticos primero)
         clientes_perdidos.sort(key=lambda x: x["dias_inactivo"], reverse=True)
+        
+        logger.info(f"✅ Análisis de churn completado: {len(clientes_perdidos)} clientes en riesgo")
         
         # ✅ PASO 7: Exportar a Excel si se solicita
         if export:
@@ -333,7 +403,7 @@ async def obtener_churn_clientes(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error en obtener_churn_clientes: {e}")
+        logger.error(f"❌ Error en obtener_churn_clientes: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Error al obtener clientes en churn: {str(e)}"
