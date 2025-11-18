@@ -11,7 +11,6 @@ class UserBase(BaseModel):
     nombre: str
     correo_electronico: EmailStr
     rol: str
-    franquicia_id: Optional[str] = None
     sede_id: Optional[str] = None
     activo: bool = True
 
@@ -36,7 +35,6 @@ class TokenResponse(BaseModel):
     rol: str
     nombre: str
     email: str
-    franquicia_id: Optional[str] = None
     sede_id: Optional[str] = None
 
 

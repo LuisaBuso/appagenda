@@ -1,6 +1,9 @@
 """
 Routes para Dashboard de Analytics
 Optimizado con validaciones y manejo de errores
+
+✅ REVISADO: No necesita cambios para IDs cortos
+Este archivo solo orquesta llamadas a services_analytics y routes_churn
 """
 from fastapi import APIRouter, Query, HTTPException
 from datetime import datetime, timedelta
@@ -18,6 +21,8 @@ router = APIRouter(prefix="/analytics", tags=["Analytics Dashboard"])
 def get_date_range(period: str) -> Tuple[datetime, datetime]:
     """
     Calcula el rango de fechas según el período solicitado.
+    
+    ✅ COMPATIBLE: No depende de IDs, solo calcula fechas
     
     Args:
         period: "today", "week", "month"
@@ -52,6 +57,9 @@ async def analytics_dashboard(
     """
     Dashboard consolidado con KPIs y churn para períodos predefinidos.
     
+    ✅ COMPATIBLE: Funciona con IDs cortos sin cambios
+    Las funciones subyacentes ya están adaptadas
+    
     Períodos disponibles:
     - today: Día actual (00:00 a 23:59 de hoy)
     - week: Semana actual (lunes a hoy)
@@ -73,17 +81,26 @@ async def analytics_dashboard(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         
-        logger.info(f"Dashboard solicitado - Period: {period}, Sede: {sede_id}, Range: {start_date} to {end_date}")
+        logger.info(
+            f"📊 Dashboard solicitado - Period: {period}, "
+            f"Sede: {sede_id or 'TODAS'}, "
+            f"Range: {start_date.date()} to {end_date.date()}"
+        )
         
-        # Obtener KPIs (usa caché si está disponible)
+        # ✅ Obtener KPIs (ya adaptado para IDs cortos)
         kpis = await get_kpi_overview(start_date, end_date, sede_id)
         
-        # Obtener churn actual (sin exportar, solo JSON)
+        # ✅ Obtener churn actual (ya adaptado para IDs cortos)
         churn_response = await obtener_churn_clientes(
             export=False,
             sede_id=sede_id,
             start_date=None,  # Churn actual sin filtro de fechas
             end_date=None
+        )
+        
+        logger.info(
+            f"✅ Dashboard generado - KPIs calculados, "
+            f"Churn: {churn_response.get('total_churn', 0)} clientes"
         )
         
         return {
@@ -101,7 +118,7 @@ async def analytics_dashboard(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error en analytics_dashboard: {e}", exc_info=True)
+        logger.error(f"❌ Error en analytics_dashboard: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Error al generar dashboard: {str(e)}"

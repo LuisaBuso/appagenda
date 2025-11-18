@@ -27,7 +27,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 
 
 # =========================================================
-# 🔑 GET CURRENT USER FROM TOKEN
+# 🔑 GET CURRENT USER FROM TOKEN (CORREGIDO)
 # =========================================================
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
@@ -60,7 +60,14 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         if not user:
             raise credentials_exception
 
-        return {"email": email, "rol": rol, "nombre": user.get("nombre")}
+        # ⭐ RETORNAR SOLO con rol y sede_id (sin franquicia_id)
+        return {
+            "email": email,
+            "rol": rol,
+            "nombre": user.get("nombre"),
+            "sede_id": user.get("sede_id"),    # ⭐ Para admin_sede
+            "user_id": str(user.get("_id"))    # ⭐ Para validaciones
+        }
     except JWTError:
         raise credentials_exception
 
@@ -74,18 +81,23 @@ async def create_user(
     correo_electronico: str = Form(...),
     password: str = Form(...),
     rol: str = Form(...),
-    franquicia_id: str = Form(None),
     sede_id: str = Form(None),
     current_user: dict = Depends(get_current_user)
 ):
-    # Solo super_admin puede crear usuarios
-    if current_user["rol"] != "super_admin":
+    # Solo super_admin y admin_sede pueden crear usuarios
+    if current_user["rol"] not in ["super_admin", "admin_sede"]:
         raise HTTPException(status_code=403, detail="No autorizado para crear usuarios")
 
     # Verificar rol válido
     valid_roles = ["super_admin", "admin_franquicia", "admin_sede", "estilista", "usuario"]
     if rol not in valid_roles:
         raise HTTPException(status_code=400, detail="Rol inválido")
+
+    # 🔒 Forzar la sede según el creador
+    if current_user["rol"] == "admin_sede":
+        sede_id = current_user["sede_id"]  # 🚀 hereda automáticamente
+    elif current_user["rol"] == "super_admin" and not sede_id:
+        sede_id = None  # super_admin puede crear sin sede
 
     # Seleccionar la colección correcta según rol
     role_collections = {
@@ -97,25 +109,34 @@ async def create_user(
     }
     collection = role_collections[rol]
 
+    # Validar duplicado
     existing_user = await collection.find_one({"correo_electronico": correo_electronico.lower()})
     if existing_user:
         raise HTTPException(status_code=400, detail="El usuario ya existe")
 
+    # Encriptar contraseña
     hashed_password = pwd_context.hash(password)
+
     nuevo_usuario = {
         "nombre": nombre,
         "correo_electronico": correo_electronico.lower(),
         "hashed_password": hashed_password,
         "rol": rol,
-        "franquicia_id": franquicia_id,
-        "sede_id": sede_id,
+        "sede_id": sede_id,  # 🔥 ahora correcto y seguro
         "fecha_creacion": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "activo": True
+        "activo": True,
+        "creado_por": current_user["email"],
     }
 
     await collection.insert_one(nuevo_usuario)
 
-    return {"msg": "Usuario creado exitosamente", "rol": rol, "correo": correo_electronico}
+    return {
+        "msg": "✅ Usuario creado exitosamente",
+        "rol": rol,
+        "correo": correo_electronico,
+        "sede_id": sede_id,
+        "creado_por": current_user["email"],
+    }
 
 
 # =========================================================
@@ -132,7 +153,6 @@ async def login(
     # Buscar usuario en todas las colecciones
     role_collections = {
         "super_admin": collection_superadmin,
-        "admin_franquicia": collection_admin_franquicia,
         "admin_sede": collection_admin_sede,
         "estilista": collection_estilista,
         "usuario": collection_user,
@@ -381,6 +401,3 @@ async def refresh_token_endpoint(response: Response, refresh_token: str = Cookie
 async def logout(response: Response):
     response.delete_cookie("refresh_token")
     return {"msg": "Sesión cerrada correctamente"}
-
-
-    

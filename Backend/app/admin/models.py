@@ -1,5 +1,6 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
+from datetime import datetime
 
 
 # ==========================
@@ -20,14 +21,26 @@ class Local(BaseModel):
 class Profesional(BaseModel):
     nombre: str
     email: EmailStr
-    sede_id: str  # relación con Local
-
+    especialidades: Optional[List[str]] = Field(default_factory=list, description="Lista de unique_id de servicios")
+    activo: bool = True
+    comision: Optional[float] = None  # porcentaje de comisión
 
 # ============================================
 # 💅 MODELO: Servicio (Administración)
 # ============================================
 class ServicioAdmin(BaseModel):
-    nombre: str
-    precio: float
-    duracion_minutos: int
-    categoria: Optional[str] = None  # Ej: Corte, Uñas, Color, Peinado
+    nombre: str = Field(..., description="Nombre del servicio, ej: Corte de Caballero")
+    duracion_minutos: int = Field(..., description="Duración en minutos del servicio")
+    precio: float = Field(..., description="Precio del servicio")
+    comision_estilista: Optional[float] = Field(None, description="Comisión asignada al estilista")
+    categoria: Optional[str] = Field(None, description="Categoría del servicio, ej: corte, color, peinado")
+    requiere_producto: bool = Field(default=False, description="Indica si el servicio requiere productos")
+    activo: bool = Field(default=True, description="Indica si el servicio está activo")
+
+    # IDs relacionales (por unique_id)
+    sede_id: Optional[str] = Field(None, description="Unique ID de la sede (si aplica)")
+
+    # Auditoría
+    creado_por: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None

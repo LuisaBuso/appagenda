@@ -1,6 +1,9 @@
 """
 Routes principales para Analytics
 Optimizado con validaciones, manejo de errores y seguridad
+
+✅ REVISADO: No necesita cambios para IDs cortos
+Este archivo solo valida permisos y llama a services_analytics.py
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from datetime import datetime
@@ -25,9 +28,11 @@ async def analytics_overview(
     """
     Obtiene KPIs generales para un rango de fechas personalizado.
     
+    ✅ COMPATIBLE: Funciona con IDs cortos sin cambios
+    Los IDs se manejan en services_analytics.py
+    
     Requiere autenticación y uno de los siguientes roles:
     - admin_sede: Puede ver KPIs de su sede
-    - admin_franquicia: Puede ver KPIs de todas las sedes de su franquicia
     - super_admin: Puede ver KPIs de todo el sistema
     
     Parámetros:
@@ -104,13 +109,14 @@ async def analytics_overview(
         
         # ========= LOGGING =========
         logger.info(
-            f"Analytics overview - User: {current_user.get('username')}, "
+            f"📊 Analytics overview - User: {current_user.get('username')}, "
             f"Role: {current_user.get('rol')}, "
-            f"Sede: {sede_id}, "
+            f"Sede: {sede_id or 'TODAS'}, "
             f"Range: {start_date} to {end_date}"
         )
         
         # ========= OBTENER KPIs =========
+        # ✅ Esta función ya está adaptada para IDs cortos
         kpis = await get_kpi_overview(start, end, sede_id)
         
         return {
@@ -135,7 +141,7 @@ async def analytics_overview(
     except Exception as e:
         # Capturar cualquier otro error no esperado
         logger.error(
-            f"Error inesperado en analytics_overview: {str(e)}",
+            f"❌ Error inesperado en analytics_overview: {str(e)}",
             exc_info=True
         )
         raise HTTPException(
