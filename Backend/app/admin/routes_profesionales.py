@@ -13,7 +13,6 @@ from app.id_generator.generator import generar_id, validar_id  # ⭐ Generador d
 
 router = APIRouter(prefix="/admin/profesionales", tags=["Admin - Profesionales"])
 
-
 # ===================================================
 # Helper: convertir ObjectId a string
 # ===================================================

@@ -2,7 +2,6 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
 from datetime import datetime
 
-
 # ==========================
 # 📍 MODELO: Local / Sede
 # ==========================
@@ -13,6 +12,7 @@ class Local(BaseModel):
     zona_horaria: str
     telefono: Optional[str] = None
     email: Optional[EmailStr] = None
+
 
 
 # =====================================================
@@ -38,6 +38,7 @@ class ServicioAdmin(BaseModel):
     activo: bool = Field(default=True, description="Indica si el servicio está activo")
 
     # IDs relacionales (por unique_id)
+    franquicia_id: Optional[str] = Field(None, description="Unique ID de la franquicia (si aplica)")
     sede_id: Optional[str] = Field(None, description="Unique ID de la sede (si aplica)")
 
     # Auditoría

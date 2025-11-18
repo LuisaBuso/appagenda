@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Optional
 import logging
 
+from fastapi import APIRouter, HTTPException, Depends
 from app.admin.models import Local
 from app.database.mongo import collection_locales
 from app.auth.routes import get_current_user
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/admin/locales", tags=["Admin - Locales"])
 
 
 # ================================================
-# Helper: Convertir ObjectId a string
+# Helper: Convertir ObjectId a string y formatear
 # ================================================
 def local_to_dict(local: dict) -> dict:
     """Convierte local de MongoDB a dict serializable"""
@@ -34,7 +35,23 @@ def local_to_dict(local: dict) -> dict:
 
 
 # ================================================
-# ✅ Crear Local (Sede)
+# Helper: Generar ID incremental tipo 001, 002, ...
+# ================================================
+async def generar_id_unico():
+    # Buscamos el último local según el campo id_unico
+    ultimo_local = await collection_locales.find_one(
+        sort=[("id_unico", -1)]
+    )
+    if not ultimo_local:
+        return "001"
+    
+    ultimo_id = int(ultimo_local["id_unico"])
+    nuevo_id = str(ultimo_id + 1).zfill(3)
+    return nuevo_id
+
+
+# ================================================
+# ✅ Crear Local (Sede) — genera unique_id automáticamente
 # ================================================
 @router.post("/", response_model=dict)
 async def crear_local(
@@ -109,7 +126,7 @@ async def crear_local(
 
 
 # ================================================
-# 📌 Listar Locales
+# 📋 List Locales
 # ================================================
 @router.get("/", response_model=list)
 async def listar_locales(
@@ -191,7 +208,7 @@ async def obtener_local(
 
 
 # ================================================
-# ✏️ Actualizar Local
+# ✏️ Update Local by unique_id
 # ================================================
 @router.put("/{sede_id}", response_model=dict)
 async def actualizar_local(

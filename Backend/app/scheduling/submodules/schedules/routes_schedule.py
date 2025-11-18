@@ -18,7 +18,7 @@ def horario_to_dict(h):
 
 
 # =========================================================
-# 🔹 Crear un horario (usa el modelo Horario)
+# 🕓 Crear horario base (lunes a domingo) con unique_id
 # =========================================================
 @router.post("/", response_model=dict)
 async def crear_horario(
@@ -30,43 +30,66 @@ async def crear_horario(
     if rol not in ["admin_sede", "admin_franquicia", "super_admin"]:
         raise HTTPException(status_code=403, detail="No autorizado para crear horarios")
 
-    # Validar duplicado
+    # 🔍 Verificar si el estilista ya tiene un horario
     existing = await collection_horarios.find_one({
-        "estilista_id": horario.estilista_id,
-        "dia_semana": horario.dia_semana
+        "estilista_id": horario.estilista_id
     })
     if existing:
-        raise HTTPException(status_code=400, detail="El estilista ya tiene un horario ese día")
+        raise HTTPException(status_code=400, detail="El estilista ya tiene un horario base registrado")
 
+    # 🧮 Generar unique_id incremental tipo H001, H002...
+    last_horario = await collection_horarios.find_one(
+        sort=[("unique_id", -1)]
+    )
+    if not last_horario or "unique_id" not in last_horario:
+        unique_id = "H001"
+    else:
+        try:
+            last_num = int(last_horario["unique_id"][1:])
+            unique_id = f"H{str(last_num + 1).zfill(3)}"
+        except Exception:
+            unique_id = "H001"
+
+    # 🧱 Preparar datos
     data = horario.dict()
+    data["unique_id"] = unique_id
     data["creado_por"] = current_user["email"]
     data["fecha_creacion"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    # 💾 Guardar en MongoDB
     result = await collection_horarios.insert_one(data)
     data["_id"] = str(result.inserted_id)
-    return {"msg": "Horario creado exitosamente", "horario": data}
 
+    return {
+        "msg": f"✅ Horario base creado exitosamente con ID {unique_id}",
+        "unique_id": unique_id,
+        "horario": data
+    }
+    
 
 # =========================================================
-# 🔹 Listar horarios de un estilista
+# 📋 Listar horarios de un estilista
 # =========================================================
-@router.get("/stylist/{estilista_id}", response_model=List[Horario])
+@router.get("/stylist/{estilista_id}", response_model=dict)
 async def listar_horarios_estilista(
     estilista_id: str,
     current_user: dict = Depends(get_current_user)
 ):
     rol = current_user["rol"]
 
-    # El estilista solo puede ver los suyos
+    # El estilista solo puede ver su propio horario
     if rol == "estilista" and current_user["email"] != estilista_id:
         raise HTTPException(status_code=403, detail="No autorizado para ver otros horarios")
 
-    horarios = await collection_horarios.find({"estilista_id": estilista_id}).to_list(None)
-    return [Horario(**h) for h in horarios]
+    horario = await collection_horarios.find_one({"estilista_id": estilista_id})
+    if not horario:
+        raise HTTPException(status_code=404, detail="Horario no encontrado")
+
+    return horario_to_dict(horario)
 
 
 # =========================================================
-# 🔹 Editar horario
+# ✏️ Editar horario completo o su disponibilidad
 # =========================================================
 @router.put("/{horario_id}", response_model=dict)
 async def actualizar_horario(
@@ -88,11 +111,11 @@ async def actualizar_horario(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Horario no encontrado")
 
-    return {"msg": "Horario actualizado correctamente"}
+    return {"msg": "✅ Horario actualizado correctamente"}
 
 
 # =========================================================
-# 🔹 Eliminar horario
+# ❌ Eliminar horario base
 # =========================================================
 @router.delete("/{horario_id}", response_model=dict)
 async def eliminar_horario(
@@ -107,4 +130,4 @@ async def eliminar_horario(
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Horario no encontrado")
 
-    return {"msg": "Horario eliminado correctamente"}
+    return {"msg": "🗑️ Horario eliminado correctamente"}

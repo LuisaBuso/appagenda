@@ -12,7 +12,7 @@ router = APIRouter(prefix="/admin/servicios", tags=["Admin - Servicios"])
 
 
 # ===================================================
-# Helper: convertir ObjectId a string
+# 🔁 Helper: convertir ObjectId a string
 # ===================================================
 def servicio_to_dict(s):
     """Convierte ObjectId a string para respuesta JSON."""
@@ -79,7 +79,7 @@ async def crear_servicio(
 
 
 # ===================================================
-# 📌 Listar servicios
+# 📋 Listar servicios
 # ===================================================
 @router.get("/", response_model=list)
 async def listar_servicios(

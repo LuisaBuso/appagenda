@@ -6,8 +6,11 @@ import { PerformanceChart } from './performance-chart';
 import { ChatWidget } from './chat-widget';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../../components/Auth/AuthContext';
 
 export default function Dashboard() {
+  useAuth(); // Solo llama useAuth sin asignar a una variable
+
   return (
     <div className="flex h-screen bg-gray-50">
       <Sidebar />

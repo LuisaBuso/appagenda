@@ -24,7 +24,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   {
     title: "Dashboard",
-    href: "/",
+    href: "/dashboard", // ✅ CORREGIDO: era "/" ahora "/dashboard"
     icon: LayoutDashboard,
   },
   {
