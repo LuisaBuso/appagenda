@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 
 # Importar routers de cada módulo
 from app.auth.routes import router as auth_router
+from app.clients_service import routes_clientes
 from app.scheduling.routes import app_router as scheduling_router
 from app.admin.routes_locales import router as admin_locales_router
 from app.admin.routes_servicios import router as admin_servicios_router
@@ -45,5 +46,4 @@ app.include_router(admin_locales_router)
 app.include_router(admin_servicios_router)
 app.include_router(admin_profesionales_router)
 app.include_router(inventary_router, prefix="/inventary")
-
-
+app.include_router(routes_clientes.router, prefix="/clientes", tags=["Clientes"])

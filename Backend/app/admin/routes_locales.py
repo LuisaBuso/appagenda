@@ -1,7 +1,21 @@
+"""
+Routes para gestión de Locales (Sedes)
+IDs cortos NO secuenciales: SD-00247
+Sin franquicia_id (solo roles)
+"""
+from fastapi import APIRouter, HTTPException, Depends, Query
+from bson import ObjectId
+from datetime import datetime
+from typing import Optional
+import logging
+
 from fastapi import APIRouter, HTTPException, Depends
 from app.admin.models import Local
 from app.database.mongo import collection_locales
 from app.auth.routes import get_current_user
+from app.id_generator.generator import generar_id, validar_id
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/locales", tags=["Admin - Locales"])
 
@@ -9,8 +23,14 @@ router = APIRouter(prefix="/admin/locales", tags=["Admin - Locales"])
 # ================================================
 # Helper: Convertir ObjectId a string y formatear
 # ================================================
-def local_to_dict(local):
+def local_to_dict(local: dict) -> dict:
+    """Convierte local de MongoDB a dict serializable"""
     local["_id"] = str(local["_id"])
+    
+    # Fallback para locales sin sede_id
+    if "sede_id" not in local or not local["sede_id"]:
+        local["sede_id"] = str(local["_id"])
+    
     return local
 
 
@@ -79,14 +99,40 @@ async def crear_local(
 # 📋 List Locales
 # ================================================
 @router.get("/", response_model=list)
-async def list_locals(current_user: dict = Depends(get_current_user)):
-    # Admin_sede only sees their own branch
-    if current_user["rol"] == "admin_sede":
-        locales = await collection_locales.find({"unique_id": current_user["sede_id"]}).to_list(None)
-    else:
-        locales = await collection_locales.find().to_list(None)
-
-    return [local_to_dict(l) for l in locales]
+async def listar_locales(
+    activa: Optional[bool] = Query(None, description="Filtrar por estado"),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Lista todos los locales (sedes).
+    
+    Permisos:
+    - super_admin: Ve todas las sedes
+    - admin_sede: Ve todas las sedes (sin filtro por franquicia)
+    """
+    try:
+        # ========= CONSTRUIR QUERY =========
+        query = {}
+        
+        # Filtro de estado
+        if activa is not None:
+            query["activa"] = activa
+        
+        # ========= OBTENER SEDES =========
+        sedes = await collection_locales.find(query).to_list(None)
+        
+        logger.info(
+            f"📋 Listado de {len(sedes)} locales por {current_user.get('email')}"
+        )
+        
+        return [local_to_dict(s) for s in sedes]
+    
+    except Exception as e:
+        logger.error(f"❌ Error al listar locales: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Error al listar locales"
+        )
 
 # ================================================
 # 🔍 Get Local by sede_id
