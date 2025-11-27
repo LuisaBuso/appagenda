@@ -8,8 +8,10 @@ from app.database.mongo import (
     collection_estilista,  # ⭐ Usar stylist
     collection_locales,
     collection_servicios,
+    collection_auth  # ⭐ Usar users_auth
 )
 from app.id_generator.generator import generar_id, validar_id  # ⭐ Generador de IDs
+from app.auth.controllers import pwd_context
 
 router = APIRouter(prefix="/admin/profesionales", tags=["Admin - Profesionales"])
 
@@ -24,89 +26,119 @@ def profesional_to_dict(p):
 
 
 # ===================================================
-# ✅ Crear profesional CON ID CORTO NO SECUENCIAL
+# ✅ Crear profesional — sede_id VIENE EN EL MODELO
 # ===================================================
 @router.post("/", response_model=dict)
 async def create_profesional(
     profesional: Profesional,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Crea un profesional/estilista con ID corto NO secuencial: ES-00247
-    
-    Permisos: super_admin, admin_sede
-    """
+    print("\n========== CREAR PROFESIONAL ==========")
+    print("📥 Datos recibidos:", profesional.dict())
+    print("👤 Usuario actual:", current_user)
+
+    # --- Permisos ---
     rol = current_user["rol"]
-    
+    print("🔐 Rol del creador:", rol)
+
     if rol not in ["super_admin", "admin_sede"]:
-        raise HTTPException(
-            status_code=403, 
-            detail="No autorizado para crear profesionales"
-        )
+        print("❌ Usuario NO autorizado para crear profesionales")
+        raise HTTPException(status_code=403, detail="No autorizado")
 
-    # ⭐ OBTENER sede_id DEL USUARIO LOGUEADO
-    sede_id = current_user.get("sede_id")
-    
+    # --- Sede viene en el modelo ---
+    sede_id = profesional.sede_id
+    print("🏢 Sede recibida:", sede_id)
+
     if not sede_id:
-        raise HTTPException(
-            status_code=400, 
-            detail="Usuario no tiene sede asignada. Contacte al administrador."
-        )
-    
-    # ✅ VALIDAR QUE LA SEDE EXISTE (buscar por sede_id, no por _id)
+        print("❌ No se envió sede_id")
+        raise HTTPException(status_code=400, detail="sede_id es obligatorio")
+
     sede = await collection_locales.find_one({"sede_id": sede_id})
-    
+    print("🔎 ¿Sede encontrada?:", sede)
+
     if not sede:
-        raise HTTPException(
-            status_code=404, 
-            detail=f"Sede no encontrada: {sede_id}"
-        )
+        print("❌ La sede NO existe:", sede_id)
+        raise HTTPException(status_code=404, detail=f"Sede no encontrada: {sede_id}")
 
-    # ⚙️ Validar email único en collection_estilista
-    exists = await collection_estilista.find_one({"email": profesional.email})
+    # --- Validar email ---
+    email = profesional.email.lower()
+    print("📧 Email normalizado:", email)
+
+    exists = await collection_estilista.find_one({"email": email})
+    print("🔎 ¿Email ya existe en estilistas?:", exists)
+
     if exists:
-        raise HTTPException(
-            status_code=400, 
-            detail="Ya existe un profesional con ese email"
-        )
+        print("❌ Ya existe profesional con ese email")
+        raise HTTPException(status_code=400, detail="Ya existe un profesional con ese email")
 
-    # ⭐ GENERAR ID CORTO NO SECUENCIAL
-    try:
-        profesional_id = await generar_id(
-            entidad="estilista",
-            sede_id=sede_id,
-            metadata={
-                "email": profesional.email,
-                "nombre": profesional.nombre,
-                "creado_por": current_user["email"]
-            }
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Error al generar ID del profesional: {str(e)}"
-        )
+    # --- Generar ID ---
+    print("⚙️ Generando ID profesional...")
+    profesional_id = await generar_id(
+        entidad="estilista",
+        sede_id=sede_id,
+        metadata={"email": email}
+    )
+    print("🆔 ID generado:", profesional_id)
 
-    # ✅ Preparar datos del profesional
-    data = profesional.dict()
-    data.update({
-        "profesional_id": profesional_id,  # ⭐ ID corto: ES-00247
+    # ===================================================
+    # 1️⃣ GUARDAR EN STYLIST (SIN CONTRASEÑA)
+    # ===================================================
+    data_estilista = profesional.dict()
+    data_estilista.update({
+        "email": email,
+        "profesional_id": profesional_id,
         "rol": "estilista",
-        "sede_id": sede_id,  # ⭐ Asignar sede del usuario
         "created_by": current_user["email"],
         "created_at": datetime.now(),
         "updated_at": datetime.now(),
+        "activo": True
     })
 
-    # ⭐ Guardar en collection_estilista (stylist)
-    result = await collection_estilista.insert_one(data)
+    data_estilista.pop("password", None)
+
+    print("📤 Datos que se guardarán en collection_estilista:")
+    print(data_estilista)
+
+    result_estilista = await collection_estilista.insert_one(data_estilista)
+    print("✅ Estilista insertado en MongoDB ID:", result_estilista.inserted_id)
+
+    # ===================================================
+    # 2️⃣ GUARDAR EN AUTH
+    # ===================================================
+    print("🔐 Hasheando contraseña...")
+    hashed_password = pwd_context.hash(profesional.password)
+
+    data_auth = {
+        "profesional_id": profesional_id,
+        "nombre": profesional.nombre,
+        "correo_electronico": email,
+        "hashed_password": hashed_password,
+        "rol": "estilista",
+        "sede_id": sede_id,
+        "fecha_creacion": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "activo": True,
+        "creado_por": current_user["email"],
+    }
+
+    print("📤 Datos que se guardarán en collection_auth:")
+    print(data_auth)
+
+    result_auth = await collection_auth.insert_one(data_auth)
+    print("✅ Usuario auth insertado en MongoDB ID:", result_auth.inserted_id)
+
+    # ===================================================
+    # RESPUESTA
+    # ===================================================
+    print("🎉 Profesional creado CORRECTAMENTE")
+    print("====================================\n")
 
     return {
-        "msg": "✅ Profesional creado exitosamente",
-        "profesional_id": profesional_id,  # ⭐ ID corto NO secuencial
-        "_id": str(result.inserted_id),
+        "msg": "Profesional y usuario creados correctamente",
+        "profesional_id": profesional_id,
+        "estilista_mongo_id": str(result_estilista.inserted_id),
+        "auth_mongo_id": str(result_auth.inserted_id),
         "sede_id": sede_id,
-        "sede_nombre": sede.get("nombre")
+        "correo": email
     }
 
 
