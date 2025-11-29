@@ -21,7 +21,8 @@ class Local(BaseModel):
 class Profesional(BaseModel):
     nombre: str
     email: EmailStr
-    especialidades: Optional[List[str]] = Field(default_factory=list, description="Lista de unique_id de servicios")
+    especialidades: bool = Field(default=True)  # ⭐ Siempre True ahora
+    servicios_no_presta: Optional[List[str]] = Field(default=[])  # ⭐ Nuevo campo
     activo: bool = True
     comision: Optional[float] = None  # porcentaje de comisión
 

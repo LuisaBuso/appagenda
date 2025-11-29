@@ -68,7 +68,7 @@ async def crear_local(
     try:
         # ========= VALIDACIÓN DE PERMISOS =========
         rol = current_user.get("rol")
-        if rol not in ["super_admin", "admin_sede"]:
+        if rol not in ["super_admin"]:
             raise HTTPException(
                 status_code=403,
                 detail="No autorizado para crear sedes"
