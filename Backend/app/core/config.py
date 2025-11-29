@@ -35,6 +35,10 @@ app.add_middleware(
 async def read_root():
     return {"message": "Bienvenido a la API de Agenda"}
 
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
+
 
 """@app.on_event("startup")
 async def startup_event():
@@ -46,7 +50,7 @@ app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 app.include_router(scheduling_router, prefix="/scheduling")
 app.include_router(admin_locales_router)
 app.include_router(admin_servicios_router)
-app.include_router(admin_profesionales_route)
+app.include_router(admin_profesionales_router)
 app.include_router(churn_router)
 app.include_router(analytics_router)
 app.include_router(inventary_router, prefix="/inventary")
