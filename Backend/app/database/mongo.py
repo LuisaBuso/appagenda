@@ -25,7 +25,7 @@ collection_locales = db["branch"]
 collection_productos = db["products"]
 collection_pedidos = db["orders"]
 collection_salidas = db["exits"]
-collection_card = db["fichas_registro"]
+collection_card = db["fichas"]
 
 
 

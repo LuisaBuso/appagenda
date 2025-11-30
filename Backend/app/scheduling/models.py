@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 from datetime import datetime, time, date
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 # === SERVICIO ===
 class Servicio(BaseModel):
@@ -56,3 +56,38 @@ class Cita(BaseModel):
     hora_fin: str
     estado: str
     abono: Optional[float] = 0
+
+# === FICHA ===
+class FichaCreate(BaseModel):
+    cliente_id: str
+    sede_id: str
+    servicio_id: str
+    servicio_nombre: str
+    profesional_id: str
+    profesional_nombre: str
+    fecha_ficha: str
+    fecha_reserva: str
+
+    email: Optional[str] = None
+    nombre: Optional[str] = None
+    apellido: Optional[str] = None
+    cedula: Optional[str] = None
+    telefono: Optional[str] = None
+
+    precio: Optional[str] = None
+    estado: Optional[str] = "Reservado"
+    estado_pago: Optional[str] = "Pendiente"
+
+    tipo_ficha: Optional[str] = None
+
+    datos_especificos: Optional[Dict] = {}
+    respuestas: Optional[List[str]] = []
+
+    descripcion_servicio: Optional[str] = ""
+
+    # Fotos sin AWS todavía
+    fotos_antes: Optional[str] = None
+    fotos_despues: Optional[str] = None
+
+    autorizacion_publicacion: Optional[bool] = False
+    comentario_interno: Optional[str] = ""

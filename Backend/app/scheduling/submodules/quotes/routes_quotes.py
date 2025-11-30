@@ -5,6 +5,7 @@ from email.message import EmailMessage
 import smtplib, ssl, os
 from bson import ObjectId
 
+from app.scheduling.models import FichaCreate
 from app.scheduling.models import Cita
 from app.database.mongo import (
     collection_citas,
@@ -14,6 +15,7 @@ from app.database.mongo import (
     collection_clients,
     collection_locales,
     collection_block,  # si no existe en tu proyecto elimínalo del import
+    collection_card
 )
 from app.auth.routes import get_current_user
 
@@ -407,35 +409,286 @@ async def no_asistio(cita_id: str, current_user: dict = Depends(get_current_user
 
 
 # =============================================================
-# 🔹 FICHAS DEL CLIENTE (por cliente_id)
+# 🔹 OBTENER FICHAS POR CLIENTE (todas las fichas técnicas)
 # =============================================================
 @router.get("/fichas", response_model=dict)
 async def obtener_fichas_por_cliente(
     cliente_id: str = Query(...),
     current_user: dict = Depends(get_current_user)
 ):
+
+    # -----------------------------------------
+    # 1. Validación de acceso
+    # -----------------------------------------
+    rol = current_user["rol"]
+    if rol not in ["super_admin", "admin_franquicia", "admin_sede", "estilista"]:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    # -----------------------------------------
+    # 2. Buscar fichas reales (collection_card)
+    # -----------------------------------------
     filtro = {"cliente_id": cliente_id}
-    # si rol admin_sede o profesional se puede filtrar por sede en el futuro (si quieres)
-    fichas = await collection_citas.find(filtro).sort("fecha", -1).to_list(None)
+
+    fichas = (
+        await collection_card
+        .find(filtro)
+        .sort("fecha_ficha", -1)  # <-- CAMBIO CORRECTO
+        .to_list(None)
+    )
 
     if not fichas:
         return {"success": True, "total": 0, "fichas": []}
 
     resultado = []
+
+    # -----------------------------------------
+    # 3. Enriquecer ficha por ficha
+    # -----------------------------------------
     for ficha in fichas:
-        # enriquecer
-        servicio = await collection_servicios.find_one({"servicio_id": ficha.get("servicio_id")})
-        profesional = await collection_estilista.find_one({"profesional_id": ficha.get("profesional_id")})
-        sede = await collection_locales.find_one({"sede_id": ficha.get("sede_id")})
 
-        ficha = normalize_cita_doc(ficha)
-        ficha["servicio_nombre"] = servicio.get("nombre") if servicio else None
-        ficha["profesional_nombre"] = profesional.get("nombre") if profesional else None
-        ficha["sede_nombre"] = sede.get("nombre") if sede else None
+        ficha_norm = {
+            "id": str(ficha.get("_id")),
+            "cliente_id": ficha.get("cliente_id"),
+            "nombre": ficha.get("nombre"),
+            "apellido": ficha.get("apellido"),
+            "telefono": ficha.get("telefono"),
+            "cedula": ficha.get("cedula"),
 
-        resultado.append(ficha)
+            "servicio_id": ficha.get("servicio_id"),
+            "profesional_id": ficha.get("profesional_id"),
+            "sede_id": ficha.get("sede_id"),
 
-    return {"success": True, "total": len(resultado), "fichas": resultado}
+            "fecha_ficha": ficha.get("fecha_ficha"),
+            "fecha_reserva": ficha.get("fecha_reserva"),
+
+            "tipo_ficha": ficha.get("tipo_ficha"),
+            "precio": ficha.get("precio"),
+            "estado": ficha.get("estado"),
+            "estado_pago": ficha.get("estado_pago"),
+
+            "contenido": ficha.get("datos_especificos"),
+        }
+
+        # -----------------------------------------
+        # Enriquecimiento
+        # -----------------------------------------
+
+        servicio = await collection_servicios.find_one(
+            {"servicio_id": ficha.get("servicio_id")}
+        )
+
+        profesional = await collection_estilista.find_one(
+            {"profesional_id": ficha.get("profesional_id")}
+        )
+
+        sede = await collection_locales.find_one(
+            {"sede_id": ficha.get("sede_id")}
+        )
+
+        ficha_norm["servicio_nombre"] = servicio.get("nombre") if servicio else None
+        ficha_norm["profesional_nombre"] = profesional.get("nombre") if profesional else None
+        ficha_norm["sede_nombre"] = sede.get("nombre") if sede else None
+
+        resultado.append(ficha_norm)
+
+    # -----------------------------------------
+    # 4. Respuesta final
+    # -----------------------------------------
+    return {
+        "success": True,
+        "total": len(resultado),
+        "fichas": resultado
+    }
 
 
+
+# ============================================================
+# 📅 Obtener todas las citas del estilista autenticado
+# ============================================================
+@router.get("/citas/estilista", response_model=list)
+async def get_citas_estilista(
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["rol"] != "estilista":
+        raise HTTPException(
+            status_code=403,
+            detail="Solo los estilistas pueden ver sus citas"
+        )
+
+    email = current_user["email"]
+
+    estilista = await collection_estilista.find_one({"email": email})
+
+    if not estilista:
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontró el profesional asociado a este usuario"
+        )
+
+    profesional_id = estilista.get("profesional_id")
+    sede_id = estilista.get("sede_id")
+
+    # ===========================================
+    # FILTRO CORREGIDO
+    # ===========================================
+    citas = await collection_citas.find({
+        "$or": [
+            {"estilista_id": profesional_id},
+            {"profesional_id": profesional_id}
+        ]
+    }).sort("fecha", 1).to_list(None)
+
+    respuesta = []
+
+    for c in citas:
+
+        cliente = await collection_clients.find_one({"cliente_id": c.get("cliente_id")})
+        cliente_data = {
+            "cliente_id": c.get("cliente_id"),
+            "nombre": cliente.get("nombre") if cliente else "Desconocido",
+            "apellido": cliente.get("apellido") if cliente else "",
+            "telefono": cliente.get("telefono") if cliente else "",
+            "email": cliente.get("email") if cliente else "",
+        }
+
+        servicio = await collection_servicios.find_one({
+            "$or": [
+                {"servicio_id": c.get("servicio_id")},
+                {"unique_id": c.get("servicio_id")}
+            ]
+        })
+        servicio_data = {
+            "servicio_id": c.get("servicio_id"),
+            "nombre": servicio.get("nombre") if servicio else "Desconocido",
+            "precio": servicio.get("precio") if servicio else None
+        }
+
+        sede = await collection_locales.find_one({"sede_id": c.get("sede_id")})
+        sede_data = {
+            "sede_id": c.get("sede_id"),
+            "nombre": sede.get("nombre") if sede else "Sede desconocida"
+        }
+
+        respuesta.append({
+            "cita_id": str(c.get("_id")),
+            "cliente": cliente_data,
+            "servicio": servicio_data,
+            "sede": sede_data,
+            "estilista_id": profesional_id,
+            "fecha": c.get("fecha"),
+            "hora_inicio": c.get("hora_inicio"),
+            "hora_fin": c.get("hora_fin"),
+            "estado": c.get("estado"),
+            "comentario": c.get("comentario", None)
+        })
+
+    return respuesta
+
+
+# ============================================================
+# 📌 Crear ficha (sin AWS, pero preparado)
+# ============================================================
+@router.post("/", response_model=dict)
+async def crear_ficha(
+    data: FichaCreate,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Crea una ficha de color/servicio.
+    Sin AWS por ahora: solo guarda URLs si vienen del frontend.
+    """
+
+    # Optional: si quisieras restringir por rol
+    # if current_user["rol"] not in ["estilista", "admin_sede", "admin"]:
+    #     raise HTTPException(403, "No autorizado para crear fichas")
+
+    # ------------------------------
+    # VALIDAR CLIENTE
+    # ------------------------------
+    cliente = await collection_clients.find_one({"cliente_id": data.cliente_id})
+    if not cliente:
+        raise HTTPException(404, "Cliente no encontrado")
+
+    # ------------------------------
+    # VALIDAR SERVICIO
+    # ------------------------------
+    servicio = await collection_servicios.find_one({
+        "$or": [
+            {"servicio_id": data.servicio_id},
+            {"unique_id": data.servicio_id}
+        ]
+    })
+    if not servicio:
+        raise HTTPException(404, "Servicio no encontrado")
+
+    # ------------------------------
+    # VALIDAR PROFESIONAL
+    # ------------------------------
+    profesional = await collection_estilista.find_one({
+        "profesional_id": data.profesional_id
+    })
+    if not profesional:
+        raise HTTPException(404, "Profesional no encontrado")
+
+    # ------------------------------
+    # VALIDAR SEDE
+    # ------------------------------
+    sede = await collection_locales.find_one({"sede_id": data.sede_id})
+    if not sede:
+        raise HTTPException(404, "Sede no encontrada")
+
+    # ------------------------------
+    # Construcción de ficha final
+    # ------------------------------
+    ficha = {
+        "_id": ObjectId(),
+        "cliente_id": data.cliente_id,
+        "sede_id": data.sede_id,
+        "servicio_id": data.servicio_id,
+        "servicio_nombre": data.servicio_nombre,
+        "profesional_id": data.profesional_id,
+        "profesional_nombre": data.profesional_nombre,
+
+        "fecha_ficha": data.fecha_ficha,
+        "fecha_reserva": data.fecha_reserva,
+
+        "email": data.email,
+        "nombre": data.nombre,
+        "apellido": data.apellido,
+        "cedula": data.cedula,
+        "telefono": data.telefono,
+
+        "precio": data.precio,
+        "estado": data.estado,
+        "estado_pago": data.estado_pago,
+
+        "tipo_ficha": data.tipo_ficha,
+
+        "datos_especificos": data.datos_especificos,
+        "respuestas": data.respuestas,
+
+        "descripcion_servicio": data.descripcion_servicio,
+
+        # Fotos sin AWS (solo guardamos las URLs si vienen)
+        "fotos": {
+            "antes": data.fotos_antes,
+            "despues": data.fotos_despues
+        },
+
+        "autorizacion_publicacion": data.autorizacion_publicacion,
+        "comentario_interno": data.comentario_interno,
+
+        # Control interno
+        "created_at": datetime.utcnow(),
+        "procesado_imagenes": False,
+        "origen": "manual"
+    }
+
+    # GUARDAR
+    await collection_card.insert_one(ficha)
+
+    ficha["ficha_id"] = str(ficha["_id"])
+    ficha["_id"] = str(ficha["_id"])
+
+    return ficha
 

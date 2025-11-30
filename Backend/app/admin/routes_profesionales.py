@@ -143,7 +143,7 @@ async def create_profesional(
 
 
 # ===================================================
-# 📋 Listar profesionales (con nombres de servicios)
+# 📋 Listar profesionales (con nombres de servicios + sede_nombre)
 # ===================================================
 @router.get("/", response_model=list)
 async def list_professionals(
@@ -152,8 +152,7 @@ async def list_professionals(
 ):
     """
     Lista profesionales según permisos del usuario.
-    
-    Incluye nombres de servicios según especialidades.
+    Incluye nombres de servicios y nombre de la sede.
     """
     query = {"rol": "estilista"}
 
@@ -165,15 +164,25 @@ async def list_professionals(
     if activo is not None:
         query["activo"] = activo
 
-    # ⭐ Buscar en collection_estilista (stylist)
     professionals = await collection_estilista.find(query).to_list(None)
 
-    # ⭐ Agregar nombres de servicios según especialidades
     for p in professionals:
+
+        # ===================================================
+        # ⭐ Obtener nombre de la sede
+        # ===================================================
+        sede = await collection_locales.find_one({"sede_id": p.get("sede_id")})
+        if sede:
+            p["sede_nombre"] = sede.get("nombre", "Nombre no registrado")
+        else:
+            p["sede_nombre"] = "Sede desconocida"
+
+        # ===================================================
+        # ⭐ Agregar nombres de servicios
+        # ===================================================
         if "especialidades" in p and isinstance(p["especialidades"], list):
             nombres_servicios = []
             for servicio_id in p["especialidades"]:
-                # Buscar por servicio_id (nuevo) o unique_id (antiguo)
                 servicio = await collection_servicios.find_one({
                     "$or": [
                         {"servicio_id": servicio_id},
@@ -193,7 +202,7 @@ async def list_professionals(
 
 
 # ===================================================
-# 🔍 Obtener profesional por ID (DUAL: legible o ObjectId)
+# 🔍 Obtener profesional por ID (incluye sede_nombre)
 # ===================================================
 @router.get("/{profesional_id}", response_model=dict)
 async def get_professional(
@@ -201,56 +210,84 @@ async def get_professional(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Obtiene un profesional por su profesional_id (ES-00247) o MongoDB ObjectId.
-    
-    Incluye nombres de servicios según especialidades.
+    Obtiene un profesional por su profesional_id o ObjectId.
+    Incluye nombres de servicios y nombre de la sede.
     """
-    # ⭐ BUSCAR POR profesional_id LEGIBLE PRIMERO
+
+    # ===================================================
+    # 🔎 1. Buscar por profesional_id (TU MODELO REAL)
+    # ===================================================
     professional = await collection_estilista.find_one({
-        "profesional_id": profesional_id, 
+        "profesional_id": profesional_id,
         "rol": "estilista"
     })
-    
-    # Si no se encuentra, intentar con ObjectId (compatibilidad)
+
+    # ===================================================
+    # 🔎 2. Buscar por ObjectId si no existe
+    # ===================================================
     if not professional:
         try:
             professional = await collection_estilista.find_one({
-                "_id": ObjectId(profesional_id), 
+                "_id": ObjectId(profesional_id),
                 "rol": "estilista"
             })
         except Exception:
             pass
-    
-    # Si aún no se encuentra, intentar con unique_id (compatibilidad antigua)
+
+    # ===================================================
+    # 🔎 3. Compatibilidad antigua: unique_id
+    # ===================================================
     if not professional:
         professional = await collection_estilista.find_one({
-            "unique_id": profesional_id, 
+            "unique_id": profesional_id,
             "rol": "estilista"
         })
-    
+
+    # ===================================================
+    # ❌ No existe
+    # ===================================================
     if not professional:
         raise HTTPException(
-            status_code=404, 
+            status_code=404,
             detail=f"Profesional no encontrado: {profesional_id}"
         )
 
-    # ⭐ Agregar nombres de servicios
-    servicios = []
-    for servicio_id in professional.get("especialidades", []):
-        servicio = await collection_servicios.find_one({
-            "$or": [
-                {"servicio_id": servicio_id},
-                {"unique_id": servicio_id}
-            ]
-        })
-        if servicio:
-            servicios.append({
-                "id": servicio.get("servicio_id") or servicio.get("unique_id"),
-                "nombre": servicio.get("nombre", "Desconocido")
-            })
-    
-    professional["especialidades_detalle"] = servicios
+    # ===================================================
+    # ⭐ Añadir nombre de la sede
+    # ===================================================
+    sede = await collection_locales.find_one({
+        "sede_id": professional.get("sede_id")
+    })
 
+    professional["sede_nombre"] = (
+        sede.get("nombre") if sede else "Sede desconocida"
+    )
+
+    # ===================================================
+    # ⭐ Añadir nombres de servicios que SÍ presta
+    # ===================================================
+    servicios_detalle = []
+
+    # 👉 En tu modelo actual NO tienes lista de servicios, tienes *servicios_no_presta*
+    # 👉 Por lo tanto: todos los servicios EXCEPTO esos
+    servicios_no = professional.get("servicios_no_presta", [])
+
+    cursor = collection_servicios.find({})
+    servicios_all = await cursor.to_list(None)  # todos los servicios
+
+    for srv in servicios_all:
+        srv_id = srv.get("servicio_id") or srv.get("unique_id")
+        if srv_id not in servicios_no:
+            servicios_detalle.append({
+                "id": srv_id,
+                "nombre": srv.get("nombre", "Desconocido")
+            })
+
+    professional["servicios_presta"] = servicios_detalle
+
+    # ===================================================
+    # 🔄 Convertir a dict limpio antes de devolver
+    # ===================================================
     return profesional_to_dict(professional)
 
 
