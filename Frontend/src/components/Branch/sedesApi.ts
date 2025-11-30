@@ -4,6 +4,7 @@ import { API_BASE_URL } from "../../types/config";
 export interface Sede {
   _id: string;
   unique_id?: string;
+  sede_id?: string; // 🔥 NUEVO: agregar este campo
   nombre: string;
   direccion: string;
   telefono: string;

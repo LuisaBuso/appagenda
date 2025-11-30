@@ -1,204 +1,408 @@
-import React, { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Clock } from 'lucide-react';
-import { crearCita } from '../Quotes/citasApi';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Clock, Calendar as CalendarIcon, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useAuth } from '../../components/Auth/AuthContext';
-import { getEstilistas, Estilista } from '../../components/Professionales/estilistasApi';
-import { getServiciosEstilista, Servicio } from '../../components/Quotes/serviciosApi';
+import { getEstilistas, getEstilistaCompleto, Estilista } from '../../components/Professionales/estilistasApi';
+import { getServicios, Servicio } from '../../components/Quotes/serviciosApi';
+import { Cliente } from './clientsService';
+import { ClientSearch } from '../../pages/PageSuperAdmin/Appoinment/Clients/ClientSearch';
+import { useNavigate } from 'react-router-dom';
 
-// Interfaces unificadas
 interface Service {
     id: string;
+    profesional_id: string;
     name: string;
     duration: number;
     price: number;
 }
 
-interface AppointmentSchedulerProps {
-  onClose: () => void;
-  sedeId: string;
-  estilistaId?: string;
-  fechaSeleccionada?: string;
-  horaSeleccionada?: string;
+interface EstilistaCompleto extends Estilista {
+    servicios_no_presta: string[];
+    especialidades: boolean;
 }
 
-const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({ onClose, sedeId, estilistaId }) => {
-    const { user } = useAuth();
+interface AppointmentSchedulerProps {
+    onClose: () => void;
+    sedeId: string;
+    estilistaId?: string;
+    fecha: string;
+    horaSeleccionada?: string;
+    estilistas?: EstilistaCompleto[];
+}
 
-    const [currentDate, setCurrentDate] = useState(new Date());
-    const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-    const [selectedTime, setSelectedTime] = useState('10:00');
+// 🔥 INTERFAZ PARA LOS DATOS DE LA CITA QUE SE PASARÁN AL PAGO
+interface CitaParaPago {
+    cliente: string;
+    servicio: string;
+    profesional: string;
+    fecha: string;
+    hora_inicio: string;
+    hora_fin: string;
+    duracion: string;
+    monto_total: number;
+    cliente_id: string;
+    profesional_id: string;
+    servicio_id: string;
+    sede_id: string;
+    notas: string;
+}
+
+const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
+    onClose,
+    sedeId,
+    estilistaId,
+    fecha,
+    horaSeleccionada,
+    estilistas: estilistasFromProps
+}) => {
+    const { user } = useAuth();
+    const navigate = useNavigate();
+    const [currentMonth, setCurrentMonth] = useState(new Date());
+    const [selectedDate, setSelectedDate] = useState<Date | null>(fecha ? new Date(fecha) : null);
+    const [selectedTime, setSelectedTime] = useState(horaSeleccionada || '10:00');
     const [showTimeSelector, setShowTimeSelector] = useState(false);
+    const [showMiniCalendar, setShowMiniCalendar] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [clientSearch, setClientSearch] = useState('');
     const [selectedService, setSelectedService] = useState<Service | null>(null);
-    const [selectedStylist, setSelectedStylist] = useState<Estilista | null>(null);
+    const [selectedStylist, setSelectedStylist] = useState<EstilistaCompleto | null>(null);
+    const [selectedClient, setSelectedClient] = useState<Cliente | null>(null);
     const [notes, setNotes] = useState('');
 
-    // Estados para datos dinámicos
-    const [estilistas, setEstilistas] = useState<Estilista[]>([]);
+    const [estilistas, setEstilistas] = useState<EstilistaCompleto[]>([]);
     const [servicios, setServicios] = useState<Servicio[]>([]);
+
     const [loadingEstilistas, setLoadingEstilistas] = useState(false);
     const [loadingServicios, setLoadingServicios] = useState(false);
 
-    // Cargar estilistas de la sede
+    // 🔥 FUNCIÓN PARA FORMATEAR FECHA BONITA
+    const formatFechaBonita = useCallback((fecha: Date, hora: string) => {
+        const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+        const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+        
+        const dayName = days[fecha.getDay()];
+        const day = fecha.getDate();
+        const month = months[fecha.getMonth()];
+        
+        // Formatear hora (convertir 10:00 → 10:00 a.m.)
+        const [hours, minutes] = hora.split(':').map(Number);
+        const period = hours >= 12 ? 'p.m.' : 'a.m.';
+        const formattedHours = hours % 12 || 12;
+        const formattedTime = `${formattedHours}:${minutes.toString().padStart(2, '0')} ${period}`;
+
+        return `${dayName}, ${day} de ${month}, ${formattedTime}`;
+    }, []);
+
+    // 🔥 FUNCIÓN PARA CALCULAR DURACIÓN EN TEXTO
+    const calcularDuracionTexto = useCallback((duracionMinutos: number) => {
+        const horas = Math.floor(duracionMinutos / 60);
+        const minutos = duracionMinutos % 60;
+        
+        if (horas === 0) {
+            return `${minutos} min`;
+        } else if (minutos === 0) {
+            return `${horas} h`;
+        } else {
+            return `${horas} h ${minutos} min`;
+        }
+    }, []);
+
+    const eliminarDuplicados = useCallback((estilistasList: EstilistaCompleto[]) => {
+        const estilistasUnicos = Array.from(
+            new Map(
+                estilistasList.map(e => [e.profesional_id || e._id, e])
+            ).values()
+        );
+        return estilistasUnicos;
+    }, []);
+
+    // 🔥 CARGAR ESTILISTAS
     useEffect(() => {
         const cargarEstilistas = async () => {
             if (!user?.access_token) return;
-            
+
             setLoadingEstilistas(true);
             try {
-                const estilistasData = await getEstilistas(user.access_token, sedeId);
-                setEstilistas(estilistasData);
-                
-                // Si hay un estilista pre-seleccionado, seleccionarlo
-                if (estilistaId) {
-                    const estilistaPreseleccionado = estilistasData.find(e => e._id === estilistaId);
-                    if (estilistaPreseleccionado) {
-                        setSelectedStylist(estilistaPreseleccionado);
+                let estilistasData: EstilistaCompleto[] = [];
+
+                if (estilistasFromProps && estilistasFromProps.length > 0) {
+                    estilistasData = eliminarDuplicados(estilistasFromProps);
+                } else {
+                    const estilistasApi = await getEstilistas(user.access_token, sedeId);
+
+                    if (estilistasApi.length > 0) {
+                        const estilistasConDetalles = await Promise.all(
+                            estilistasApi.map(async (estilista) => {
+                                try {
+                                    const estilistaCompleto = await getEstilistaCompleto(user.access_token, estilista.profesional_id || estilista._id);
+                                    return {
+                                        ...estilista,
+                                        servicios_no_presta: estilistaCompleto.servicios_no_presta || [],
+                                        especialidades: estilistaCompleto.especialidades || false
+                                    };
+                                } catch (error) {
+                                    console.error(`❌ Error cargando detalles de ${estilista.nombre}:`, error);
+                                    return {
+                                        ...estilista,
+                                        servicios_no_presta: [],
+                                        especialidades: false
+                                    };
+                                }
+                            })
+                        );
+
+                        estilistasData = estilistasConDetalles;
+                    } else {
+                        estilistasData = [];
                     }
+
+                    estilistasData = eliminarDuplicados(estilistasData);
                 }
+
+                setEstilistas(estilistasData);
+
+                let estilistaSeleccionado: EstilistaCompleto | null = null;
+
+                if (estilistaId && estilistasData.length > 0) {
+                    estilistaSeleccionado = estilistasData.find(e =>
+                        (e.profesional_id === estilistaId) || (e._id === estilistaId)
+                    ) || null;
+                }
+
+                if (!estilistaSeleccionado && estilistasData.length > 0) {
+                    estilistaSeleccionado = estilistasData[0];
+                }
+
+                setSelectedStylist(estilistaSeleccionado);
+
             } catch (error) {
-                console.error("Error al cargar estilistas:", error);
+                console.error('❌ Error cargando estilistas:', error);
                 setError("Error al cargar los estilistas");
-            } finally {
+                setEstilistas([]);
+            }
+            finally {
                 setLoadingEstilistas(false);
             }
         };
 
         cargarEstilistas();
-    }, [sedeId, estilistaId, user?.access_token]);
+    }, [sedeId, estilistaId, user?.access_token, estilistasFromProps, eliminarDuplicados]);
 
-    // Cargar servicios cuando se selecciona un estilista
+    // 🔥 CARGAR SERVICIOS
     useEffect(() => {
-        const cargarServiciosEstilista = async () => {
-            if (!selectedStylist || !user?.access_token) {
+        const cargarServicios = async () => {
+            if (!user?.access_token) {
                 setServicios([]);
                 return;
             }
 
             setLoadingServicios(true);
             try {
-                const serviciosData = await getServiciosEstilista(selectedStylist._id, user.access_token);
+                const serviciosData = await getServicios(user.access_token);
                 setServicios(serviciosData);
-                setSelectedService(null); // Resetear servicio seleccionado
             } catch (error) {
-                console.error("Error al cargar servicios:", error);
-                setError("Error al cargar los servicios del estilista");
-                // En caso de error, usar servicios vacíos
+                console.error('❌ Error cargando servicios:', error);
+                setError("Error al cargar los servicios");
                 setServicios([]);
-            } finally {
+            }
+            finally {
                 setLoadingServicios(false);
             }
         };
 
-        cargarServiciosEstilista();
-    }, [selectedStylist, user?.access_token]);
+        cargarServicios();
+    }, [user?.access_token]);
 
-    // Función para convertir Servicio API a Service del componente
-    const convertirServicio = (servicio: Servicio): Service => ({
-        id: servicio._id,
-        name: servicio.nombre,
-        duration: servicio.duracion,
-        price: servicio.precio
-    });
-
-    // Datos de ejemplo como fallback
-    const serviciosEjemplo: Service[] = [
-        { id: 'servicio_1', name: 'Corte Básico', duration: 30, price: 25 },
-        { id: 'servicio_2', name: 'Servicio de Color', duration: 120, price: 85 },
-        { id: 'servicio_3', name: 'Reflejos', duration: 90, price: 120 },
-        { id: 'servicio_4', name: 'Peinado', duration: 45, price: 35 },
-    ];
-
-    // Servicios a mostrar (convertir dinámicos o usar ejemplo)
-    const serviciosAMostrar = servicios.length > 0 
-        ? servicios.map(convertirServicio) 
-        : serviciosEjemplo;
-
-    const getWeekDays = (date: Date) => {
-        const week = [];
-        const current = new Date(date);
-        const day = current.getDay();
-        const diff = current.getDate() - day + (day === 0 ? -6 : 1);
-        const monday = new Date(current.setDate(diff));
-
-        for (let i = 0; i < 7; i++) {
-            const weekDate = new Date(monday);
-            weekDate.setDate(monday.getDate() + i);
-            week.push(weekDate);
+    // 🔥 INICIALIZAR FECHA Y HORA DESDE PROPS
+    useEffect(() => {
+        if (fecha) {
+            setSelectedDate(new Date(fecha));
         }
-        return week;
-    };
+        if (horaSeleccionada) {
+            setSelectedTime(horaSeleccionada);
+        }
+    }, [fecha, horaSeleccionada]);
 
-    const formatDateHeader = (date: Date) => {
-        const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-        const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-        return {
-            day: days[date.getDay()],
-            date: date.getDate(),
-            month: months[date.getMonth()]
-        };
-    };
+    // 🔥 MANEJADOR PARA CAMBIO DE ESTILISTA
+    const handleStylistChange = useCallback((estilistaId: string) => {
+        const estilista = estilistas.find(e =>
+            (e.profesional_id === estilistaId) || (e._id === estilistaId)
+        );
 
-    const generateTimeSlots = (): { time: string; available: boolean }[] => {
-        const slots: { time: string; available: boolean }[] = [];
+        if (estilista) {
+            setSelectedStylist(estilista);
+            setSelectedService(null);
+        }
+    }, [estilistas]);
+
+    // 🔥 FUNCIÓN PARA FILTRAR SERVICIOS
+    const filtrarServiciosPorEstilista = useCallback((serviciosList: Servicio[], estilista: EstilistaCompleto) => {
+        if (!estilista || !serviciosList.length) {
+            return [];
+        }
+
+        const serviciosDisponibles = serviciosList.filter(servicio => {
+            const servicioId = servicio.servicio_id || servicio._id;
+            const estaBloqueado = estilista.servicios_no_presta.includes(servicioId);
+            return !estaBloqueado;
+        });
+
+        return serviciosDisponibles;
+    }, []);
+
+    // 🔥 SERVICIOS FILTRADOS
+    const serviciosFiltrados = useMemo(() => {
+        if (!selectedStylist || servicios.length === 0) {
+            return [];
+        }
+        return filtrarServiciosPorEstilista(servicios, selectedStylist);
+    }, [selectedStylist, servicios, filtrarServiciosPorEstilista]);
+
+    // 🔥 SERVICIOS PARA MOSTRAR EN EL SELECT
+    const serviciosAMostrar = useMemo(() =>
+        serviciosFiltrados.map(s => ({
+            id: s.servicio_id || s._id,
+            profesional_id: s.servicio_id || s._id,
+            name: s.nombre,
+            duration: Number(s.duracion_minutos) || s.duracion || 30,
+            price: s.precio ?? 0
+        })),
+        [serviciosFiltrados]
+    );
+
+    // 🔥 MANEJADORES PARA CLIENTE
+    const handleClientSelect = useCallback((cliente: Cliente) => {
+        setSelectedClient(cliente);
+    }, []);
+
+    const handleClientClear = useCallback(() => {
+        setSelectedClient(null);
+    }, []);
+
+    // 🔥 GENERAR HORAS DISPONIBLES
+    const generateTimeSlots = useCallback(() => {
+        const slots = [];
         for (let hour = 5; hour <= 19; hour++) {
             for (let min = 0; min < 60; min += 30) {
                 if (hour === 19 && min > 30) break;
-                slots.push({
-                    time: `${hour.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`,
-                    available: true
-                });
+                slots.push(`${hour.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`);
             }
         }
         return slots;
-    };
+    }, []);
 
-    const generateCalendarTimeSlots = (): { time: string; available: boolean }[] => {
-        const slots: { time: string; available: boolean }[] = [];
-        for (let hour = 5; hour <= 19; hour += 2) {
-            slots.push({
-                time: `${hour.toString().padStart(2, '0')}:00`,
-                available: true
+    // 🔥 GENERAR DÍAS DEL CALENDARIO
+    const generateCalendarDays = useCallback(() => {
+        const year = currentMonth.getFullYear();
+        const month = currentMonth.getMonth();
+        const firstDay = new Date(year, month, 1);
+        const lastDay = new Date(year, month + 1, 0);
+        const firstDayOfWeek = firstDay.getDay();
+        const daysInMonth = lastDay.getDate();
+        const prevMonthLastDay = new Date(year, month, 0).getDate();
+        const days = [];
+
+        for (let i = 0; i < firstDayOfWeek; i++) {
+            const day = prevMonthLastDay - firstDayOfWeek + i + 1;
+            const date = new Date(year, month - 1, day);
+            days.push({
+                date,
+                isCurrentMonth: false,
+                isToday: false,
+                isSelected: selectedDate?.toDateString() === date.toDateString()
             });
         }
-        if (19 % 2 !== 0) {
-            slots.push({ time: '19:00', available: true });
+
+        for (let day = 1; day <= daysInMonth; day++) {
+            const date = new Date(year, month, day);
+            days.push({
+                date,
+                isCurrentMonth: true,
+                isToday: date.toDateString() === new Date().toDateString(),
+                isSelected: selectedDate?.toDateString() === date.toDateString()
+            });
         }
-        return slots;
-    };
 
-    const handlePreviousWeek = () => {
-        const newDate = new Date(currentDate);
-        newDate.setDate(newDate.getDate() - 7);
-        setCurrentDate(newDate);
-    };
+        const totalCells = 42;
+        const remainingDays = totalCells - days.length;
+        for (let day = 1; day <= remainingDays; day++) {
+            const date = new Date(year, month + 1, day);
+            days.push({
+                date,
+                isCurrentMonth: false,
+                isToday: false,
+                isSelected: false
+            });
+        }
 
-    const handleNextWeek = () => {
-        const newDate = new Date(currentDate);
-        newDate.setDate(newDate.getDate() + 7);
-        setCurrentDate(newDate);
-    };
+        return days;
+    }, [currentMonth, selectedDate]);
 
-    const calculateEndTime = (startTime: string, duration: number): string => {
+    // 🔥 FORMATEAR FECHA
+    const formatDateHeader = useCallback((date: Date) => {
+        const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+        const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+        return {
+            day: days[date.getDay()],
+            date: date.getDate(),
+            month: months[date.getMonth()],
+            fullMonth: months[date.getMonth()],
+            year: date.getFullYear()
+        };
+    }, []);
+
+    // 🔥 NAVEGACIÓN DEL CALENDARIO
+    const navigateMonth = useCallback((direction: 'prev' | 'next') => {
+        setCurrentMonth(prev => {
+            const newDate = new Date(prev);
+            if (direction === 'prev') {
+                newDate.setMonth(prev.getMonth() - 1);
+            } else {
+                newDate.setMonth(prev.getMonth() + 1);
+            }
+            return newDate;
+        });
+    }, []);
+
+    // 🔥 CALCULAR HORA FINAL
+    const calculateEndTime = useCallback((startTime: string, duration: number) => {
         const [hours, minutes] = startTime.split(':').map(Number);
         const totalMinutes = hours * 60 + minutes + duration;
         const endHours = Math.floor(totalMinutes / 60);
         const endMinutes = totalMinutes % 60;
         return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}`;
-    };
+    }, []);
 
-    const handleScheduleAppointment = async () => {
-        if (!selectedService || !selectedStylist || !selectedDate) {
-            setError('Por favor completa todos los campos requeridos');
+    // 🔥 REDIRIGIR A PAGOS SIN GUARDAR CITA
+    const handleIrAPagos = async () => {
+        console.log('🎯 ========== REDIRIGIENDO A PAGOS ==========');
+
+        // Validaciones
+        if (!selectedClient) {
+            setError('Por favor selecciona o crea un cliente');
             return;
         }
 
-        if (!user?.access_token) {
-            setError('No hay sesión activa');
+        if (!selectedService) {
+            setError('Por favor selecciona un servicio');
             return;
         }
+
+        if (!selectedStylist) {
+            setError('Por favor selecciona un estilista');
+            return;
+        }
+
+        if (!selectedStylist.profesional_id) {
+            setError('El estilista seleccionado no tiene ID válido');
+            return;
+        }
+
+        if (!selectedDate) {
+            setError('Por favor selecciona una fecha');
+            return;
+        }
+
+        console.log('✅ TODAS LAS VALIDACIONES PASARON');
 
         setLoading(true);
         setError(null);
@@ -206,168 +410,314 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({ onClose, se
         try {
             const endTime = calculateEndTime(selectedTime, selectedService.duration);
 
-            const fechaCita = new Date(selectedDate!);
-            const [hours, minutes] = selectedTime.split(':').map(Number);
-            fechaCita.setHours(hours, minutes, 0, 0);
-
-            const citaData = {
+            // 🔥 PREPARAR DATOS PARA LA PÁGINA DE PAGOS (SIN CREAR CITA)
+            const citaParaPago: CitaParaPago = {
+                cliente: selectedClient.nombre,
+                servicio: selectedService.name,
+                profesional: selectedStylist.nombre,
+                fecha: formatFechaBonita(selectedDate, selectedTime),
+                hora_inicio: selectedTime,
+                hora_fin: endTime,
+                duracion: calcularDuracionTexto(selectedService.duration),
+                monto_total: selectedService.price,
+                cliente_id: selectedClient.cliente_id,
+                profesional_id: selectedStylist.profesional_id,
+                servicio_id: selectedService.profesional_id,
                 sede_id: sedeId,
-                cliente_id: 'nuevo_cliente',
-                estilista_id: selectedStylist._id,
-                servicio_id: selectedService.id,
-                fecha: fechaCita.toISOString(),
-                hora_inicio: selectedTime + ':00',
-                hora_fin: endTime + ':00',
-                estado: 'pendiente'
+                notas: notes
             };
 
-            console.log("Enviando datos al backend:", citaData);
+            console.log('💰 PREPARANDO DATOS PARA PAGOS:', citaParaPago);
 
-            const resultado = await crearCita(citaData, user.access_token);
-
-            console.log("Cita creada exitosamente:", resultado);
-
-            setClientSearch('');
-            setSelectedService(null);
-            setSelectedStylist(null);
-            setNotes('');
+            // 🔥 CERRAR EL MODAL PRIMERO
             onClose();
 
+            // 🔥 ESPERAR UN MOMENTO Y LUEGO REDIRIGIR A PAGOS
+            setTimeout(() => {
+                // Navegar a la página de pagos con los datos de la cita
+                navigate('/superadmin/paymethods', { 
+                    state: { 
+                        cita: citaParaPago,
+                        fromScheduler: true 
+                    } 
+                });
+            }, 300);
+
         } catch (error: any) {
-            console.error("Error al crear cita:", error);
-            setError(error.message || "Error al crear la cita");
-        } finally {
+            console.error('❌ ERROR PREPARANDO DATOS:', error);
+            setError("Error al preparar los datos para el pago");
+        }
+        finally {
             setLoading(false);
         }
     };
 
-    const weekDays = getWeekDays(currentDate);
-    const calendarTimeSlots = generateCalendarTimeSlots();
-    const allTimeSlots = generateTimeSlots();
+    const calendarDays = useMemo(() => generateCalendarDays(), [generateCalendarDays]);
+    const allTimeSlots = useMemo(() => generateTimeSlots(), [generateTimeSlots]);
+    const dayHeaders = useMemo(() => ['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá'], []);
+
+    const handleDateSelect = useCallback((date: Date) => {
+        setSelectedDate(date);
+        setShowMiniCalendar(false);
+    }, []);
+
+    const handleTimeSelect = useCallback((time: string) => {
+        setSelectedTime(time);
+        setShowTimeSelector(false);
+    }, []);
+
+    const handleCloseSelectors = useCallback(() => {
+        setShowTimeSelector(false);
+        setShowMiniCalendar(false);
+    }, []);
+
+    // 🔥 CALENDARIO
+    const MiniCalendar = useCallback(() => {
+        return (
+            <div className="absolute z-30 mt-2 w-80 bg-white border border-gray-200 rounded-2xl shadow-2xl p-4">
+                <div className="flex items-center justify-between mb-4">
+                    <button
+                        onClick={() => navigateMonth('prev')}
+                        className="p-2 hover:bg-gray-100 rounded-xl transition-colors"
+                    >
+                        <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <div className="font-semibold text-gray-900">
+                        {formatDateHeader(currentMonth).fullMonth} {currentMonth.getFullYear()}
+                    </div>
+                    <button
+                        onClick={() => navigateMonth('next')}
+                        className="p-2 hover:bg-gray-100 rounded-xl transition-colors"
+                    >
+                        <ChevronRight className="w-4 h-4" />
+                    </button>
+                </div>
+
+                <div className="grid grid-cols-7 gap-1 mb-2">
+                    {dayHeaders.map((day, i) => (
+                        <div key={`day-header-${i}`} className="text-xs font-semibold text-gray-500 text-center py-2">
+                            {day}
+                        </div>
+                    ))}
+                </div>
+
+                <div className="grid grid-cols-7 gap-1">
+                    {calendarDays.map(({ date, isCurrentMonth, isToday, isSelected }, i) => (
+                        <button
+                            key={`calendar-day-${date.toISOString()}-${i}`}
+                            onClick={() => isCurrentMonth && handleDateSelect(date)}
+                            disabled={!isCurrentMonth}
+                            className={`h-10 w-10 text-sm flex items-center justify-center rounded-xl transition-all
+                                ${!isCurrentMonth ? 'text-gray-300 cursor-default' : ''}
+                                ${isSelected ? 'bg-blue-600 text-white shadow-lg scale-105' : ''}
+                                ${isToday && !isSelected ? 'bg-blue-100 text-blue-600 border border-blue-300' : ''}
+                                ${isCurrentMonth && !isSelected && !isToday ? 'hover:bg-gray-100 text-gray-700 hover:scale-105' : ''}`}
+                        >
+                            {date.getDate()}
+                        </button>
+                    ))}
+                </div>
+
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                    <button
+                        onClick={() => {
+                            const today = new Date();
+                            setCurrentMonth(new Date());
+                            handleDateSelect(today);
+                        }}
+                        className="w-full text-sm text-blue-600 hover:text-blue-700 font-semibold py-2 hover:bg-blue-50 rounded-lg transition-colors"
+                    >
+                        ⭐ Seleccionar hoy
+                    </button>
+                </div>
+            </div>
+        );
+    }, [currentMonth, calendarDays, dayHeaders, formatDateHeader, navigateMonth, handleDateSelect]);
 
     return (
-        <div className="w-full max-w-6xl mx-auto bg-white rounded-lg shadow-sm">
-            <div className="flex flex-col lg:flex-row">
-                {/* Panel lateral - Formulario de reserva */}
-                <div className="w-full lg:w-80 bg-white border-b lg:border-b-0 lg:border-r border-gray-200 p-6">
-                    <h2 className="text-xl font-semibold mb-6">Nueva Reserva</h2>
+        <div className="w-full max-w-2xl mx-auto bg-white rounded-2xl shadow-xl border border-gray-100">
+            <div className="p-8">
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">Nueva Reserva</h2>
+                <p className="text-gray-600 mb-6">Completa los datos para agendar la cita</p>
 
-                    {error && (
-                        <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
-                            {error}
-                        </div>
-                    )}
+                {error && (
+                    <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
+                        <div className="font-semibold">Error</div>
+                        {error}
+                        <button
+                            onClick={() => setError(null)}
+                            className="float-right text-red-600 hover:text-red-800"
+                        >
+                            <X className="w-4 h-4" />
+                        </button>
+                    </div>
+                )}
 
-                    <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Cliente</label>
-                            <div className="relative">
-                                <input
-                                    type="text"
-                                    placeholder="Buscar cliente..."
-                                    value={clientSearch}
-                                    onChange={(e) => setClientSearch(e.target.value)}
-                                    className="w-full border border-gray-300 rounded-lg px-4 py-2 pr-12 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                                />
-                                <button className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                                    <Plus className="w-5 h-5" />
-                                </button>
-                            </div>
-                        </div>
+                <div className="space-y-6">
+                    {/* COMPONENTE DE BÚSQUEDA DE CLIENTE */}
+                    <ClientSearch
+                        sedeId={sedeId}
+                        selectedClient={selectedClient}
+                        onClientSelect={handleClientSelect}
+                        onClientClear={handleClientClear}
+                        required={true}
+                    />
 
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Estilista *</label>
-                            <select
-                                value={selectedStylist?._id || ''}
-                                onChange={(e) => {
-                                    const estilista = estilistas.find(s => s._id === e.target.value) || null;
-                                    setSelectedStylist(estilista);
-                                }}
-                                disabled={loadingEstilistas}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white disabled:bg-gray-100"
-                            >
-                                <option value="">Seleccionar estilista...</option>
-                                {loadingEstilistas ? (
-                                    <option value="">Cargando estilistas...</option>
-                                ) : (
-                                    estilistas.map(stylist => (
-                                        <option key={stylist._id} value={stylist._id}>
-                                            {stylist.nombre}
-                                        </option>
-                                    ))
-                                )}
-                            </select>
-                            {estilistas.length === 0 && !loadingEstilistas && (
-                                <div className="mt-1 text-xs text-gray-500">
-                                    No hay estilistas disponibles en esta sede
-                                </div>
-                            )}
-                        </div>
-
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Servicio *</label>
-                            <select
-                                value={selectedService?.id || ''}
-                                onChange={(e) => setSelectedService(serviciosAMostrar.find(s => s.id === e.target.value) || null)}
-                                disabled={!selectedStylist || loadingServicios}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none bg-white disabled:bg-gray-100"
-                            >
-                                <option value="">
-                                    {!selectedStylist 
-                                        ? 'Selecciona un estilista primero' 
-                                        : loadingServicios 
-                                        ? 'Cargando servicios...' 
-                                        : 'Seleccionar servicio...'
+                    {/* ESTILISTA */}
+                    <div>
+                        <label className="block text-sm font-semibold text-gray-800 mb-3">
+                            Estilista *
+                        </label>
+                        <select
+                            value={selectedStylist?.profesional_id || selectedStylist?._id || ''}
+                            disabled={loadingEstilistas || estilistas.length === 0}
+                            onChange={(e) => handleStylistChange(e.target.value)}
+                            className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white disabled:bg-gray-100 transition-all"
+                        >
+                            <option value="">
+                                {loadingEstilistas
+                                    ? '🔄 Cargando estilistas...'
+                                    : estilistas.length === 0
+                                        ? '❌ No hay estilistas disponibles'
+                                        : '👨‍💼 Seleccionar estilista...'
+                                }
+                            </option>
+                            {estilistas.map(stylist => (
+                                <option
+                                    key={`stylist-${stylist.profesional_id || stylist._id}`}
+                                    value={stylist.profesional_id || stylist._id}
+                                >
+                                    {stylist.nombre}
+                                    {stylist.servicios_no_presta.length > 0 &&
+                                        ` `
                                     }
                                 </option>
-                                {serviciosAMostrar.map(service => (
-                                    <option key={service.id} value={service.id}>
-                                        {service.name}
-                                    </option>
-                                ))}
-                            </select>
-                            {selectedService && (
-                                <div className="mt-1 text-xs text-gray-500">
-                                    Duración: {selectedService.duration}min | ${selectedService.price}
-                                </div>
-                            )}
-                            {selectedStylist && serviciosAMostrar.length === 0 && !loadingServicios && (
-                                <div className="mt-1 text-xs text-gray-500">
-                                    No hay servicios disponibles para este estilista
-                                </div>
+                            ))}
+                        </select>
+
+                        <div className="mt-2 text-xs text-gray-600">
+                            {loadingEstilistas ? (
+                                '🔄 Cargando estilistas...'
+                            ) : estilistas.length === 0 ? (
+                                '❌ No hay estilistas disponibles en esta sede'
+                            ) : selectedStylist ? (
+                                `✅ ${selectedStylist.nombre} seleccionado - ${serviciosAMostrar.length} servicios disponibles`
+                            ) : (
+                                `📋 ${estilistas.length} estilistas únicos disponibles - Selecciona uno para ver servicios`
                             )}
                         </div>
+                    </div>
 
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Cuándo *</label>
+                    {/* SERVICIO */}
+                    <div>
+                        <label className="block text-sm font-semibold text-gray-800 mb-3">
+                            Servicio *
+                        </label>
+
+                        {!selectedStylist ? (
+                            <div className="p-4 bg-gray-100 rounded-xl text-gray-600 text-center">
+                                👆 Primero selecciona un estilista para ver los servicios disponibles
+                            </div>
+                        ) : (
+                            <>
+                                <select
+                                    value={selectedService?.profesional_id || ''}
+                                    disabled={loadingServicios || serviciosAMostrar.length === 0}
+                                    onChange={(e) => setSelectedService(serviciosAMostrar.find(s => s.profesional_id === e.target.value) || null)}
+                                    className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white disabled:bg-gray-100 transition-all"
+                                >
+                                    <option value="">
+                                        {loadingServicios
+                                            ? '🔄 Cargando servicios...'
+                                            : serviciosAMostrar.length === 0
+                                                ? '❌ No hay servicios disponibles para este estilista'
+                                                : '💇‍♀️ Seleccionar servicio...'
+                                        }
+                                    </option>
+                                    {serviciosAMostrar.map(service => (
+                                        <option key={`service-${service.profesional_id}`} value={service.profesional_id}>
+                                            {service.name} - {service.duration}min - ${service.price}
+                                        </option>
+                                    ))}
+                                </select>
+
+                                <div className="mt-2 text-xs text-gray-600">
+                                    {loadingServicios ? (
+                                        '🔄 Cargando servicios...'
+                                    ) : serviciosAMostrar.length === 0 ? (
+                                        <span className="text-orange-600">
+                                            ⚠️ Este estilista no presta ningún servicio disponible
+                                        </span>
+                                    ) : selectedService ? (
+                                        `✅ ${selectedService.name} seleccionado`
+                                    ) : (
+                                        `📋 ${serviciosAMostrar.length} servicios disponibles`
+                                    )}
+                                </div>
+
+                                {selectedService && (
+                                    <div className="mt-3 p-3 bg-blue-50 rounded-xl border border-blue-200">
+                                        <div className="flex justify-between items-center text-sm">
+                                            <span className="font-semibold text-blue-900">{selectedService.name}</span>
+                                            <div className="flex gap-4 text-blue-700">
+                                                <span>⏱ {selectedService.duration}min</span>
+                                                <span>💰 ${selectedService.price}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+
+                    {/* FECHA Y HORA */}
+                    <div>
+                        <label className="block text-sm font-semibold text-gray-800 mb-3">
+                            Fecha y Hora *
+                        </label>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="relative">
+                                <button
+                                    onClick={() => setShowMiniCalendar(!showMiniCalendar)}
+                                    className="w-full flex items-center justify-between border border-gray-300 rounded-xl px-4 py-3 hover:border-blue-500 transition-all bg-white"
+                                >
+                                    <span className="text-sm flex items-center gap-2">
+                                        <CalendarIcon className="w-4 h-4" />
+                                        {selectedDate
+                                            ? `${formatDateHeader(selectedDate).date} ${formatDateHeader(selectedDate).month}`
+                                            : '📅 Seleccionar fecha'
+                                        }
+                                    </span>
+                                </button>
+                                {showMiniCalendar && <MiniCalendar />}
+                            </div>
+
                             <div className="relative">
                                 <button
                                     onClick={() => setShowTimeSelector(!showTimeSelector)}
-                                    className="w-full flex items-center justify-between border border-gray-300 rounded-lg px-3 py-2 hover:border-blue-500 transition-colors"
+                                    className="w-full flex items-center justify-between border border-gray-300 rounded-xl px-4 py-3 hover:border-blue-500 transition-all bg-white"
                                 >
-                                    <span className="text-sm flex-1 text-left">
-                                        {selectedDate ?
-                                            `${formatDateHeader(selectedDate).day}, ${formatDateHeader(selectedDate).date} ${formatDateHeader(selectedDate).month}`
-                                            : 'Seleccionar fecha'}
+                                    <span className="text-sm flex items-center gap-2">
+                                        <Clock className="w-4 h-4" />
+                                        {selectedTime}
                                     </span>
-                                    <span className="text-sm font-medium text-blue-600">{selectedTime}</span>
                                 </button>
 
                                 {showTimeSelector && (
-                                    <div className="absolute z-30 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                                        {allTimeSlots.map((slot, idx) => (
+                                    <div className="absolute z-30 mt-2 w-full bg-white border border-gray-200 rounded-2xl shadow-2xl max-h-64 overflow-y-auto">
+                                        {allTimeSlots.map((time, i) => (
                                             <button
-                                                key={`${slot.time}-${idx}`}
-                                                onClick={() => {
-                                                    setSelectedTime(slot.time);
-                                                    setShowTimeSelector(false);
-                                                }}
-                                                className={`w-full text-left px-4 py-2 hover:bg-blue-50 transition-colors ${selectedTime === slot.time ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-700'
-                                                    }`}
+                                                key={`time-slot-${time}-${i}`}
+                                                onClick={() => handleTimeSelect(time)}
+                                                className={`w-full text-left px-4 py-3 hover:bg-blue-50 transition-all border-b border-gray-100 last:border-b-0
+                                                    ${selectedTime === time ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-700'}`}
                                             >
-                                                <div className="flex items-center gap-2">
+                                                <div className="flex items-center gap-3">
                                                     <Clock className="w-4 h-4" />
-                                                    {slot.time}
+                                                    {time}
+                                                    {selectedTime === time && (
+                                                        <span className="ml-auto text-blue-600">✓</span>
+                                                    )}
                                                 </div>
                                             </button>
                                         ))}
@@ -375,108 +725,54 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({ onClose, se
                                 )}
                             </div>
                         </div>
-
-                        <button
-                            onClick={handleScheduleAppointment}
-                            disabled={!selectedService || !selectedStylist || !selectedDate || loading}
-                            className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
-                        >
-                            {loading ? (
-                                <>
-                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                                    Creando...
-                                </>
-                            ) : (
-                                'Agendar Cita'
-                            )}
-                        </button>
-
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Notas</label>
-                            <textarea
-                                value={notes}
-                                onChange={(e) => setNotes(e.target.value)}
-                                placeholder="Agregar notas especiales..."
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none"
-                                rows={2}
-                            />
-                        </div>
-                    </div>
-                </div>
-
-                {/* Calendario semanal */}
-                <div className="flex-1 flex flex-col min-h-80">
-                    <div className="bg-white border-b border-gray-200 p-4">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                                <button onClick={handlePreviousWeek} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-                                    <ChevronLeft className="w-5 h-5" />
-                                </button>
-                                <h2 className="text-lg font-semibold">
-                                    {currentDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
-                                </h2>
-                                <button onClick={handleNextWeek} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-                                    <ChevronRight className="w-5 h-5" />
-                                </button>
-                            </div>
-                        </div>
                     </div>
 
-                    <div className="flex-1 overflow-auto">
-                        <div className="min-w-max">
-                            <div className="flex bg-white border-b border-gray-200 sticky top-0 z-10">
-                                <div className="w-16 flex-shrink-0"></div>
-                                {weekDays.map((day, idx) => {
-                                    const { day: dayName, date, month } = formatDateHeader(day);
-                                    const isToday = day.toDateString() === new Date().toDateString();
-                                    return (
-                                        <div
-                                            key={idx}
-                                            className="flex-1 min-w-[100px] p-2 text-center border-l border-gray-200 cursor-pointer hover:bg-gray-50"
-                                            onClick={() => setSelectedDate(day)}
-                                        >
-                                            <div className={`text-sm font-medium ${isToday ? 'text-blue-600' : 'text-gray-600'}`}>
-                                                {dayName}
-                                            </div>
-                                            <div className={`text-xs ${isToday ? 'text-blue-600' : 'text-gray-500'}`}>
-                                                {month} {date}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-
-                            <div className="relative">
-                                {calendarTimeSlots.map((slot, slotIdx) => (
-                                    <div key={`${slot.time}-${slotIdx}`} className="flex border-b border-gray-100">
-                                        <div className="w-16 flex-shrink-0 text-xs text-gray-500 p-1 text-right pr-2">
-                                            {slot.time}
-                                        </div>
-                                        {weekDays.map((day, dayIdx) => (
-                                            <div
-                                                key={`${slot.time}-${dayIdx}`}
-                                                onClick={() => {
-                                                    setSelectedDate(day);
-                                                    setSelectedTime(slot.time);
-                                                }}
-                                                className="flex-1 min-w-[100px] h-12 border-l border-gray-100 hover:bg-blue-50 cursor-pointer transition-colors relative"
-                                            >
-                                                {/* Espacio para citas existentes */}
-                                            </div>
-                                        ))}
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
+                    {/* NOTAS */}
+                    <div>
+                        <label className="block text-sm font-semibold text-gray-800 mb-3">
+                            Notas <span className="text-gray-500 font-normal">(opcional)</span>
+                        </label>
+                        <textarea
+                            value={notes}
+                            onChange={(e) => setNotes(e.target.value)}
+                            placeholder="Agregar notas especiales, preferencias del cliente, etc..."
+                            className="w-full border border-gray-300 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none transition-all"
+                            rows={3}
+                        />
                     </div>
+
+                    {/* 🔥 BOTÓN MODIFICADO: SOLO REDIRIGE A PAGOS */}
+                    <button
+                        onClick={handleIrAPagos}
+                        disabled={!selectedClient || !selectedService || !selectedStylist || !selectedDate || loading}
+                        className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-4 rounded-xl font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center shadow-lg relative overflow-hidden"
+                    >
+                        {loading ? (
+                            <>
+                                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-3"></div>
+                                Redirigiendo a pagos...
+                            </>
+                        ) : (
+                            <>
+                                <span>💰 Realizar Pago - ${selectedService?.price || '0'}</span>
+                                {!loading && (
+                                    <div className="absolute inset-0 bg-green-500 opacity-0 hover:opacity-20 transition-opacity duration-300"></div>
+                                )}
+                            </>
+                        )}
+                    </button>
                 </div>
             </div>
 
-            {showTimeSelector && (
-                <div className="fixed inset-0 z-20" onClick={() => setShowTimeSelector(false)} />
+            {/* Overlay para cerrar selectores */}
+            {(showTimeSelector || showMiniCalendar) && (
+                <div
+                    className="fixed inset-0 z-20"
+                    onClick={handleCloseSelectors}
+                />
             )}
         </div>
     );
 };
 
-export default AppointmentScheduler;
+export default React.memo(AppointmentScheduler);

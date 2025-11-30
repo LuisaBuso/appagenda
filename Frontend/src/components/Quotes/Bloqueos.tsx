@@ -1,88 +1,187 @@
-// src/pages/Quotes/Bloqueos.tsx
-import React, { useState } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import { createBloqueo } from "./bloqueosApi";
 import { useAuth } from "../../components/Auth/AuthContext";
 
-// ✅ Props para permitir cerrar el modal desde fuera
 interface BloqueosProps {
   onClose: () => void;
-  estilistaId?: string; // ← Agregar esta prop
+  estilistaId?: string;
   fecha?: string;
   horaInicio?: string;
 }
 
-const Bloqueos: React.FC<BloqueosProps> = ({ onClose }) => {
+// 🔥 VALORES POR DEFECTO OPTIMIZADOS
+const DEFAULT_VALUES = {
+  motivo: "",
+  profesionalId: "",
+  fechaInicio: "",
+  horaInicio: "09:00",
+  fechaFin: "",
+  horaFin: "10:00",
+  repetir: false,
+  tipoRepeticion: "diariamente" as const,
+  intervalo: 1,
+  tipoFinalizacion: "repeticiones" as const,
+  repeticiones: 1,
+  fechaFinal: "",
+  incluyeOriginal: true,
+};
+
+const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaInicio }) => {
   const { user } = useAuth();
-  const [motivo, setMotivo] = useState("");
-  const [profesionalId, setProfesionalId] = useState("");
-  const [fechaInicio, setFechaInicio] = useState("");
-  const [horaInicio, setHoraInicio] = useState("");
-  const [fechaFin, setFechaFin] = useState("");
-  const [horaFin, setHoraFin] = useState("");
-  const [repetir, setRepetir] = useState(false);
-  const [tipoRepeticion, setTipoRepeticion] = useState("diariamente");
-  const [intervalo, setIntervalo] = useState(1);
-  const [tipoFinalizacion, setTipoFinalizacion] = useState("repeticiones");
-  const [repeticiones, setRepeticiones] = useState(1);
-  const [fechaFinal, setFechaFinal] = useState("");
-  const [incluyeOriginal, setIncluyeOriginal] = useState(true);
+  const [formData, setFormData] = useState({
+    ...DEFAULT_VALUES,
+    // 🔥 Pre-llenar datos si vienen de props
+    profesionalId: estilistaId || "",
+    fechaInicio: fecha || "",
+    horaInicio: horaInicio || DEFAULT_VALUES.horaInicio,
+  });
+  
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState("");
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // 🔥 HANDLERS OPTIMIZADOS CON useCallback
+  const handleInputChange = useCallback((field: string, value: any) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+  }, []);
+
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user?.access_token) return;
 
-    const inicio = `${fechaInicio}T${horaInicio}:00`;
-    const fin = `${fechaFin}T${horaFin}:00`;
+    const inicio = `${formData.fechaInicio}T${formData.horaInicio}:00`;
+    const fin = `${formData.fechaFin}T${formData.horaFin}:00`;
 
     const data = {
-      motivo,
-      profesional_id: profesionalId,
+      motivo: formData.motivo,
+      profesional_id: formData.profesionalId,
       fecha_inicio: inicio,
       fecha_fin: fin,
-      repetir,
-      configuracion_repetir: repetir ? {
-        tipo: tipoRepeticion,
-        intervalo,
+      repetir: formData.repetir,
+      configuracion_repetir: formData.repetir ? {
+        tipo: formData.tipoRepeticion,
+        intervalo: formData.intervalo,
         finaliza: {
-          tipo: tipoFinalizacion,
-          repeticiones: tipoFinalizacion === "repeticiones" ? repeticiones : undefined,
-          fecha: tipoFinalizacion === "fecha" ? fechaFinal : undefined
+          tipo: formData.tipoFinalizacion,
+          repeticiones: formData.tipoFinalizacion === "repeticiones" ? formData.repeticiones : undefined,
+          fecha: formData.tipoFinalizacion === "fecha" ? formData.fechaFinal : undefined
         },
-        incluye_original: incluyeOriginal
+        incluye_original: formData.incluyeOriginal
       } : undefined
     };
 
     try {
       setLoading(true);
+      setMensaje("");
+      
       await createBloqueo(data, user.access_token);
       setMensaje("✅ Bloqueo guardado correctamente");
 
-      // Limpiar formulario
-      setMotivo("");
-      setProfesionalId("");
-      setFechaInicio("");
-      setHoraInicio("");
-      setFechaFin("");
-      setHoraFin("");
-      setRepetir(false);
-      setTipoRepeticion("diariamente");
-      setIntervalo(1);
-      setTipoFinalizacion("repeticiones");
-      setRepeticiones(1);
-      setFechaFinal("");
-      setIncluyeOriginal(true);
-
-      // Cerrar modal después de guardar
-      setTimeout(() => onClose(), 800);
+      // 🔥 Cerrar después de éxito
+      setTimeout(onClose, 800);
     } catch (err) {
       console.error(err);
       setMensaje("❌ Error al guardar el bloqueo");
     } finally {
       setLoading(false);
     }
-  };
+  }, [formData, user, onClose]);
+
+  // 🔥 CALCULAR FECHA MÍNIMA PARA FECHA FIN
+  const minFechaFin = useMemo(() => {
+    return formData.fechaInicio || undefined;
+  }, [formData.fechaInicio]);
+
+  // 🔥 RENDERIZADO CONDICIONAL OPTIMIZADO
+  const renderRepetirSection = useMemo(() => {
+    if (!formData.repetir) return null;
+
+    return (
+      <div className="ml-7 space-y-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
+        <div className="space-y-3">
+          <label className="block text-sm font-medium text-gray-700">Repetir</label>
+          
+          <div className="flex items-center space-x-3">
+            <select
+              value={formData.tipoRepeticion}
+              onChange={(e) => handleInputChange('tipoRepeticion', e.target.value)}
+              className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600"
+            >
+              <option value="diariamente">Diariamente</option>
+              <option value="semanalmente">Semanalmente</option>
+              <option value="mensualmente">Mensualmente</option>
+            </select>
+            
+            <span className="text-sm text-gray-600 whitespace-nowrap">Cada</span>
+            
+            <input
+              type="number"
+              min="1"
+              value={formData.intervalo}
+              onChange={(e) => handleInputChange('intervalo', parseInt(e.target.value) || 1)}
+              className="w-16 p-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600"
+            />
+            
+            <span className="text-sm text-gray-600 whitespace-nowrap">
+              {formData.tipoRepeticion === "diariamente" ? "día(s)" : 
+               formData.tipoRepeticion === "semanalmente" ? "semana(s)" : "mes(es)"}
+            </span>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <label className="block text-sm font-medium text-gray-700">Finaliza</label>
+          
+          <div className="space-y-2">
+            <div className="flex items-center space-x-3">
+              <input
+                type="radio"
+                id="finaliza-repeticiones"
+                name="finaliza"
+                value="repeticiones"
+                checked={formData.tipoFinalizacion === "repeticiones"}
+                onChange={(e) => handleInputChange('tipoFinalizacion', e.target.value)}
+                className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
+              />
+              <label htmlFor="finaliza-repeticiones" className="text-sm text-gray-700 whitespace-nowrap">
+                Después de
+              </label>
+              <input
+                type="number"
+                min="1"
+                value={formData.repeticiones}
+                onChange={(e) => handleInputChange('repeticiones', parseInt(e.target.value) || 1)}
+                className="w-20 p-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600"
+                placeholder="Ej. 5"
+              />
+              <span className="text-sm text-gray-600 whitespace-nowrap">repeticiones</span>
+            </div>
+
+            <div className="flex items-center space-x-3">
+              <input
+                type="radio"
+                id="finaliza-fecha"
+                name="finaliza"
+                value="fecha"
+                checked={formData.tipoFinalizacion === "fecha"}
+                onChange={(e) => handleInputChange('tipoFinalizacion', e.target.value)}
+                className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
+              />
+              <label htmlFor="finaliza-fecha" className="text-sm text-gray-700 whitespace-nowrap">
+                El
+              </label>
+              <input
+                type="date"
+                value={formData.fechaFinal}
+                onChange={(e) => handleInputChange('fechaFinal', e.target.value)}
+                className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600"
+                min={formData.fechaInicio}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }, [formData.repetir, formData.tipoRepeticion, formData.intervalo, formData.tipoFinalizacion, formData.repeticiones, formData.fechaFinal, formData.fechaInicio, handleInputChange]);
 
   return (
     <div className="p-6 max-w-lg mx-auto bg-white rounded-xl shadow-lg border border-gray-100">
@@ -96,8 +195,8 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose }) => {
           </label>
           <input
             type="text"
-            value={motivo}
-            onChange={(e) => setMotivo(e.target.value)}
+            value={formData.motivo}
+            onChange={(e) => handleInputChange('motivo', e.target.value)}
             required
             className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-colors"
             placeholder="Ej: Vacaciones, Capacitación, Mantenimiento"
@@ -111,9 +210,9 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose }) => {
           </label>
           <input
             type="text"
-            placeholder="ID del profesional"
-            value={profesionalId}
-            onChange={(e) => setProfesionalId(e.target.value)}
+            placeholder="Nombre del profesional"
+            value={formData.profesionalId}
+            onChange={(e) => handleInputChange('profesionalId', e.target.value)}
             required
             className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-colors"
           />
@@ -125,8 +224,8 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose }) => {
             <label className="block text-sm font-medium text-gray-700 mb-1">Fecha de inicio</label>
             <input
               type="date"
-              value={fechaInicio}
-              onChange={(e) => setFechaInicio(e.target.value)}
+              value={formData.fechaInicio}
+              onChange={(e) => handleInputChange('fechaInicio', e.target.value)}
               required
               className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-colors"
             />
@@ -135,8 +234,8 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose }) => {
             <label className="block text-sm font-medium text-gray-700 mb-1">Hora inicio</label>
             <input
               type="time"
-              value={horaInicio}
-              onChange={(e) => setHoraInicio(e.target.value)}
+              value={formData.horaInicio}
+              onChange={(e) => handleInputChange('horaInicio', e.target.value)}
               required
               className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-colors"
             />
@@ -149,9 +248,10 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose }) => {
             <label className="block text-sm font-medium text-gray-700 mb-1">Fecha de fin</label>
             <input
               type="date"
-              value={fechaFin}
-              onChange={(e) => setFechaFin(e.target.value)}
+              value={formData.fechaFin}
+              onChange={(e) => handleInputChange('fechaFin', e.target.value)}
               required
+              min={minFechaFin}
               className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-colors"
             />
           </div>
@@ -159,22 +259,22 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose }) => {
             <label className="block text-sm font-medium text-gray-700 mb-1">Hora fin</label>
             <input
               type="time"
-              value={horaFin}
-              onChange={(e) => setHoraFin(e.target.value)}
+              value={formData.horaFin}
+              onChange={(e) => handleInputChange('horaFin', e.target.value)}
               required
               className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 transition-colors"
             />
           </div>
         </div>
 
-        {/* Repetir bloqueo - Sección mejorada */}
+        {/* Repetir bloqueo */}
         <div className="border-t border-gray-200 pt-4">
           <div className="flex items-center space-x-3 mb-4">
             <input
               type="checkbox"
               id="repetir"
-              checked={repetir}
-              onChange={(e) => setRepetir(e.target.checked)}
+              checked={formData.repetir}
+              onChange={(e) => handleInputChange('repetir', e.target.checked)}
               className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
             />
             <label htmlFor="repetir" className="text-sm font-medium text-gray-700">
@@ -182,94 +282,7 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose }) => {
             </label>
           </div>
 
-          {repetir && (
-            <div className="ml-7 space-y-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
-              <div className="space-y-3">
-                <label className="block text-sm font-medium text-gray-700">Repetir</label>
-                
-                <div className="flex items-center space-x-3">
-                  <select
-                    value={tipoRepeticion}
-                    onChange={(e) => setTipoRepeticion(e.target.value)}
-                    className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600"
-                  >
-                    <option value="diariamente">Diariamente</option>
-                    <option value="semanalmente">Semanalmente</option>
-                    <option value="mensualmente">Mensualmente</option>
-                  </select>
-                  
-                  <span className="text-sm text-gray-600 whitespace-nowrap">Cada</span>
-                  
-                  <input
-                    type="number"
-                    min="1"
-                    value={intervalo}
-                    onChange={(e) => setIntervalo(parseInt(e.target.value) || 1)}
-                    className="w-16 p-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600"
-                  />
-                  
-                  <span className="text-sm text-gray-600 whitespace-nowrap">
-                    {tipoRepeticion === "diariamente" ? "día(s)" : 
-                     tipoRepeticion === "semanalmente" ? "semana(s)" : "mes(es)"}
-                  </span>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <label className="block text-sm font-medium text-gray-700">Finaliza</label>
-                
-                <div className="space-y-2">
-                  <div className="flex items-center space-x-3">
-                    <input
-                      type="radio"
-                      id="finaliza-repeticiones"
-                      name="finaliza"
-                      value="repeticiones"
-                      checked={tipoFinalizacion === "repeticiones"}
-                      onChange={(e) => setTipoFinalizacion(e.target.value)}
-                      className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                    />
-                    <label htmlFor="finaliza-repeticiones" className="text-sm text-gray-700 whitespace-nowrap">
-                      Después de
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={repeticiones}
-                      onChange={(e) => setRepeticiones(parseInt(e.target.value) || 1)}
-                      className="w-20 p-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600"
-                      placeholder="Ej. 5"
-                    />
-                    <span className="text-sm text-gray-600 whitespace-nowrap">repeticiones</span>
-                  </div>
-
-                  <div className="flex items-center space-x-3">
-                    <input
-                      type="radio"
-                      id="finaliza-fecha"
-                      name="finaliza"
-                      value="fecha"
-                      checked={tipoFinalizacion === "fecha"}
-                      onChange={(e) => setTipoFinalizacion(e.target.value)}
-                      className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                    />
-                    <label htmlFor="finaliza-fecha" className="text-sm text-gray-700 whitespace-nowrap">
-                      El
-                    </label>
-                    <input
-                      type="date"
-                      value={fechaFinal}
-                      onChange={(e) => setFechaFinal(e.target.value)}
-                      className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-3 pt-2">
-              </div>
-            </div>
-          )}
+          {renderRepetirSection}
         </div>
 
         {/* Mensaje */}
@@ -303,4 +316,4 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose }) => {
   );
 };
 
-export default Bloqueos;
+export default React.memo(Bloqueos);
