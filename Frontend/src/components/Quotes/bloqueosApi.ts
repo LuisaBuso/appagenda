@@ -21,7 +21,7 @@ export async function getBloqueos(token: string) {
 }
 
 export async function createBloqueo(data: Bloqueo, token: string) {
-  const res = await fetch(`${API_BASE_URL}/bloqueos`, {
+  const res = await fetch(`${API_BASE_URL}/scheduling/block/`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

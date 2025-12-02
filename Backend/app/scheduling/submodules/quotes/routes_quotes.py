@@ -1,12 +1,15 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File, Form
 from datetime import datetime, time
 from typing import Optional, List
 from email.message import EmailMessage
 import smtplib, ssl, os
 from bson import ObjectId
+import uuid
+import boto3
+import json
 
 from app.scheduling.models import FichaCreate
-from app.scheduling.models import Cita
+from app.scheduling.models import Cita, ProductoItem
 from app.database.mongo import (
     collection_citas,
     collection_horarios,
@@ -15,11 +18,58 @@ from app.database.mongo import (
     collection_clients,
     collection_locales,
     collection_block,  # si no existe en tu proyecto elimínalo del import
-    collection_card
+    collection_card,
+    collection_commissions,
+    collection_products
 )
 from app.auth.routes import get_current_user
 
-router = APIRouter(prefix="/citas")
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_BUCKET_NAME = os.getenv("AWS_BUCKET_NAME")
+AWS_REGION = os.getenv("AWS_REGION")
+
+router = APIRouter()
+
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+    region_name=os.getenv("AWS_REGION", "us-west-2")
+)
+
+
+
+def upload_to_s3(file: UploadFile, folder_path: str) -> str:
+    """Sube un archivo a S3 y retorna la URL pública"""
+    try:
+        # Generar nombre único para el archivo
+        file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
+        unique_filename = f"{uuid.uuid4()}.{file_extension}"
+        
+        # Construir la ruta completa en S3
+        s3_key = f"{folder_path}/{unique_filename}"
+        
+        # Subir archivo a S3
+        s3_client.upload_fileobj(
+            file.file,
+            os.getenv("AWS_BUCKET_NAME"),
+            s3_key,
+        )
+        
+        # Generar URL pública
+        bucket_name = os.getenv("AWS_BUCKET_NAME")
+        region = os.getenv("AWS_REGION", "us-west-2")
+        
+        # URL estilo: https://bucket-name.s3.region.amazonaws.com/key
+        url = f"https://{bucket_name}.s3.{region}.amazonaws.com/{s3_key}"
+        
+        return url
+    except Exception as e:
+        print(f"Error subiendo archivo a S3: {e}")
+        raise HTTPException(status_code=500, detail=f"Error subiendo archivo: {str(e)}")
+
+
 
 # -----------------------
 # EMAIL (config desde env)
@@ -78,7 +128,7 @@ async def resolve_cita_by_id(cita_id: str) -> Optional[dict]:
 
 
 # =============================================================
-# 🔹 OBTENER CITAS (filtro por sede o profesional)
+# 🔹 OBTENER CITAS (filtro por sede o profesional) - OPTIMIZADO
 # =============================================================
 @router.get("/", response_model=dict)
 async def obtener_citas(
@@ -86,31 +136,57 @@ async def obtener_citas(
     profesional_id: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user)
 ):
+    # ----------- Construir filtro -----------
     filtro = {}
     if sede_id:
         filtro["sede_id"] = sede_id
     if profesional_id:
-        # el campo en las citas debe ser profesional_id (o estilista_id que guarda profesional_id)
         filtro["profesional_id"] = profesional_id
 
-    cursor = collection_citas.find(filtro).sort("fecha", 1)
-    citas = await cursor.to_list(length=None)
+    # ===== 1. Obtener todas las citas de una sola vez =====
+    citas = await collection_citas.find(filtro).sort("fecha", 1).to_list(None)
 
-    # enrich
+    if not citas:
+        return {"citas": []}
+
+    # ===== 2. Extraer IDs únicos =====
+    servicio_ids = list({c.get("servicio_id") for c in citas})
+    profesional_ids = list({c.get("profesional_id") for c in citas})
+    sede_ids = list({c.get("sede_id") for c in citas})
+
+    # ===== 3. Cargar datos en lote (MUY RÁPIDO) =====
+    servicios = await collection_servicios.find(
+        {"servicio_id": {"$in": servicio_ids}}
+    ).to_list(None)
+
+    profesionales = await collection_estilista.find(
+        {"profesional_id": {"$in": profesional_ids}}
+    ).to_list(None)
+
+    sedes = await collection_locales.find(
+        {"sede_id": {"$in": sede_ids}}
+    ).to_list(None)
+
+    # ===== 4. Convertir listas en diccionarios (O(1) acceso) =====
+    servicios_map = {s["servicio_id"]: s for s in servicios}
+    profesionales_map = {p["profesional_id"]: p for p in profesionales}
+    sedes_map = {s["sede_id"]: s for s in sedes}
+
+    # ===== 5. Enriquecer citas SIN consultar la BD =====
     for cita in citas:
         normalize_cita_doc(cita)
 
-        # servicio
-        servicio = await collection_servicios.find_one({"servicio_id": cita.get("servicio_id")})
-        cita["servicio_nombre"] = servicio.get("nombre") if servicio else "Desconocido"
+        cita["servicio_nombre"] = servicios_map.get(
+            cita.get("servicio_id"), {}
+        ).get("nombre", "Desconocido")
 
-        # profesional / estilista
-        prof = await collection_estilista.find_one({"profesional_id": cita.get("profesional_id")})
-        cita["profesional_nombre"] = prof.get("nombre") if prof else "No encontrado"
+        cita["profesional_nombre"] = profesionales_map.get(
+            cita.get("profesional_id"), {}
+        ).get("nombre", "No encontrado")
 
-        # sede
-        sede = await collection_locales.find_one({"sede_id": cita.get("sede_id")})
-        cita["sede_nombre"] = sede.get("nombre") if sede else "No encontrada"
+        cita["sede_nombre"] = sedes_map.get(
+            cita.get("sede_id"), {}
+        ).get("nombre", "No encontrada")
 
     return {"citas": citas}
 
@@ -585,33 +661,39 @@ async def get_citas_estilista(
     return respuesta
 
 
+def parse_ficha(data: str = Form(...)):
+    try:
+        parsed = json.loads(data)
+        return FichaCreate(**parsed)
+    except Exception as e:
+        print("Error parseando JSON de ficha:", e)
+        raise HTTPException(422, "Formato inválido en 'data'. Debe ser JSON válido.")   
+
 # ============================================================
-# 📌 Crear ficha (sin AWS, pero preparado)
+# 📌 Crear ficha 
 # ============================================================
-@router.post("/", response_model=dict)
+@router.post("/create-ficha", response_model=dict)
 async def crear_ficha(
-    data: FichaCreate,
+    data: FichaCreate = Depends(parse_ficha),
+    fotos_antes: Optional[List[UploadFile]] = File(None),
+    fotos_despues: Optional[List[UploadFile]] = File(None),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Crea una ficha de color/servicio.
-    Sin AWS por ahora: solo guarda URLs si vienen del frontend.
-    """
 
-    # Optional: si quisieras restringir por rol
-    # if current_user["rol"] not in ["estilista", "admin_sede", "admin"]:
-    #     raise HTTPException(403, "No autorizado para crear fichas")
+    print("📸 Fotos antes recibidas:", fotos_antes)
+    print("📸 Fotos después recibidas:", fotos_despues)
+    print("📝 Data recibida:", data.dict())
 
     # ------------------------------
-    # VALIDAR CLIENTE
+    # VALIDAR
     # ------------------------------
+    if current_user.get("rol") not in ["estilista", "admin_sede", "super_admin"]:
+        raise HTTPException(403, "No autorizado")
+
     cliente = await collection_clients.find_one({"cliente_id": data.cliente_id})
     if not cliente:
         raise HTTPException(404, "Cliente no encontrado")
 
-    # ------------------------------
-    # VALIDAR SERVICIO
-    # ------------------------------
     servicio = await collection_servicios.find_one({
         "$or": [
             {"servicio_id": data.servicio_id},
@@ -621,74 +703,417 @@ async def crear_ficha(
     if not servicio:
         raise HTTPException(404, "Servicio no encontrado")
 
-    # ------------------------------
-    # VALIDAR PROFESIONAL
-    # ------------------------------
     profesional = await collection_estilista.find_one({
         "profesional_id": data.profesional_id
     })
     if not profesional:
         raise HTTPException(404, "Profesional no encontrado")
 
-    # ------------------------------
-    # VALIDAR SEDE
-    # ------------------------------
     sede = await collection_locales.find_one({"sede_id": data.sede_id})
     if not sede:
         raise HTTPException(404, "Sede no encontrada")
 
     # ------------------------------
-    # Construcción de ficha final
+    # SUBIR FOTOS
+    # ------------------------------
+    urls_antes = []
+    if fotos_antes:
+        for foto in fotos_antes:
+            print("⬆️ Subiendo foto ANTES:", foto.filename)
+            url = upload_to_s3(
+                foto,
+                f"companies/{sede.get('company_id','default')}/clients/{data.cliente_id}/fichas/{data.tipo_ficha}/antes"
+            )
+            urls_antes.append(url)
+
+    urls_despues = []
+    if fotos_despues:
+        for foto in fotos_despues:
+            print("⬆️ Subiendo foto DESPUÉS:", foto.filename)
+            url = upload_to_s3(
+                foto,
+                f"companies/{sede.get('company_id','default')}/clients/{data.cliente_id}/fichas/{data.tipo_ficha}/despues"
+            )
+            urls_despues.append(url)
+
+    # ------------------------------
+    # FIX RESPUESTAS
+    # ------------------------------
+    respuestas_final = data.respuestas
+
+    # si vienen dentro de datos_especificos
+    if "respuestas" in data.datos_especificos:
+        respuestas_final = data.datos_especificos.get("respuestas", [])
+
+    # ------------------------------
+    # OBJETO FINAL
     # ------------------------------
     ficha = {
         "_id": ObjectId(),
         "cliente_id": data.cliente_id,
         "sede_id": data.sede_id,
         "servicio_id": data.servicio_id,
-        "servicio_nombre": data.servicio_nombre,
+        "servicio_nombre": data.servicio_nombre or servicio.get("nombre"),
         "profesional_id": data.profesional_id,
-        "profesional_nombre": data.profesional_nombre,
+        "profesional_nombre": data.profesional_nombre or profesional.get("nombre"),
+        "sede_nombre": sede.get("nombre"),
 
-        "fecha_ficha": data.fecha_ficha,
+        "fecha_ficha": data.fecha_ficha or datetime.utcnow().isoformat(),
         "fecha_reserva": data.fecha_reserva,
 
-        "email": data.email,
-        "nombre": data.nombre,
-        "apellido": data.apellido,
-        "cedula": data.cedula,
-        "telefono": data.telefono,
+        "email": data.email or cliente.get("email"),
+        "nombre": data.nombre or cliente.get("nombre"),
+        "apellido": data.apellido or cliente.get("apellido"),
+        "cedula": data.cedula or cliente.get("cedula"),
+        "telefono": data.telefono or cliente.get("telefono"),
 
-        "precio": data.precio,
+        "precio": data.precio or servicio.get("precio", 0),
         "estado": data.estado,
         "estado_pago": data.estado_pago,
 
         "tipo_ficha": data.tipo_ficha,
 
         "datos_especificos": data.datos_especificos,
-        "respuestas": data.respuestas,
-
         "descripcion_servicio": data.descripcion_servicio,
+        "respuestas": respuestas_final,
 
-        # Fotos sin AWS (solo guardamos las URLs si vienen)
         "fotos": {
-            "antes": data.fotos_antes,
-            "despues": data.fotos_despues
+            "antes": urls_antes,
+            "despues": urls_despues,
+            "antes_urls": data.fotos_antes,
+            "despues_urls": data.fotos_despues
         },
 
         "autorizacion_publicacion": data.autorizacion_publicacion,
         "comentario_interno": data.comentario_interno,
 
-        # Control interno
         "created_at": datetime.utcnow(),
-        "procesado_imagenes": False,
+        "created_by": current_user.get("email"),
+        "user_id": current_user.get("user_id"),
+
+        "procesado_imagenes": bool(urls_antes or urls_despues),
         "origen": "manual"
     }
 
-    # GUARDAR
     await collection_card.insert_one(ficha)
 
-    ficha["ficha_id"] = str(ficha["_id"])
     ficha["_id"] = str(ficha["_id"])
 
-    return ficha
+    return {
+        "success": True,
+        "message": "Ficha creada exitosamente",
+        "ficha": ficha
+    }
+
+def fix_mongo_id(doc):
+    doc["_id"] = str(doc["_id"])
+    return doc
+
+# ============================================================
+# 📅 Obtener todas las citas de la sede del admin autenticado
+# ============================================================
+@router.get("/citas-sede", response_model=dict)
+async def get_citas_sede(current_user: dict = Depends(get_current_user)):
+    if current_user["rol"] not in ["admin_sede", "admin"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Solo los administradores de sede pueden ver esta información"
+        )
+
+    sede_id = current_user.get("sede_id")
+    if not sede_id:
+        raise HTTPException(
+            status_code=400,
+            detail="El administrador no tiene asignada una sede"
+        )
+
+    citas = await collection_citas.find({"sede_id": sede_id}).to_list(None)
+
+    # 🔥 Convertir todos los ObjectId a string
+    citas = [fix_mongo_id(c) for c in citas]
+
+    return {
+        "total": len(citas),
+        "sede_id": sede_id,
+        "citas": citas
+    }
+
+
+# ============================================================
+# 📦 Agregar productos a una cita
+# ============================================================
+@router.post("/cita/{cita_id}/agregar-productos", response_model=dict)
+async def agregar_productos_a_cita(
+    cita_id: str,
+    productos: List[ProductoItem],
+    current_user: dict = Depends(get_current_user)
+):
+    # Solo admin sede o admin
+    if current_user["rol"] not in ["admin_sede", "admin"]:
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para agregar productos"
+        )
+
+    # Buscar cita
+    cita = await collection_citas.find_one({"_id": ObjectId(cita_id)})
+    if not cita:
+        raise HTTPException(status_code=404, detail="Cita no encontrada")
+
+    # Asegurar campo productos
+    productos_actuales = cita.get("productos", [])
+
+    # Procesar nuevos productos
+    nuevos_productos = []
+    total_productos = 0
+
+    for p in productos:
+        subtotal = p.cantidad * p.precio_unitario
+        nuevos_productos.append({
+            "producto_id": p.producto_id,
+            "nombre": p.nombre,
+            "cantidad": p.cantidad,
+            "precio_unitario": p.precio_unitario,
+            "subtotal": subtotal
+        })
+        total_productos += subtotal
+
+    # Agregar productos a la cita
+    productos_final = productos_actuales + nuevos_productos
+
+    # Recalcular totales
+    nuevo_total = cita.get("valor_total", 0) + total_productos
+    nuevo_saldo = cita.get("saldo_pendiente", 0) + total_productos
+
+    # Actualizar cita
+    await collection_citas.update_one(
+        {"_id": ObjectId(cita_id)},
+        {
+            "$set": {
+                "productos": productos_final,
+                "valor_total": nuevo_total,
+                "saldo_pendiente": nuevo_saldo
+            }
+        }
+    )
+
+    # Usar tu helper para serializar ObjectId
+    cita_actualizada = await collection_citas.find_one({"_id": ObjectId(cita_id)})
+    cita_actualizada["_id"] = str(cita_actualizada["_id"])
+
+    return {
+        "message": "Productos agregados correctamente",
+        "cita": cita_actualizada
+    }
+
+# ============================================================
+# 🧾 Facturar cita y calcular comisiones
+# ============================================================
+@router.post("/quotes/facturar/{cita_id}")
+async def facturar_cita(
+    cita_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    print(f"🔍 Facturar cita invocada por {current_user.get('email')} (rol={current_user.get('rol')})")
+    print(f"📋 Cita ID: {cita_id}")
+
+    # Solo admin sede / superadmin
+    if current_user["rol"] not in ["admin_sede", "superadmin"]:
+        print("❌ Usuario no autorizado para facturar")
+        raise HTTPException(status_code=403, detail="No autorizado para facturar")
+
+    # Buscar cita
+    cita = await collection_citas.find_one({"_id": ObjectId(cita_id)})
+    if not cita:
+        print("❌ Cita no encontrada")
+        raise HTTPException(status_code=404, detail="Cita no encontrada")
+
+    print(f"📄 Cita encontrada: {cita}")
+
+    if cita["estado_pago"] == "pagado":
+        print("⚠️ La cita ya está pagada")
+        raise HTTPException(status_code=400, detail="La cita ya está pagada")
+
+    servicio = await collection_servicios.find_one({
+        "servicio_id": cita["servicio_id"]
+    })
+
+    if not servicio:
+        print("❌ Servicio no encontrado")
+        raise HTTPException(status_code=404, detail="Servicio no encontrado")
+
+
+    print(f"🛠 Servicio encontrado: {servicio}")
+
+    # porcentaje de comisión (ej: 30)
+    comision_porcentaje = servicio.get("comision", 0)
+    print(f"📊 Porcentaje de comisión: {comision_porcentaje}%")
+
+    # calcular comisión
+    valor_servicio = cita["valor_total"]
+    valor_comision = (valor_servicio * comision_porcentaje) / 100
+    print(f"💰 Valor del servicio: {valor_servicio}, Valor de la comisión: {valor_comision}")
+
+    # 1️⃣ ACTUALIZAR CITA
+    await collection_citas.update_one(
+        {"_id": ObjectId(cita_id)},
+        {
+            "$set": {
+                "estado": "completada",
+                "estado_pago": "pagado",
+                "saldo_pendiente": 0
+            }
+        }
+    )
+    print("✅ Cita actualizada a estado 'completada' y 'pagado'")
+
+    # 2️⃣ ACUMULAR COMISIONES DEL ESTILISTA
+    profesional_id = cita["profesional_id"]
+    print(f"👤 Profesional ID: {profesional_id}")
+
+    comision_document = await collection_commissions.find_one({"profesional_id": profesional_id})
+    print(f"📂 Documento de comisión encontrado: {comision_document}")
+
+    servicio_comision = {
+        "servicio_id": cita["servicio_id"],
+        "servicio_nombre": cita["servicio_nombre"],
+        "valor_servicio": valor_servicio,
+        "porcentaje": comision_porcentaje,
+        "valor_comision": valor_comision,
+        "fecha": cita["fecha"]
+    }
+
+    if comision_document:
+        # Ya existe → incrementar
+        await collection_commissions.update_one(
+            {"profesional_id": profesional_id},
+            {
+                "$inc": {
+                    "total_servicios": 1,
+                    "total_comisiones": valor_comision
+                },
+                "$push": {
+                    "servicios_detalle": servicio_comision
+                }
+            }
+        )
+        comision_msg = "Comisión actualizada"
+        print("🔄 Comisión actualizada en el documento existente")
+    else:
+        # No existe → crear registro nuevo
+        nuevo_doc = {
+            "profesional_id": profesional_id,
+            "profesional_nombre": cita["profesional_nombre"],
+            "sede_id": cita["sede_id"],
+            "total_servicios": 1,
+            "total_comisiones": valor_comision,
+            "servicios_detalle": [servicio_comision],
+            "creado_en": datetime.now()
+        }
+        await collection_commissions.insert_one(nuevo_doc)
+        comision_msg = "Comisión creada"
+        print("🆕 Nuevo documento de comisión creado")
+
+    return {
+        "message": "Cita facturada correctamente",
+        "estado_cita": "actualizado",
+        "comision": comision_msg,
+        "valor_comision_generada": valor_comision
+    }
+
+
+# ============================================
+# ✅ Finalizar servicio
+# ============================================
+@router.put("/citas/{cita_id}/finalizar", response_model=dict)
+async def finalizar_servicio(
+    cita_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Finaliza un servicio (NO factura, NO crea comisión).
+    Solo cambia el estado a 'finalizado'.
+    """
+
+    # Verificar rol
+    if current_user["rol"] not in ["admin_sede", "estilista"]:
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para finalizar servicios"
+        )
+
+    # Verificar que la cita exista
+    cita = await collection_citas.find_one({"_id": cita_id})
+    if not cita:
+        raise HTTPException(
+            status_code=404,
+            detail="La cita no existe"
+        )
+
+    # No permitir finalizar si ya está finalizado
+    if cita.get("estado") == "finalizado":
+        raise HTTPException(
+            status_code=400,
+            detail="Esta cita ya fue finalizada"
+        )
+
+    # Actualización
+    update_data = {
+        "estado": "finalizado",
+        "fecha_finalizacion": datetime.utcnow(),
+        "finalizado_por": current_user.get("email"),
+    }
+
+    await collection_citas.update_one(
+        {"_id": cita_id},
+        {"$set": update_data}
+    )
+
+    return {
+        "success": True,
+        "message": "Servicio finalizado correctamente",
+        "cita_id": cita_id,
+        "estado": "finalizado"
+    }
+
+# ============================================================= 
+# 📦 Obtener lista de productos activos
+# =============================================================
+@router.get("/products", response_model=dict)
+async def obtener_productos():
+    productos = await collection_products.find({"activo": True}).to_list(None)
+
+    lista = []
+    for p in productos:
+        # Normalizar valores que vienen como string
+        try:
+            precio = float(p.get("precio", 0))
+        except:
+            precio = 0
+        
+        try:
+            stock = int(p.get("stock", 0))
+        except:
+            stock = 0
+
+        # Construcción del producto final con el FORMATO EXACTO
+        item = {
+            "id": p.get("id"),
+            "nombre": p.get("nombre", ""),
+            # Si quieres eliminar prefijo "SPECIAL " o "LINEA MEN ", usa esto:
+            # "nombre": p.get("nombre", "").replace("SPECIAL ", "").replace("LINEA MEN ", ""),
+            "categoria": p.get("categoria", ""),
+            "descripcion": p.get("descripcion", ""),
+            "imagen": p.get("imagen", ""),
+            "activo": p.get("activo", True),
+            "tipo_codigo": p.get("tipo_codigo", ""),
+            "descuento": float(p.get("descuento", 0) or 0),
+            "stock": stock,
+            "precio": precio,
+            "tipo_precio": "sin_iva_internacional"
+        }
+        lista.append(item)
+
+    return {"productos": lista}
+
 

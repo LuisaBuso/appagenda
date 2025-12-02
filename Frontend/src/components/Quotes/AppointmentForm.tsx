@@ -78,11 +78,11 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
     const formatFechaBonita = useCallback((fecha: Date, hora: string) => {
         const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
         const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-        
+
         const dayName = days[fecha.getDay()];
         const day = fecha.getDate();
         const month = months[fecha.getMonth()];
-        
+
         // Formatear hora (convertir 10:00 → 10:00 a.m.)
         const [hours, minutes] = hora.split(':').map(Number);
         const period = hours >= 12 ? 'p.m.' : 'a.m.';
@@ -96,7 +96,7 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
     const calcularDuracionTexto = useCallback((duracionMinutos: number) => {
         const horas = Math.floor(duracionMinutos / 60);
         const minutos = duracionMinutos % 60;
-        
+
         if (horas === 0) {
             return `${minutos} min`;
         } else if (minutos === 0) {
@@ -373,6 +373,7 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
     }, []);
 
     // 🔥 REDIRIGIR A PAGOS SIN GUARDAR CITA
+    // 🔥 REDIRIGIR A PAGOS SIN GUARDAR CITA
     const handleIrAPagos = async () => {
         console.log('🎯 ========== REDIRIGIENDO A PAGOS ==========');
 
@@ -429,17 +430,47 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
 
             console.log('💰 PREPARANDO DATOS PARA PAGOS:', citaParaPago);
 
+            // 🔥 OBTENER EL ROL DESDE SESSIONSTORAGE
+            const userRole = sessionStorage.getItem('beaux-role');
+            console.log('👤 Rol obtenido de sessionStorage:', userRole);
+
+            // 🔥 DETERMINAR LA RUTA SEGÚN EL ROL
+            let paymentRoute = '/paymethods'; // Ruta por defecto
+
+            if (userRole) {
+                if (userRole === 'super_admin' || userRole === 'superadmin') {
+                    paymentRoute = '/superadmin/paymethods';
+                } else if (userRole === 'admin_sede' || userRole === 'admin_sede') {
+                    paymentRoute = '/sede/paymethods';
+                } else if (userRole === 'recepcion' || userRole === 'staff') {
+                    paymentRoute = '/sede/paymethods';
+                } else if (userRole === 'cliente' || userRole === 'customer') {
+                    paymentRoute = '/cliente/paymethods'; // Si tienes ruta para clientes
+                }
+            } else {
+                console.warn('⚠️ No se encontró rol en sessionStorage, usando ruta por defecto');
+            }
+
+            console.log(`🚀 Redirigiendo a: ${paymentRoute} (Rol: ${userRole || 'no definido'})`);
+
+            // 🔥 TAMBIÉN PODEMOS GUARDAR DATOS TEMPORALES EN SESSIONSTORAGE POR SI ACASO
+            sessionStorage.setItem('temp_cita_data', JSON.stringify(citaParaPago));
+            sessionStorage.setItem('temp_cita_timestamp', Date.now().toString());
+
             // 🔥 CERRAR EL MODAL PRIMERO
-            onClose();
+            if (onClose) {
+                onClose();
+            }
 
             // 🔥 ESPERAR UN MOMENTO Y LUEGO REDIRIGIR A PAGOS
             setTimeout(() => {
                 // Navegar a la página de pagos con los datos de la cita
-                navigate('/superadmin/paymethods', { 
-                    state: { 
+                navigate(paymentRoute, {
+                    state: {
                         cita: citaParaPago,
-                        fromScheduler: true 
-                    } 
+                        fromScheduler: true,
+                        timestamp: Date.now()
+                    }
                 });
             }, 300);
 

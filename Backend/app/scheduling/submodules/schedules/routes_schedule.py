@@ -127,3 +127,5 @@ async def eliminar_horario(
         raise HTTPException(status_code=404, detail="Horario no encontrado")
 
     return {"msg": "Horario eliminado correctamente"}
+
+

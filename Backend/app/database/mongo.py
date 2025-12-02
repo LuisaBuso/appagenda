@@ -26,6 +26,8 @@ collection_productos = db["products"]
 collection_pedidos = db["orders"]
 collection_salidas = db["exits"]
 collection_card = db["fichas"]
+collection_commissions = db["commissions"]
+collection_products = db["products"]
 
 
 

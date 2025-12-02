@@ -21,11 +21,12 @@ import SedePerformance from "./pages/PageSede/Perfomance/Perfomance";
 import SedeAppointment from "./pages/PageSede/Appoinment/Appointment";
 import SedeProducts from "./pages/PageSede/Products/Products";
 import SedeClients from "./pages/PageSede/Clients/Clients";
-import SedeAgendaSemanal from "./pages/PageSede/Appoinment/EstilistaWeeklyCalendar"
+import SedeBilling from "./pages/PageSede/Billing/Billing";
+import SedePay from "./pages/PageSede/Appoinment/PaymentMethods/PaymentMethods"
 /* --- Stylist Pages --- */
 import StylistAppointment from "./pages/PageStylist/Appoinment/Appointment";
 import StylistCommissions from "./pages/PageStylist/Comisiones/Comisiones";
-  
+
 /** 🔒 RUTA PRIVADA: Verifica usuario y rol */
 const PrivateRoute = ({
   children,
@@ -158,10 +159,18 @@ function App() {
               }
             />
             <Route
-              path="/estilista/:estilistaId/agenda"
+              path="/sede/paymethods"
               element={
                 <PrivateRoute allowedRoles={["admin_sede"]}>
-                  <SedeAgendaSemanal />
+                  <SedePay />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/sede/billing"
+              element={
+                <PrivateRoute allowedRoles={["admin_sede"]}>
+                  <SedeBilling />
                 </PrivateRoute>
               }
             />

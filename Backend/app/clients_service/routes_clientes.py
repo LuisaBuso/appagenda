@@ -439,4 +439,31 @@ async def obtener_fichas_cliente(
         logger.error(f"Error obteniendo fichas del cliente: {e}", exc_info=True)
         raise HTTPException(500, "Error al obtener fichas del cliente")
 
+# ============================================================
+# 📅 Obtener todos los clientes de la sede del usuario autenticado
+# ============================================================
+@router.get("/clientes/mi-sede", response_model=List[dict])
+async def get_clientes_mi_sede(
+    current_user: dict = Depends(get_current_user)
+):
+    # 1️⃣ Verifica que el usuario tenga sede
+    sede_usuario = current_user.get("sede_id")
+    if not sede_usuario:
+        raise HTTPException(
+            status_code=400,
+            detail="El usuario autenticado no tiene una sede asignada"
+        )
+
+    # 2️⃣ Obtener clientes de la sede
+    clientes_cursor = collection_clients.find(
+        {"sede_id": sede_usuario},
+        {"_id": 0}  # opcional
+    )
+
+    # Motor necesita to_list()
+    clientes = await clientes_cursor.to_list(length=None)
+
+    return clientes  # Devuelve directamente el array
+
+
 

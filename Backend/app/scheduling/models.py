@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 from datetime import datetime, time, date
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
 # === SERVICIO ===
 class Servicio(BaseModel):
@@ -57,16 +57,17 @@ class Cita(BaseModel):
     estado: str
     abono: Optional[float] = 0
 
-# === FICHA ===
 class FichaCreate(BaseModel):
     cliente_id: str
-    sede_id: str
     servicio_id: str
-    servicio_nombre: str
     profesional_id: str
-    profesional_nombre: str
-    fecha_ficha: str
-    fecha_reserva: str
+    sede_id: str
+    tipo_ficha: str
+
+    servicio_nombre: Optional[str] = None
+    profesional_nombre: Optional[str] = None
+    fecha_ficha: Optional[str] = None
+    fecha_reserva: Optional[str] = None
 
     email: Optional[str] = None
     nombre: Optional[str] = None
@@ -74,20 +75,26 @@ class FichaCreate(BaseModel):
     cedula: Optional[str] = None
     telefono: Optional[str] = None
 
-    precio: Optional[str] = None
-    estado: Optional[str] = "Reservado"
-    estado_pago: Optional[str] = "Pendiente"
+    precio: Optional[float] = 0
+    estado: Optional[str] = "pendiente"
+    estado_pago: Optional[str] = "pendiente"
 
-    tipo_ficha: Optional[str] = None
+    datos_especificos: Optional[Dict[str, Any]] = {}
+    respuestas: Optional[List[Dict[str, Any]]] = []
+    descripcion_servicio: Optional[str] = None
 
-    datos_especificos: Optional[Dict] = {}
-    respuestas: Optional[List[str]] = []
-
-    descripcion_servicio: Optional[str] = ""
-
-    # Fotos sin AWS todavía
-    fotos_antes: Optional[str] = None
-    fotos_despues: Optional[str] = None
+    fotos_antes: Optional[List[str]] = []
+    fotos_despues: Optional[List[str]] = []
 
     autorizacion_publicacion: Optional[bool] = False
-    comentario_interno: Optional[str] = ""
+    comentario_interno: Optional[str] = None
+
+    class Config:
+        arbitrary_types_allowed = True
+
+
+class ProductoItem(BaseModel):
+    producto_id: str
+    nombre: str
+    cantidad: int
+    precio_unitario: float

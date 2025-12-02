@@ -39,6 +39,7 @@ const navItems: NavItem[] = [
   { title: 'Agenda', href: '/sede/appointments', icon: Users, roles: ['admin_sede'] },
   { title: 'Productos', href: '/sede/products', icon: Package, roles: ['admin_sede'] },
   { title: 'Clientes', href: '/sede/clients', icon: Users, roles: ['admin_sede'] },
+  { title: 'Ventas', href: '/sede/billing', icon: CreditCard, roles: ['admin_sede'] },
 
   // ESTILISTA
   { title: 'Agenda', href: '/stylist/appointments', icon: Users, roles: ['estilista'] },

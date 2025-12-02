@@ -18,7 +18,7 @@
 
     console.log('🔍 Fetching citas con query:', query.toString());
 
-    const res = await fetch(`${API_BASE_URL}/scheduling/quotes/citas?${query.toString()}`, {
+    const res = await fetch(`${API_BASE_URL}/scheduling/quotes/?${query.toString()}`, {
       headers,
       credentials: "include",
     });
@@ -45,7 +45,7 @@
     console.log("📤 Enviando datos de cita al backend:", citaData);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/scheduling/quotes/citas`, {
+      const res = await fetch(`${API_BASE_URL}/scheduling/quotes/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -117,7 +117,7 @@
   }
 
   export async function editarCita(citaId: string, data: any, token: string) {
-    const res = await fetch(`${API_BASE_URL}/scheduling/quotes/citas/${citaId}`, {
+    const res = await fetch(`${API_BASE_URL}/scheduling/quotes/${citaId}`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -136,7 +136,7 @@
   }
 
   export async function cancelarCita(citaId: string, token: string) {
-    const res = await fetch(`${API_BASE_URL}/scheduling/quotes/citas/${citaId}/cancelar`, {
+    const res = await fetch(`${API_BASE_URL}/scheduling/quotes/${citaId}/cancelar`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
@@ -154,7 +154,7 @@
   }
 
   export async function cambiarEstadoCita(citaId: string, nuevoEstado: string, token: string) {
-    const res = await fetch(`${API_BASE_URL}/scheduling/quotes/citas/${citaId}/estado`, {
+    const res = await fetch(`${API_BASE_URL}/scheduling/quotes/${citaId}/estado`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
