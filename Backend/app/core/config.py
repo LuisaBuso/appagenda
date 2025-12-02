@@ -33,6 +33,10 @@ app.add_middleware(
 async def read_root():
     return {"message": "Bienvenido a la API de Agenda"}
 
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
+
 
 # @app.on_event("startup")
 # async def startup_event():
