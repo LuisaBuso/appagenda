@@ -9,8 +9,10 @@ from app.database.mongo import (
     collection_estilista,
     collection_locales,
     collection_servicios,
+    collection_auth  # ⭐ Usar users_auth
 )
-from app.id_generator.generator import generar_id, validar_id
+from app.id_generator.generator import generar_id, validar_id  # ⭐ Generador de IDs
+from app.auth.controllers import pwd_context
 
 router = APIRouter(prefix="/admin/profesionales", tags=["Admin - Profesionales"])
 
@@ -86,100 +88,123 @@ async def obtener_servicios_presta(profesional: dict):
         return []
 
 # ===================================================
-# ✅ Crear profesional CON NUEVA ESTRUCTURA
+# ✅ Crear profesional — sede_id VIENE EN EL MODELO
 # ===================================================
 @router.post("/", response_model=dict)
 async def create_profesional(
     profesional: Profesional,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Crea un profesional/estilista con la NUEVA ESTRUCTURA:
-    - especialidades: True (todos los servicios activos por defecto)
-    - servicios_no_presta: [] (solo los que NO presta)
-    
-    Permisos: super_admin, admin_sede
-    """
+    print("\n========== CREAR PROFESIONAL ==========")
+    print("📥 Datos recibidos:", profesional.dict())
+    print("👤 Usuario actual:", current_user)
+
+    # --- Permisos ---
     rol = current_user["rol"]
-    
+    print("🔐 Rol del creador:", rol)
+
     if rol not in ["super_admin", "admin_sede"]:
-        raise HTTPException(
-            status_code=403, 
-            detail="No autorizado para crear profesionales"
-        )
+        print("❌ Usuario NO autorizado para crear profesionales")
+        raise HTTPException(status_code=403, detail="No autorizado")
 
-    # ⭐ OBTENER sede_id DEL USUARIO LOGUEADO
-    sede_id = current_user.get("sede_id")
-    
+    # --- Sede viene en el modelo ---
+    sede_id = profesional.sede_id
+    print("🏢 Sede recibida:", sede_id)
+
     if not sede_id:
-        raise HTTPException(
-            status_code=400, 
-            detail="Usuario no tiene sede asignada. Contacte al administrador."
-        )
-    
-    # ✅ VALIDAR QUE LA SEDE EXISTE
+        print("❌ No se envió sede_id")
+        raise HTTPException(status_code=400, detail="sede_id es obligatorio")
+
     sede = await collection_locales.find_one({"sede_id": sede_id})
-    
+    print("🔎 ¿Sede encontrada?:", sede)
+
     if not sede:
-        raise HTTPException(
-            status_code=404, 
-            detail=f"Sede no encontrada: {sede_id}"
-        )
+        print("❌ La sede NO existe:", sede_id)
+        raise HTTPException(status_code=404, detail=f"Sede no encontrada: {sede_id}")
 
-    # ⚙️ Validar email único
-    exists = await collection_estilista.find_one({"email": profesional.email})
+    # --- Validar email ---
+    email = profesional.email.lower()
+    print("📧 Email normalizado:", email)
+
+    exists = await collection_estilista.find_one({"email": email})
+    print("🔎 ¿Email ya existe en estilistas?:", exists)
+
     if exists:
-        raise HTTPException(
-            status_code=400, 
-            detail="Ya existe un profesional con ese email"
-        )
+        print("❌ Ya existe profesional con ese email")
+        raise HTTPException(status_code=400, detail="Ya existe un profesional con ese email")
 
-    # ⭐ GENERAR ID CORTO NO SECUENCIAL
-    try:
-        profesional_id = await generar_id(
-            entidad="estilista",
-            sede_id=sede_id,
-            metadata={
-                "email": profesional.email,
-                "nombre": profesional.nombre,
-                "creado_por": current_user["email"]
-            }
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Error al generar ID del profesional: {str(e)}"
-        )
+    # --- Generar ID ---
+    print("⚙️ Generando ID profesional...")
+    profesional_id = await generar_id(
+        entidad="estilista",
+        sede_id=sede_id,
+        metadata={"email": email}
+    )
+    print("🆔 ID generado:", profesional_id)
 
-    # ✅ Preparar datos con NUEVA ESTRUCTURA
-    data = profesional.dict()
-    data.update({
+    # ===================================================
+    # 1️⃣ GUARDAR EN STYLIST (SIN CONTRASEÑA)
+    # ===================================================
+    data_estilista = profesional.dict()
+    data_estilista.update({
+        "email": email,
         "profesional_id": profesional_id,
         "rol": "estilista",
-        "sede_id": sede_id,
-        "especialidades": True,  # ⭐ TODOS los servicios activos por defecto
-        "servicios_no_presta": profesional.servicios_no_presta or [],  # ⭐ Solo los que NO presta
-        "activo": True,
         "created_by": current_user["email"],
         "created_at": datetime.now(),
         "updated_at": datetime.now(),
+        "activo": True
     })
 
-    # ⭐ Guardar en collection_estilista
-    result = await collection_estilista.insert_one(data)
+    data_estilista.pop("password", None)
+
+    print("📤 Datos que se guardarán en collection_estilista:")
+    print(data_estilista)
+
+    result_estilista = await collection_estilista.insert_one(data_estilista)
+    print("✅ Estilista insertado en MongoDB ID:", result_estilista.inserted_id)
+
+    # ===================================================
+    # 2️⃣ GUARDAR EN AUTH
+    # ===================================================
+    print("🔐 Hasheando contraseña...")
+    hashed_password = pwd_context.hash(profesional.password)
+
+    data_auth = {
+        "profesional_id": profesional_id,
+        "nombre": profesional.nombre,
+        "correo_electronico": email,
+        "hashed_password": hashed_password,
+        "rol": "estilista",
+        "sede_id": sede_id,
+        "fecha_creacion": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "activo": True,
+        "creado_por": current_user["email"],
+    }
+
+    print("📤 Datos que se guardarán en collection_auth:")
+    print(data_auth)
+
+    result_auth = await collection_auth.insert_one(data_auth)
+    print("✅ Usuario auth insertado en MongoDB ID:", result_auth.inserted_id)
+
+    # ===================================================
+    # RESPUESTA
+    # ===================================================
+    print("🎉 Profesional creado CORRECTAMENTE")
+    print("====================================\n")
 
     return {
-        "msg": "✅ Profesional creado exitosamente",
+        "msg": "Profesional y usuario creados correctamente",
         "profesional_id": profesional_id,
-        "_id": str(result.inserted_id),
+        "estilista_mongo_id": str(result_estilista.inserted_id),
+        "auth_mongo_id": str(result_auth.inserted_id),
         "sede_id": sede_id,
-        "sede_nombre": sede.get("nombre"),
-        "especialidades": True,
-        "servicios_no_presta_count": len(profesional.servicios_no_presta or [])
+        "correo": email
     }
 
 # ===================================================
-# 📋 Listar profesionales (CON NUEVA LÓGICA)
+# 📋 Listar profesionales (con nombres de servicios + sede_nombre)
 # ===================================================
 @router.get("/", response_model=list)
 async def list_professionals(
@@ -188,8 +213,7 @@ async def list_professionals(
 ):
     """
     Lista profesionales según permisos del usuario.
-    
-    NUEVA LÓGICA: Calcula servicios que SÍ presta basado en servicios_no_presta
+    Incluye nombres de servicios y nombre de la sede.
     """
     query = {"rol": "estilista"}
 
@@ -201,25 +225,44 @@ async def list_professionals(
     if activo is not None:
         query["activo"] = activo
 
-    # Buscar profesionales
     professionals = await collection_estilista.find(query).to_list(None)
 
-    # ⭐ NUEVA LÓGICA: Calcular servicios que SÍ presta
     for p in professionals:
-        servicios_presta = await obtener_servicios_presta(p)
-        p["servicios_presta"] = servicios_presta
-        p["total_servicios_presta"] = len(servicios_presta)
-        p["total_servicios_no_presta"] = len(p.get("servicios_no_presta", []))
-        
-        # Mantener compatibilidad con frontend existente
-        p["especialidades_detalle"] = servicios_presta
+
+        # ===================================================
+        # ⭐ Obtener nombre de la sede
+        # ===================================================
+        sede = await collection_locales.find_one({"sede_id": p.get("sede_id")})
+        if sede:
+            p["sede_nombre"] = sede.get("nombre", "Nombre no registrado")
+        else:
+            p["sede_nombre"] = "Sede desconocida"
+
+        # ===================================================
+        # ⭐ Agregar nombres de servicios
+        # ===================================================
+        if "especialidades" in p and isinstance(p["especialidades"], list):
+            nombres_servicios = []
+            for servicio_id in p["especialidades"]:
+                servicio = await collection_servicios.find_one({
+                    "$or": [
+                        {"servicio_id": servicio_id},
+                        {"unique_id": servicio_id}
+                    ]
+                })
+                if servicio:
+                    nombres_servicios.append({
+                        "id": servicio.get("servicio_id") or servicio.get("unique_id"),
+                        "nombre": servicio.get("nombre", "Desconocido")
+                    })
+            p["especialidades_detalle"] = nombres_servicios
         
         profesional_to_dict(p)
 
     return professionals
 
 # ===================================================
-# 🔍 Obtener profesional por ID (CON NUEVA LÓGICA)
+# 🔍 Obtener profesional por ID (incluye sede_nombre)
 # ===================================================
 @router.get("/{profesional_id}", response_model=dict)
 async def get_professional(
@@ -227,48 +270,84 @@ async def get_professional(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Obtiene un profesional por su profesional_id (ES-00247) o MongoDB ObjectId.
-    
-    NUEVA LÓGICA: Calcula servicios que SÍ presta basado en servicios_no_presta
+    Obtiene un profesional por su profesional_id o ObjectId.
+    Incluye nombres de servicios y nombre de la sede.
     """
-    # ⭐ BUSCAR POR profesional_id LEGIBLE PRIMERO
+
+    # ===================================================
+    # 🔎 1. Buscar por profesional_id (TU MODELO REAL)
+    # ===================================================
     professional = await collection_estilista.find_one({
-        "profesional_id": profesional_id, 
+        "profesional_id": profesional_id,
         "rol": "estilista"
     })
-    
-    # Si no se encuentra, intentar con ObjectId (compatibilidad)
+
+    # ===================================================
+    # 🔎 2. Buscar por ObjectId si no existe
+    # ===================================================
     if not professional:
         try:
             professional = await collection_estilista.find_one({
-                "_id": ObjectId(profesional_id), 
+                "_id": ObjectId(profesional_id),
                 "rol": "estilista"
             })
         except Exception:
             pass
-    
-    # Si aún no se encuentra, intentar con unique_id (compatibilidad antigua)
+
+    # ===================================================
+    # 🔎 3. Compatibilidad antigua: unique_id
+    # ===================================================
     if not professional:
         professional = await collection_estilista.find_one({
-            "unique_id": profesional_id, 
+            "unique_id": profesional_id,
             "rol": "estilista"
         })
-    
+
+    # ===================================================
+    # ❌ No existe
+    # ===================================================
     if not professional:
         raise HTTPException(
-            status_code=404, 
+            status_code=404,
             detail=f"Profesional no encontrado: {profesional_id}"
         )
 
-    # ⭐ NUEVA LÓGICA: Calcular servicios que SÍ presta
-    servicios_presta = await obtener_servicios_presta(professional)
-    professional["servicios_presta"] = servicios_presta
-    professional["total_servicios_presta"] = len(servicios_presta)
-    professional["total_servicios_no_presta"] = len(professional.get("servicios_no_presta", []))
-    
-    # Mantener compatibilidad
-    professional["especialidades_detalle"] = servicios_presta
+    # ===================================================
+    # ⭐ Añadir nombre de la sede
+    # ===================================================
+    sede = await collection_locales.find_one({
+        "sede_id": professional.get("sede_id")
+    })
 
+    professional["sede_nombre"] = (
+        sede.get("nombre") if sede else "Sede desconocida"
+    )
+
+    # ===================================================
+    # ⭐ Añadir nombres de servicios que SÍ presta
+    # ===================================================
+    servicios_detalle = []
+
+    # 👉 En tu modelo actual NO tienes lista de servicios, tienes *servicios_no_presta*
+    # 👉 Por lo tanto: todos los servicios EXCEPTO esos
+    servicios_no = professional.get("servicios_no_presta", [])
+
+    cursor = collection_servicios.find({})
+    servicios_all = await cursor.to_list(None)  # todos los servicios
+
+    for srv in servicios_all:
+        srv_id = srv.get("servicio_id") or srv.get("unique_id")
+        if srv_id not in servicios_no:
+            servicios_detalle.append({
+                "id": srv_id,
+                "nombre": srv.get("nombre", "Desconocido")
+            })
+
+    professional["servicios_presta"] = servicios_detalle
+
+    # ===================================================
+    # 🔄 Convertir a dict limpio antes de devolver
+    # ===================================================
     return profesional_to_dict(professional)
 
 # ===================================================

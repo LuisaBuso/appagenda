@@ -13,10 +13,9 @@ from app.auth.controllers import (
     REFRESH_TOKEN_EXPIRE_DAYS,
     create_refresh_token
 )
-from app.auth.models import TokenResponse, UserCreate, UserInDB
+from app.auth.models import TokenResponse
 from app.database.mongo import (
-    collection_user,
-    collection_superadmin,
+    collection_auth,
     collection_estilista,
     collection_admin_sede,
     collection_admin_franquicia
@@ -43,20 +42,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         if not email or not rol:
             raise credentials_exception
 
-        # Buscar usuario según su rol en la colección correspondiente
-        role_collections = {
-            "super_admin": collection_superadmin,
-            "admin_franquicia": collection_admin_franquicia,
-            "admin_sede": collection_admin_sede,
-            "estilista": collection_estilista,
-            "usuario": collection_user
-        }
-
-        collection = role_collections.get(rol)
-        if collection is None:
-            raise credentials_exception
-
-        user = await collection.find_one({"correo_electronico": email})
+        # ✅ TODOS los usuarios están en collection_auth
+        user = await collection_auth.find_one({"correo_electronico": email})
         if not user:
             raise credentials_exception
 
@@ -66,6 +53,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
             "rol": rol,
             "nombre": user.get("nombre"),
             "sede_id": user.get("sede_id"),    # ⭐ Para admin_sede
+            "franquicia_id": user.get("franquicia_id"),  # ⭐ Para admin_franquicia
             "user_id": str(user.get("_id"))    # ⭐ Para validaciones
         }
     except JWTError:
@@ -82,10 +70,11 @@ async def create_user(
     password: str = Form(...),
     rol: str = Form(...),
     sede_id: str = Form(None),
+    franquicia_id: str = Form(None),
     current_user: dict = Depends(get_current_user)
 ):
     # Solo super_admin y admin_sede pueden crear usuarios
-    if current_user["rol"] not in ["super_admin", "admin_sede"]:
+    if current_user["rol"] not in ["super_admin", "admin_sede", "admin_franquicia"]:
         raise HTTPException(status_code=403, detail="No autorizado para crear usuarios")
 
     # Verificar rol válido
@@ -95,19 +84,17 @@ async def create_user(
 
     # 🔒 Forzar la sede según el creador
     if current_user["rol"] == "admin_sede":
-        sede_id = current_user["sede_id"]  # 🚀 hereda automáticamente
-    elif current_user["rol"] == "super_admin" and not sede_id:
-        sede_id = None  # super_admin puede crear sin sede
+        sede_id = current_user["sede_id"]  # 🚀 hereda automáticamente su sede
+        franquicia_id = None
+    elif current_user["rol"] == "admin_franquicia":
+        franquicia_id = current_user["franquicia_id"]  # 🚀 hereda su franquicia
+        sede_id = None
+    elif current_user["rol"] == "super_admin":
+        # super_admin puede especificar cualquier sede/franquicia o ninguna
+        pass
 
-    # Seleccionar la colección correcta según rol
-    role_collections = {
-        "super_admin": collection_superadmin,
-        "admin_franquicia": collection_admin_franquicia,
-        "admin_sede": collection_admin_sede,
-        "estilista": collection_estilista,
-        "usuario": collection_user
-    }
-    collection = role_collections[rol]
+    # ✅ TODOS los usuarios van a collection_auth
+    collection = collection_auth
 
     # Validar duplicado
     existing_user = await collection.find_one({"correo_electronico": correo_electronico.lower()})
@@ -121,8 +108,9 @@ async def create_user(
         "nombre": nombre,
         "correo_electronico": correo_electronico.lower(),
         "hashed_password": hashed_password,
-        "rol": rol,
-        "sede_id": sede_id,  # 🔥 ahora correcto y seguro
+        "rol": rol,  # ⭐ ESTE ES EL ROL REAL que se usará en el login
+        "sede_id": sede_id,
+        "franquicia_id": franquicia_id,
         "fecha_creacion": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "activo": True,
         "creado_por": current_user["email"],
@@ -135,12 +123,13 @@ async def create_user(
         "rol": rol,
         "correo": correo_electronico,
         "sede_id": sede_id,
+        "franquicia_id": franquicia_id,
         "creado_por": current_user["email"],
     }
 
 
 # =========================================================
-# 🔓 LOGIN AND TOKEN (LOGIN)
+# 🔓 LOGIN AND TOKEN (LOGIN) - CORREGIDO PARA collection_auth
 # =========================================================
 @router.post("/token", response_model=TokenResponse)
 async def login(
@@ -148,65 +137,71 @@ async def login(
     username: str = Form(...),
     password: str = Form(...),
 ):
-    email = username.lower()
+    # Normaliza el correo
+    email = username.strip().lower()
+    print("📧 Intentando login con:", email)
 
-    # Buscar usuario en todas las colecciones
-    role_collections = {
-        "super_admin": collection_superadmin,
-        "admin_sede": collection_admin_sede,
-        "estilista": collection_estilista,
-        "usuario": collection_user,
-    }
-
-    user = None
-    rol = None
-    for r, collection in role_collections.items():
-        found_user = await collection.find_one({"correo_electronico": email})
-        if found_user:
-            user = found_user
-            rol = r
-            break
-
+    # ✅ BUSCAR SOLO EN collection_auth (donde están TODOS los usuarios)
+    user = await collection_auth.find_one({"correo_electronico": email})
+    
     if not user:
+        print("❌ Usuario no encontrado en collection_auth:", email)
         raise HTTPException(status_code=400, detail="Usuario no encontrado")
 
     # Verificar contraseña
-    if not pwd_context.verify(password, user["hashed_password"]):
-        raise HTTPException(status_code=400, detail="Contraseña incorrecta")
+    try:
+        if not pwd_context.verify(password, user["hashed_password"]):
+            print("❌ Contraseña incorrecta para:", email)
+            raise HTTPException(status_code=400, detail="Contraseña incorrecta")
+    except Exception as e:
+        print(f"⚠️ Error al verificar contraseña: {e}")
+        raise HTTPException(status_code=500, detail="Error verificando contraseña")
 
-    # Crear tokens
+    # ✅ OBTENER EL ROL REAL DEL USUARIO desde la base de datos
+    rol_real = user.get("rol")
+    if not rol_real:
+        print("❌ Usuario no tiene rol asignado:", email)
+        raise HTTPException(status_code=500, detail="Usuario sin rol asignado")
+
+    print(f"✅ Login correcto para {email} con rol {rol_real}")
+
+    # Crear tokens con el rol REAL de la base de datos
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     refresh_token_expires = timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
 
-    access_token = create_access_token(
-        data={"sub": user["correo_electronico"], "rol": rol},
-        expires_delta=access_token_expires,
-    )
+    try:
+        access_token = create_access_token(
+            data={"sub": user["correo_electronico"], "rol": rol_real},  # ⭐ ROL REAL
+            expires_delta=access_token_expires,
+        )
+        refresh_token = create_refresh_token(
+            data={"sub": user["correo_electronico"], "rol": rol_real},  # ⭐ ROL REAL
+            expires_delta=refresh_token_expires,
+        )
+    except Exception as e:
+        print("⚠️ Error creando tokens:", e)
+        raise HTTPException(status_code=500, detail="Error generando tokens")
 
-    refresh_token = create_refresh_token(
-        data={"sub": user["correo_electronico"], "rol": rol},
-        expires_delta=refresh_token_expires,
-    )
-
-    # Guardar refresh token en cookie HttpOnly segura
+    # Guardar refresh token en cookie HttpOnly
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=False,  # ⚠️ Poner True si usas HTTPS
-        samesite="None",  # importante para frontend separado
+        secure=False,  # ⚠️ True si usas HTTPS
+        samesite="None",
         max_age=int(refresh_token_expires.total_seconds()),
-        path="/",  # 🔥 necesario para que el navegador la envíe en /auth/refresh
+        path="/",
     )
+
+    print("✅ Tokens generados y cookie configurada")
 
     return TokenResponse(
         access_token=access_token,
         token_type="bearer",
-        rol=rol,
+        rol=rol_real,  # ⭐ ROL REAL del usuario
         nombre=user.get("nombre"),
         email=user.get("correo_electronico"),
     )
-
 
 
 # =========================================================
@@ -235,7 +230,7 @@ async def create_initial_superadmin(
     """
 
     # Verificar si ya existe un super_admin
-    existing_admin = await collection_superadmin.find_one({})
+    existing_admin = await collection_auth.find_one({"rol": "super_admin"})
     if existing_admin:
         raise HTTPException(
             status_code=400,
@@ -250,7 +245,7 @@ async def create_initial_superadmin(
         "nombre": nombre,
         "correo_electronico": correo_electronico.lower(),
         "hashed_password": hashed_password,
-        "rol": "super_admin",
+        "rol": "super_admin",  # ⭐ ROL EXPLÍCITO
         "franquicia_id": None,
         "sede_id": None,
         "fecha_creacion": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -258,7 +253,7 @@ async def create_initial_superadmin(
     }
 
     # Insertar en la colección
-    await collection_superadmin.insert_one(super_admin)
+    await collection_auth.insert_one(super_admin)
 
     return {
         "msg": "✅ Super admin creado exitosamente.",
@@ -282,30 +277,15 @@ async def change_password(
     if new_password != confirm_password:
         raise HTTPException(status_code=400, detail="Las contraseñas no coinciden")
 
-    # Buscar usuario en las colecciones
-    collections = [
-        collection_superadmin,
-        collection_admin_franquicia,
-        collection_admin_sede,
-        collection_estilista,
-        collection_user
-    ]
-
-    user = None
-    collection_found = None
-
-    for col in collections:
-        user = await col.find_one({"correo_electronico": email})
-        if user:
-            collection_found = col
-            break
-
+    # ✅ BUSCAR SOLO EN collection_auth
+    user = await collection_auth.find_one({"correo_electronico": email})
+    
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     # Actualizar la contraseña
     hashed_password = pwd_context.hash(new_password)
-    await collection_found.update_one(
+    await collection_auth.update_one(
         {"_id": user["_id"]},
         {"$set": {"hashed_password": hashed_password}}
     )
@@ -338,19 +318,8 @@ async def refresh_token_endpoint(response: Response, refresh_token: str = Cookie
             print("Error: Token inválido, falta email o rol")  # Debugging
             raise HTTPException(status_code=401, detail="Token inválido")
 
-        # ✅ Verificar que el usuario todavía existe en DB
-        role_collections = {
-            "super_admin": collection_superadmin,
-            "admin_franquicia": collection_admin_franquicia,
-            "admin_sede": collection_admin_sede,
-            "estilista": collection_estilista,
-            "usuario": collection_user
-        }
-
-        collection = role_collections.get(rol)
-        print("Colección seleccionada:", collection)  # Debugging
-
-        user = await collection.find_one({"correo_electronico": email})
+        # ✅ VERIFICAR EN collection_auth
+        user = await collection_auth.find_one({"correo_electronico": email})
         print("Usuario encontrado:", user)  # Debugging
 
         if not user or not user.get("activo", True):
@@ -362,14 +331,14 @@ async def refresh_token_endpoint(response: Response, refresh_token: str = Cookie
             data={"sub": email, "rol": rol},
             expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         )
-        print("Nuevo access token generado:", new_access_token)  # Debugging
+        print("Nuevo access token generado")  # Debugging
 
         # (Opcional) rotar refresh token
         new_refresh_token = create_refresh_token(
             data={"sub": email, "rol": rol},
             expires_delta=timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
         )
-        print("Nuevo refresh token generado:", new_refresh_token)  # Debugging
+        print("Nuevo refresh token generado")  # Debugging
 
         response.set_cookie(
             key="refresh_token",

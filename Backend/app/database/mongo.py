@@ -12,20 +12,22 @@ if not uri:
 
 client = AsyncIOMotorClient(uri)
 db = client[db_name]
-collection_user = db["estilista"]
-collection_superadmin = db["super_admin"]
+collection_auth = db["users_auth"]
 collection_estilista = db["stylist"]
-collection_admin_sede = db["admin_sede"]
+collection_admin_sede = db["users_auth"]
 collection_admin_franquicia = db["admin_franquicia"]
-collection_horarios = db["schedules"]
+collection_horarios = db["stylist_schedules"]
 collection_block = db["block"]
-collection_citas = db["quotes"]
+collection_citas = db["appointments"]
 collection_clients = db["clients"]
 collection_servicios = db["services"]
 collection_locales = db["branch"]
 collection_productos = db["products"]
 collection_pedidos = db["orders"]
 collection_salidas = db["exits"]
+collection_card = db["fichas"]
+collection_commissions = db["commissions"]
+collection_products = db["products"]
 
 
 

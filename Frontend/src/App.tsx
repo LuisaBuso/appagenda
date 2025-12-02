@@ -1,69 +1,240 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
-import Dashboard from "./pages/Dashboard/Dashboard";
-import Performance from "./pages/Perfomance/Perfomance";
-import Appointments from "./pages/Appoinment/Appointment";
-import Products from "./pages/Products/Products";
 import BeauxLogin from "./pages/LoginPage/LoginPage";
 import { AuthProvider, useAuth } from "./components/Auth/AuthContext";
-import "./App.css";
+import "./index.css";
 
-/** 🔒 Componente para proteger rutas privadas */
-const PrivateRoute = ({ children }: { children: JSX.Element }) => {
-  const { user } = useAuth(); // Solo obtener user, sin loading
+/* --- Super Admin Pages --- */
+import SuperDashboard from "./pages/PageSuperAdmin/Dashboard/Dashboard";
+import SuperPerformance from "./pages/PageSuperAdmin/Perfomance/Perfomance";
+import SuperAppointment from "./pages/PageSuperAdmin/Appoinment/Appointment";
+import SuperProducts from "./pages/PageSuperAdmin/Products/Products";
+import SuperSede from "./pages/PageSuperAdmin/Sedes/Sede";
+import SuperServices from './pages/PageSuperAdmin/Services/Services';
+import SuperComisiones from "./pages/PageSuperAdmin/Comisiones/Comisiones";
+import SuperStylist from "./pages/PageSuperAdmin/Styslit/Sytlist";
+import SuperClients from "./pages/PageSuperAdmin/Clients/Clients";
+import SuperPay from "./pages/PageSuperAdmin/Appoinment/PaymentMethods/PaymentMethods"
 
-  // Si no hay usuario, redirigir al login
+/* --- Sede Pages --- */
+import SedeDashboard from "./pages/PageSede/Dashboard/Dashboard";
+import SedePerformance from "./pages/PageSede/Perfomance/Perfomance";
+import SedeAppointment from "./pages/PageSede/Appoinment/Appointment";
+import SedeProducts from "./pages/PageSede/Products/Products";
+import SedeClients from "./pages/PageSede/Clients/Clients";
+import SedeBilling from "./pages/PageSede/Billing/Billing";
+import SedePay from "./pages/PageSede/Appoinment/PaymentMethods/PaymentMethods"
+/* --- Stylist Pages --- */
+import StylistAppointment from "./pages/PageStylist/Appoinment/Appointment";
+import StylistCommissions from "./pages/PageStylist/Comisiones/Comisiones";
+
+/** 🔒 RUTA PRIVADA: Verifica usuario y rol */
+const PrivateRoute = ({
+  children,
+  allowedRoles,
+}: {
+  children: JSX.Element;
+  allowedRoles: string[];
+}) => {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <div className="text-lg">Cargando...</div>
+      </div>
+    );
+  }
+
   if (!user) {
     return <Navigate to="/" replace />;
+  }
+
+  // Si el rol del usuario no está permitido
+  if (!allowedRoles.includes(user.role)) {
+    return <Navigate to="/unauthorized" replace />;
   }
 
   return children;
 };
 
-/** 🌍 Enrutador principal */
 function App() {
   return (
     <Router>
       <AuthProvider>
         <div className="App">
           <Routes>
-            {/* Login público */}
+            {/* --- LOGIN --- */}
             <Route path="/" element={<BeauxLogin />} />
 
-            {/* Rutas privadas */}
+            {/* --- SUPER ADMIN --- */}
             <Route
-              path="/dashboard"
+              path="/superadmin/dashboard"
               element={
-                <PrivateRoute>
-                  <Dashboard />
+                <PrivateRoute allowedRoles={["super_admin"]}>
+                  <SuperDashboard />
                 </PrivateRoute>
               }
             />
             <Route
-              path="/performance"
+              path="/superadmin/paymethods"
               element={
-                <PrivateRoute>
-                  <Performance />
+                <PrivateRoute allowedRoles={["super_admin"]}>
+                  <SuperPay />
                 </PrivateRoute>
               }
             />
             <Route
-              path="/appointments"
+              path="/superadmin/performance"
               element={
-                <PrivateRoute>
-                  <Appointments />
+                <PrivateRoute allowedRoles={["super_admin"]}>
+                  <SuperPerformance />
                 </PrivateRoute>
               }
             />
             <Route
-              path="/products"
+              path="/superadmin/appointments"
               element={
-                <PrivateRoute>
-                  <Products />
+                <PrivateRoute allowedRoles={["super_admin"]}>
+                  <SuperAppointment />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/superadmin/products"
+              element={
+                <PrivateRoute allowedRoles={["super_admin"]}>
+                  <SuperProducts />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/superadmin/sedes"
+              element={
+                <PrivateRoute allowedRoles={["super_admin"]}>
+                  <SuperSede />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/superadmin/stylists"
+              element={
+                <PrivateRoute allowedRoles={["super_admin"]}>
+                  <SuperStylist />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/superadmin/services"
+              element={
+                <PrivateRoute allowedRoles={["super_admin"]}>
+                  <SuperServices />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/superadmin/commissions"
+              element={
+                <PrivateRoute allowedRoles={["super_admin"]}>
+                  <SuperComisiones />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/superadmin/clients"
+              element={
+                <PrivateRoute allowedRoles={["super_admin"]}>
+                  <SuperClients />
                 </PrivateRoute>
               }
             />
 
-            {/* Cualquier otra ruta redirige al login */}
+
+            {/* --- ADMIN SEDE --- */}
+            <Route
+              path="/sede/dashboard"
+              element={
+                <PrivateRoute allowedRoles={["admin_sede"]}>
+                  <SedeDashboard />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/sede/paymethods"
+              element={
+                <PrivateRoute allowedRoles={["admin_sede"]}>
+                  <SedePay />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/sede/billing"
+              element={
+                <PrivateRoute allowedRoles={["admin_sede"]}>
+                  <SedeBilling />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/sede/performance"
+              element={
+                <PrivateRoute allowedRoles={["admin_sede"]}>
+                  <SedePerformance />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/sede/appointments"
+              element={
+                <PrivateRoute allowedRoles={["admin_sede"]}>
+                  <SedeAppointment />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/sede/products"
+              element={
+                <PrivateRoute allowedRoles={["admin_sede"]}>
+                  <SedeProducts />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/sede/clients"
+              element={
+                <PrivateRoute allowedRoles={["admin_sede"]}>
+                  <SedeClients />
+                </PrivateRoute>
+              }
+            />s
+
+            {/* --- ESTILISTA --- */}
+            <Route
+              path="/stylist/appointments"
+              element={
+                <PrivateRoute allowedRoles={["estilista"]}>
+                  <StylistAppointment />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/stylist/commissions"
+              element={
+                <PrivateRoute allowedRoles={["estilista"]}>
+                  <StylistCommissions />
+                </PrivateRoute>
+              }
+            />
+            {/* --- SIN PERMISOS --- */}
+            <Route
+              path="/unauthorized"
+              element={
+                <div className="flex h-screen items-center justify-center text-lg text-gray-600">
+                  No tienes permiso para acceder a esta página.
+                </div>
+              }
+            />
+
+            {/* --- DEFAULT: cualquier ruta redirige --- */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
