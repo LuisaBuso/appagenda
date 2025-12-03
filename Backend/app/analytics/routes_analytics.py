@@ -148,3 +148,4 @@ async def analytics_overview(
             status_code=500,
             detail=f"Error interno al obtener KPIs. Por favor contacte al administrador."
         )
+    
