@@ -123,3 +123,4 @@ async def analytics_dashboard(
             status_code=500,
             detail=f"Error al generar dashboard: {str(e)}"
         )
+    
