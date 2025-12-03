@@ -51,7 +51,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   // Validar token con el endpoint que tienes
   const validateToken = useCallback(async (token: string): Promise<boolean> => {
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/validate_token`, {
+      const response = await fetch(`${API_BASE_URL}auth/validate_token`, {
         method: "GET",
         headers: {
           "Authorization": `Bearer ${token}`,
@@ -109,7 +109,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     async (email: string, password: string, remember: boolean = true): Promise<boolean> => {
       setIsLoading(true);
       try {
-        const response = await fetch(`${API_BASE_URL}/auth/token`, {
+        const response = await fetch(`${API_BASE_URL}auth/token`, {
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",

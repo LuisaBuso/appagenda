@@ -19,7 +19,7 @@ export async function getEstilistas(token: string, sede_id?: string): Promise<Es
   
   console.log('🔍 Fetching estilistas con query:', query.toString());
   
-  const res = await fetch(`${API_BASE_URL}/admin/profesionales/?${query.toString()}`, {
+  const res = await fetch(`${API_BASE_URL}admin/profesionales/?${query.toString()}`, {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
@@ -34,7 +34,7 @@ export async function getEstilistas(token: string, sede_id?: string): Promise<Es
 }
 
 export async function getEstilistaCompleto(token: string, estilistaId: string): Promise<Estilista> {
-  const res = await fetch(`${API_BASE_URL}/admin/profesionales/${estilistaId}`, {
+  const res = await fetch(`${API_BASE_URL}admin/profesionales/${estilistaId}`, {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,

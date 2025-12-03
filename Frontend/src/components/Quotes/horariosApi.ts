@@ -22,7 +22,7 @@ export interface Bloqueo {
 }
 
 export async function getHorariosEstilista(token: string, estilista_id: string): Promise<Horario[]> {
-  const res = await fetch(`${API_BASE_URL}/scheduling/schedule/stylist/${estilista_id}`, {
+  const res = await fetch(`${API_BASE_URL}scheduling/schedule/stylist/${estilista_id}`, {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
@@ -36,7 +36,7 @@ export async function getHorariosEstilista(token: string, estilista_id: string):
 }
 
 export async function getBloqueosEstilista(token: string, estilista_id: string): Promise<Bloqueo[]> {
-  const res = await fetch(`${API_BASE_URL}/scheduling/block/estilista/${estilista_id}`, {
+  const res = await fetch(`${API_BASE_URL}scheduling/block/estilista/${estilista_id}`, {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,

@@ -12,7 +12,7 @@ export interface Servicio {
 }
 
 export async function getServicios(token: string): Promise<Servicio[]> {  
-  const res = await fetch(`${API_BASE_URL}/admin/servicios/`, {
+  const res = await fetch(`${API_BASE_URL}admin/servicios/`, {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
@@ -38,7 +38,7 @@ export async function getServiciosEstilista(estilistaId: string, token: string):
     console.log('📥 Todos los servicios disponibles:', todosLosServicios.length);
 
     // 2. Traer al estilista
-    const res = await fetch(`${API_BASE_URL}/admin/profesionales/${estilistaId}`, {
+    const res = await fetch(`${API_BASE_URL}admin/profesionales/${estilistaId}`, {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
