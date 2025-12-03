@@ -409,3 +409,4 @@ async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=Non
             "tasa_churn": {"valor": "0%", "crecimiento": "0%"},
             "ticket_promedio": {"valor": "0 €", "crecimiento": "0%"}
         }
+    

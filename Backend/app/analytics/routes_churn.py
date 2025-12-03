@@ -414,3 +414,4 @@ async def obtener_churn_clientes(
             status_code=500,
             detail=f"Error al obtener clientes en churn: {str(e)}"
         )
+    
