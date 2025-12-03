@@ -21,10 +21,14 @@ class Local(BaseModel):
 class Profesional(BaseModel):
     nombre: str
     email: EmailStr
-    especialidades: bool = Field(default=True)  # ⭐ Siempre True ahora
-    servicios_no_presta: Optional[List[str]] = Field(default=[])  # ⭐ Nuevo campo
+    sede_id: str
+    especialidades: Optional[List[str]] = Field(default_factory=list)
     activo: bool = True
-    comision: Optional[float] = None  # porcentaje de comisión
+    comision: Optional[float] = None
+    password: str
+
+
+        
 
 # ============================================
 # 💅 MODELO: Servicio (Administración)

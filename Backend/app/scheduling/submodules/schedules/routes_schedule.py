@@ -1,25 +1,23 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends
 from app.scheduling.models import Horario
 from app.database.mongo import collection_horarios
 from app.auth.routes import get_current_user
 from datetime import datetime
-from typing import List
 from bson import ObjectId
 
 router = APIRouter()
 
-
-# =========================================================
-# 🧩 Helper para convertir ObjectId a string
-# =========================================================
+# ============================================
+# 🔧 Convertir ObjectId a string
+# ============================================
 def horario_to_dict(h):
     h["_id"] = str(h["_id"])
     return h
 
 
-# =========================================================
-# 🕓 Crear horario base (lunes a domingo) con unique_id
-# =========================================================
+# ============================================
+# 🕓 Crear horario (creado_por y fecha auto)
+# ============================================
 @router.post("/", response_model=dict)
 async def crear_horario(
     horario: Horario,
@@ -30,67 +28,62 @@ async def crear_horario(
     if rol not in ["admin_sede", "admin_franquicia", "super_admin"]:
         raise HTTPException(status_code=403, detail="No autorizado para crear horarios")
 
-    # 🔍 Verificar si el estilista ya tiene un horario
+    # 🔍 Evitar duplicados por estilista
     existing = await collection_horarios.find_one({
         "estilista_id": horario.estilista_id
     })
     if existing:
-        raise HTTPException(status_code=400, detail="El estilista ya tiene un horario base registrado")
+        raise HTTPException(status_code=400, detail="El estilista ya tiene un horario registrado")
 
-    # 🧮 Generar unique_id incremental tipo H001, H002...
-    last_horario = await collection_horarios.find_one(
-        sort=[("unique_id", -1)]
-    )
-    if not last_horario or "unique_id" not in last_horario:
+    # 🔢 Unique ID incremental
+    last_h = await collection_horarios.find_one(sort=[("unique_id", -1)])
+    if not last_h or "unique_id" not in last_h:
         unique_id = "H001"
     else:
         try:
-            last_num = int(last_horario["unique_id"][1:])
-            unique_id = f"H{str(last_num + 1).zfill(3)}"
-        except Exception:
+            num = int(last_h["unique_id"][1:])
+            unique_id = f"H{str(num + 1).zfill(3)}"
+        except:
             unique_id = "H001"
 
-    # 🧱 Preparar datos
+    # 🧱 Armar documento final
     data = horario.dict()
     data["unique_id"] = unique_id
     data["creado_por"] = current_user["email"]
-    data["fecha_creacion"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    data["fecha_creacion"] = datetime.now().isoformat()
 
-    # 💾 Guardar en MongoDB
+    # 💾 Insertar en Mongo
     result = await collection_horarios.insert_one(data)
     data["_id"] = str(result.inserted_id)
 
     return {
-        "msg": f"✅ Horario base creado exitosamente con ID {unique_id}",
+        "msg": "Horario creado correctamente",
         "unique_id": unique_id,
         "horario": data
     }
-    
 
-# =========================================================
-# 📋 Listar horarios de un estilista
-# =========================================================
+
+# ============================================
+# 📋 Listar horario por ESTILISTA_ID
+# ============================================
 @router.get("/stylist/{estilista_id}", response_model=dict)
 async def listar_horarios_estilista(
     estilista_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    rol = current_user["rol"]
-
-    # El estilista solo puede ver su propio horario
-    if rol == "estilista" and current_user["email"] != estilista_id:
-        raise HTTPException(status_code=403, detail="No autorizado para ver otros horarios")
-
+    # Buscar por estilista_id (ES-36044)
     horario = await collection_horarios.find_one({"estilista_id": estilista_id})
+
     if not horario:
         raise HTTPException(status_code=404, detail="Horario no encontrado")
 
     return horario_to_dict(horario)
 
 
-# =========================================================
-# ✏️ Editar horario completo o su disponibilidad
-# =========================================================
+
+# ============================================
+# ✏️ Actualizar horario
+# ============================================
 @router.put("/{horario_id}", response_model=dict)
 async def actualizar_horario(
     horario_id: str,
@@ -98,10 +91,11 @@ async def actualizar_horario(
     current_user: dict = Depends(get_current_user)
 ):
     rol = current_user["rol"]
-    if rol not in ["admin_sede", "admin_franquicia", "super_admin"]:
-        raise HTTPException(status_code=403, detail="No autorizado para editar horarios")
 
-    update_data = {k: v for k, v in horario_data.dict().items() if v is not None}
+    if rol not in ["admin_sede", "admin_franquicia", "super_admin"]:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    update_data = horario_data.dict()
 
     result = await collection_horarios.update_one(
         {"_id": ObjectId(horario_id)},
@@ -111,23 +105,27 @@ async def actualizar_horario(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Horario no encontrado")
 
-    return {"msg": "✅ Horario actualizado correctamente"}
+    return {"msg": "Horario actualizado"}
 
 
-# =========================================================
-# ❌ Eliminar horario base
-# =========================================================
+# ============================================
+# ❌ Eliminar horario
+# ============================================
 @router.delete("/{horario_id}", response_model=dict)
 async def eliminar_horario(
     horario_id: str,
     current_user: dict = Depends(get_current_user)
 ):
     rol = current_user["rol"]
+
     if rol not in ["admin_sede", "admin_franquicia", "super_admin"]:
-        raise HTTPException(status_code=403, detail="No autorizado para eliminar horarios")
+        raise HTTPException(status_code=403, detail="No autorizado")
 
     result = await collection_horarios.delete_one({"_id": ObjectId(horario_id)})
+
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Horario no encontrado")
 
-    return {"msg": "🗑️ Horario eliminado correctamente"}
+    return {"msg": "Horario eliminado correctamente"}
+
+

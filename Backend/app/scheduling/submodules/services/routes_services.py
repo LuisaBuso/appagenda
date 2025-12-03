@@ -5,6 +5,7 @@ from app.auth.routes import get_current_user
 from typing import List
 from bson import ObjectId
 from datetime import datetime
+import random
 
 router = APIRouter()
 
@@ -15,6 +16,9 @@ router = APIRouter()
 def servicio_to_dict(s):
     s["_id"] = str(s["_id"])
     return s
+
+def generar_servicio_id():
+    return f"SV-{random.randint(10000, 99999)}"
 
 
 # =========================================================
@@ -32,9 +36,6 @@ async def listar_servicios(
     return [servicio_to_dict(s) for s in servicios]
 
 
-# =========================================================
-# 🔹 Crear servicio (solo admin_sede o super_admin)
-# =========================================================
 @router.post("/", response_model=dict)
 async def crear_servicio(
     servicio: Servicio,
@@ -45,13 +46,32 @@ async def crear_servicio(
     if rol not in ["admin_sede", "super_admin"]:
         raise HTTPException(status_code=403, detail="No autorizado para crear servicios")
 
+    # Convertimos a diccionario base
     data = servicio.dict()
-    data["creado_por"] = current_user["email"]
-    data["fecha_creacion"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    # Campos adicionales obligatorios
+    data["comision_estilista"] = data.get("comision_estilista", 0)
+    data["categoria"] = data.get("categoria", "")
+    data["requiere_producto"] = data.get("requiere_producto", False)
+    data["activo"] = True
+
+    ahora = datetime.utcnow()
+
+    data["creado_por"] = current_user["email"]
+    data["created_at"] = ahora
+    data["updated_at"] = ahora
+
+    # Generar servicio_id tipo SV-43024
+    data["servicio_id"] = generar_servicio_id()
+
+    # Insertar en Mongo
     result = await collection_servicios.insert_one(data)
     data["_id"] = str(result.inserted_id)
-    return {"msg": "Servicio creado exitosamente", "servicio": data}
+
+    return {
+        "msg": "Servicio creado exitosamente",
+        "servicio": data
+    }
 
 
 # =========================================================

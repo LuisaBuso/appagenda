@@ -1,3 +1,7 @@
+"""
+VERSIÓN CORREGIDA FINAL de services_analytics.py
+🔧 FIX DEFINITIVO: Usa fecha_creacion de colección clientes
+"""
 from app.database.mongo import collection_citas, collection_clients
 from datetime import timedelta, datetime
 from typing import Optional, Dict, List, Set
@@ -5,21 +9,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# === CONFIGURACIÓN ===
 CHURN_DAYS = 60
-
-# === CACHE SIMPLE EN MEMORIA ===
 _cache = {}
 _cache_ttl = {}
-CACHE_DURATION = 300  # 5 minutos
+CACHE_DURATION = 300
 
 def get_cache_key(prefix: str, **kwargs) -> str:
-    """Genera una clave única para caché"""
     params = "_".join(f"{k}={v}" for k, v in sorted(kwargs.items()) if v is not None)
     return f"{prefix}_{params}"
 
 def get_from_cache(key: str):
-    """Obtiene valor del caché si existe y no expiró"""
     if key in _cache and key in _cache_ttl:
         if datetime.now() < _cache_ttl[key]:
             return _cache[key]
@@ -29,29 +28,29 @@ def get_from_cache(key: str):
     return None
 
 def set_cache(key: str, value, ttl_seconds: int = CACHE_DURATION):
-    """Guarda valor en caché con TTL"""
     _cache[key] = value
     _cache_ttl[key] = datetime.now() + timedelta(seconds=ttl_seconds)
 
 
-# === FUNCIONES AUXILIARES OPTIMIZADAS ===
+def datetime_to_date_string(dt: datetime) -> str:
+    """Convierte datetime a string YYYY-MM-DD"""
+    return dt.strftime("%Y-%m-%d")
+
 
 async def get_clientes_periodo(
     start_date: datetime, 
     end_date: datetime, 
     sede_id: Optional[str] = None
 ) -> Set[str]:
-    """
-    Obtiene clientes únicos que tuvieron citas en un período.
-    OPTIMIZADO: Una sola query con agregación.
-    
-    ✅ ADAPTADO: Ahora maneja cliente_id como string (CL-00247)
-    """
+    """Obtiene IDs únicos de clientes con citas en el período"""
     try:
+        start_str = datetime_to_date_string(start_date)
+        end_str = datetime_to_date_string(end_date)
+        
         match_query = {
-            "fecha": {"$gte": start_date, "$lte": end_date},
+            "fecha": {"$gte": start_str, "$lte": end_str},
             "estado": {"$ne": "cancelada"},
-            "cliente_id": {"$exists": True, "$ne": None}  # Asegurar que existe
+            "cliente_id": {"$exists": True, "$ne": None}
         }
         if sede_id:
             match_query["sede_id"] = sede_id
@@ -64,7 +63,6 @@ async def get_clientes_periodo(
 
         result = await collection_citas.aggregate(pipeline).to_list(None)
         
-        # ✅ CAMBIO: Ya no convertimos a string con str(), porque cliente_id YA es string
         clientes_ids = set()
         for doc in result:
             cliente_id = doc.get("cliente_id")
@@ -74,44 +72,52 @@ async def get_clientes_periodo(
         return clientes_ids
     
     except Exception as e:
-        logger.error(f"Error en get_clientes_periodo: {e}")
+        logger.error(f"❌ Error en get_clientes_periodo: {e}", exc_info=True)
         return set()
 
 
-async def get_primeras_citas_clientes(
+async def get_fechas_creacion_clientes(
     clientes_ids: Set[str],
     sede_id: Optional[str] = None
 ) -> Dict[str, datetime]:
     """
-    Obtiene la primera cita de cada cliente.
-    OPTIMIZADO: UNA SOLA QUERY en lugar de N queries.
-    
-    ✅ ADAPTADO: cliente_id ya es string (CL-00247)
+    🔧 NUEVA FUNCIÓN: Obtiene fecha_creacion de cada cliente desde collection_clients
+    Esta es la fecha REAL de cuando el cliente se registró
     """
     try:
-        match_query = {
-            "cliente_id": {"$in": list(clientes_ids)},
-            "estado": {"$ne": "cancelada"}
-        }
+        query = {"cliente_id": {"$in": list(clientes_ids)}}
         if sede_id:
-            match_query["sede_id"] = sede_id
-
-        pipeline = [
-            {"$match": match_query},
-            {"$sort": {"fecha": 1}},
-            {"$group": {
-                "_id": "$cliente_id",
-                "primera_cita": {"$first": "$fecha"}
-            }}
-        ]
-
-        result = await collection_citas.aggregate(pipeline).to_list(None)
+            query["sede_id"] = sede_id
         
-        # ✅ CAMBIO: Ya no necesitamos str() porque _id ya es string
-        return {doc["_id"]: doc["primera_cita"] for doc in result}
+        clientes = await collection_clients.find(
+            query,
+            {"cliente_id": 1, "fecha_creacion": 1}
+        ).to_list(None)
+        
+        fechas_creacion = {}
+        for cliente in clientes:
+            cliente_id = cliente.get("cliente_id")
+            fecha_creacion = cliente.get("fecha_creacion")
+            
+            if not cliente_id:
+                continue
+            
+            # Convertir fecha_creacion a datetime si es necesario
+            if isinstance(fecha_creacion, datetime):
+                fechas_creacion[cliente_id] = fecha_creacion
+            elif isinstance(fecha_creacion, str):
+                try:
+                    fechas_creacion[cliente_id] = datetime.fromisoformat(fecha_creacion)
+                except (ValueError, TypeError):
+                    logger.warning(f"⚠️ Fecha inválida para cliente {cliente_id}: {fecha_creacion}")
+            else:
+                logger.warning(f"⚠️ Cliente {cliente_id} sin fecha_creacion válida")
+        
+        logger.info(f"📅 Fechas de creación obtenidas: {len(fechas_creacion)}/{len(clientes_ids)}")
+        return fechas_creacion
     
     except Exception as e:
-        logger.error(f"Error en get_primeras_citas_clientes: {e}")
+        logger.error(f"❌ Error en get_fechas_creacion_clientes: {e}", exc_info=True)
         return {}
 
 
@@ -119,12 +125,7 @@ async def get_ultimas_citas_clientes(
     clientes_ids: Set[str],
     sede_id: Optional[str] = None
 ) -> Dict[str, datetime]:
-    """
-    Obtiene la última cita de cada cliente.
-    OPTIMIZADO: UNA SOLA QUERY con agregación.
-    
-    ✅ ADAPTADO: cliente_id ya es string (CL-00247)
-    """
+    """Obtiene la última cita de cada cliente"""
     try:
         match_query = {
             "cliente_id": {"$in": list(clientes_ids)},
@@ -144,37 +145,55 @@ async def get_ultimas_citas_clientes(
 
         result = await collection_citas.aggregate(pipeline).to_list(None)
         
-        # ✅ CAMBIO: Ya no necesitamos str() porque _id ya es string
-        return {doc["_id"]: doc["ultima_cita"] for doc in result}
+        ultimas_citas = {}
+        for doc in result:
+            fecha_str = doc["ultima_cita"]
+            fecha_dt = datetime.fromisoformat(fecha_str)
+            ultimas_citas[doc["_id"]] = fecha_dt
+        
+        return ultimas_citas
     
     except Exception as e:
-        logger.error(f"Error en get_ultimas_citas_clientes: {e}")
+        logger.error(f"❌ Error en get_ultimas_citas_clientes: {e}", exc_info=True)
         return {}
 
 
 async def calcular_nuevos_clientes(
     clientes_actuales: Set[str],
     start_date: datetime,
+    end_date: datetime,
     sede_id: Optional[str] = None
 ) -> List[str]:
     """
-    Identifica clientes nuevos (primera cita en el período).
-    OPTIMIZADO: Una query en lugar de N queries.
-    
-    ✅ ADAPTADO: Maneja IDs como strings
+    🔧 FIX DEFINITIVO: Un cliente es NUEVO si su fecha_creacion está en el período
+    NO usa primera cita, usa el campo fecha_creacion de collection_clients
     """
     try:
-        primeras_citas = await get_primeras_citas_clientes(clientes_actuales, sede_id)
+        # Obtener fechas de creación desde collection_clients
+        fechas_creacion = await get_fechas_creacion_clientes(clientes_actuales, sede_id)
         
+        # Filtrar clientes cuya fecha_creacion esté en el rango
         nuevos = [
-            cliente_id for cliente_id, primera_fecha in primeras_citas.items()
-            if primera_fecha >= start_date
+            cliente_id for cliente_id, fecha_creacion in fechas_creacion.items()
+            if start_date.date() <= fecha_creacion.date() <= end_date.date()
         ]
         
+        # Clientes sin fecha_creacion: asumimos que son antiguos (no nuevos)
+        clientes_sin_fecha = clientes_actuales - set(fechas_creacion.keys())
+        if clientes_sin_fecha:
+            logger.warning(
+                f"⚠️ {len(clientes_sin_fecha)} clientes sin fecha_creacion válida. "
+                f"Se asumen como NO nuevos."
+            )
+        
+        logger.info(
+            f"👤 Nuevos clientes: {len(nuevos)}/{len(clientes_actuales)} "
+            f"(registrados entre {start_date.date()} y {end_date.date()})"
+        )
         return nuevos
     
     except Exception as e:
-        logger.error(f"Error en calcular_nuevos_clientes: {e}")
+        logger.error(f"❌ Error en calcular_nuevos_clientes: {e}")
         return []
 
 
@@ -183,52 +202,81 @@ async def get_citas_periodo(
     end_date: datetime,
     sede_id: Optional[str] = None
 ) -> List[Dict]:
-    """
-    Obtiene todas las citas de un período.
-    
-    ✅ ADAPTADO: Sin cambios necesarios, solo documenta que cliente_id es string
-    """
+    """Obtiene todas las citas del período"""
     try:
+        start_str = datetime_to_date_string(start_date)
+        end_str = datetime_to_date_string(end_date)
+        
         query = {
-            "fecha": {"$gte": start_date, "$lte": end_date},
+            "fecha": {"$gte": start_str, "$lte": end_str},
             "estado": {"$ne": "cancelada"}
         }
         if sede_id:
             query["sede_id"] = sede_id
 
         citas = await collection_citas.find(query).to_list(None)
+        
+        logger.info(f"📋 Citas encontradas: {len(citas)}")
         return citas
     
     except Exception as e:
-        logger.error(f"Error en get_citas_periodo: {e}")
+        logger.error(f"❌ Error en get_citas_periodo: {e}", exc_info=True)
         return []
 
 
+async def calcular_churn_real(
+    clientes_ids: Set[str],
+    fecha_referencia: datetime,
+    sede_id: Optional[str] = None
+) -> int:
+    """
+    Calcula churn usando la misma lógica que routes_churn.py
+    """
+    try:
+        ultimas_citas = await get_ultimas_citas_clientes(clientes_ids, sede_id)
+        
+        clientes_perdidos = 0
+        
+        for cliente_id, ultima_fecha in ultimas_citas.items():
+            fecha_limite = ultima_fecha + timedelta(days=CHURN_DAYS)
+            
+            # Si la fecha límite ya pasó, está en churn
+            if fecha_limite < fecha_referencia:
+                # Verificar que no tenga citas futuras
+                ultima_str = datetime_to_date_string(ultima_fecha)
+                
+                match_query = {
+                    "cliente_id": cliente_id,
+                    "fecha": {"$gt": ultima_str},
+                    "estado": {"$ne": "cancelada"}
+                }
+                if sede_id:
+                    match_query["sede_id"] = sede_id
+                
+                visita_futura = await collection_citas.find_one(match_query)
+                
+                if not visita_futura:
+                    clientes_perdidos += 1
+        
+        return clientes_perdidos
+    
+    except Exception as e:
+        logger.error(f"❌ Error en calcular_churn_real: {e}")
+        return 0
+
+
 def calcular_crecimiento(valor_anterior: float, valor_actual: float) -> float:
-    """Calcula el % de crecimiento entre dos valores"""
+    """Calcula porcentaje de crecimiento"""
     if valor_anterior == 0:
         return 100.0 if valor_actual > 0 else 0.0
     return round(((valor_actual - valor_anterior) / valor_anterior) * 100, 1)
 
 
-# === FUNCIÓN PRINCIPAL ===
-
 async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=None):
     """
-    Calcula KPIs de clientes para un período específico
-    
-    ✅ ADAPTADO: Funciona con IDs cortos (CL-00247) en lugar de ObjectIds
-    
-    Args:
-        start_date: Fecha inicio del período (ej: 2024-03-01)
-        end_date: Fecha fin del período (ej: 2024-03-07)
-        sede_id: Filtro opcional por sede
-    
-    Returns:
-        Dict con KPIs: nuevos_clientes, tasa_recurrencia, tasa_churn, ticket_promedio
+    🔧 VERSIÓN FINAL: KPIs usando fecha_creacion para determinar nuevos clientes
     """
     
-    # Verificar caché
     cache_key = get_cache_key(
         "kpi_overview",
         start=start_date.isoformat(),
@@ -238,19 +286,22 @@ async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=Non
     
     cached = get_from_cache(cache_key)
     if cached:
-        logger.info(f"KPIs obtenidos de caché")
+        logger.info(f"📦 KPIs obtenidos de caché")
         return cached
 
     try:
+        logger.info(f"🔄 Calculando KPIs: {start_date.date()} a {end_date.date()}, sede: {sede_id}")
+        
         # ========= PERÍODO ACTUAL =========
         citas_actuales = await get_citas_periodo(start_date, end_date, sede_id)
         
-        # ✅ CAMBIO: cliente_id ya es string, no necesitamos conversión
         clientes_actuales = set()
         for c in citas_actuales:
             cliente_id = c.get("cliente_id")
             if cliente_id and isinstance(cliente_id, str):
                 clientes_actuales.add(cliente_id)
+        
+        logger.info(f"📊 Período actual: {len(citas_actuales)} citas, {len(clientes_actuales)} clientes únicos")
         
         # ========= PERÍODO ANTERIOR =========
         dias_diferencia = (end_date - start_date).days + 1
@@ -259,16 +310,22 @@ async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=Non
         
         citas_anteriores = await get_citas_periodo(start_anterior, end_anterior, sede_id)
         
-        # ✅ CAMBIO: cliente_id ya es string
         clientes_anteriores = set()
         for c in citas_anteriores:
             cliente_id = c.get("cliente_id")
             if cliente_id and isinstance(cliente_id, str):
                 clientes_anteriores.add(cliente_id)
         
+        logger.info(f"📊 Período anterior: {len(citas_anteriores)} citas, {len(clientes_anteriores)} clientes únicos")
+        
         # ========= 1. NUEVOS CLIENTES =========
-        nuevos_actuales = await calcular_nuevos_clientes(clientes_actuales, start_date, sede_id)
-        nuevos_anteriores = await calcular_nuevos_clientes(clientes_anteriores, start_anterior, sede_id)
+        # 🔧 Ahora usa fecha_creacion
+        nuevos_actuales = await calcular_nuevos_clientes(
+            clientes_actuales, start_date, end_date, sede_id
+        )
+        nuevos_anteriores = await calcular_nuevos_clientes(
+            clientes_anteriores, start_anterior, end_anterior, sede_id
+        )
         
         crecimiento_nuevos = calcular_crecimiento(len(nuevos_anteriores), len(nuevos_actuales))
         
@@ -281,59 +338,33 @@ async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=Non
         
         crecimiento_recurrencia = tasa_recurrencia - tasa_recurrencia_anterior
         
+        logger.info(
+            f"🔄 Recurrencia: {recurrentes_actuales}/{len(clientes_actuales)} "
+            f"= {round(tasa_recurrencia)}%"
+        )
+        
         # ========= 3. CHURN RATE =========
-        # Clientes del período ANTERIOR que NO regresaron en el actual
-        # y ya pasaron más de 60 días desde su última visita
-        
-        clientes_no_regresaron = clientes_anteriores - clientes_actuales
-        
-        if clientes_no_regresaron:
-            # Obtener últimas citas de clientes que no regresaron (UNA SOLA QUERY)
-            ultimas_citas = await get_ultimas_citas_clientes(clientes_no_regresaron, sede_id)
-            
-            # Filtrar por fecha límite
-            clientes_perdidos = [
-                cliente_id for cliente_id, ultima_fecha in ultimas_citas.items()
-                if ultima_fecha + timedelta(days=CHURN_DAYS) < datetime.now()
-            ]
+        if clientes_actuales:
+            churn_actual = await calcular_churn_real(clientes_actuales, datetime.now(), sede_id)
+            churn_rate = (churn_actual / len(clientes_actuales)) * 100
         else:
-            clientes_perdidos = []
+            churn_rate = 0
         
-        churn_rate = (len(clientes_perdidos) / max(1, len(clientes_anteriores))) * 100
-        
-        # Período muy anterior para comparación
-        start_muy_anterior = start_anterior - timedelta(days=dias_diferencia)
-        end_muy_anterior = end_anterior - timedelta(days=dias_diferencia)
-        
-        citas_muy_anteriores = await get_citas_periodo(start_muy_anterior, end_muy_anterior, sede_id)
-        
-        # ✅ CAMBIO: cliente_id ya es string
-        clientes_muy_anteriores = set()
-        for c in citas_muy_anteriores:
-            cliente_id = c.get("cliente_id")
-            if cliente_id and isinstance(cliente_id, str):
-                clientes_muy_anteriores.add(cliente_id)
-        
-        clientes_no_regresaron_anterior = clientes_muy_anteriores - clientes_anteriores
-        
-        if clientes_no_regresaron_anterior:
-            ultimas_citas_anterior = await get_ultimas_citas_clientes(clientes_no_regresaron_anterior, sede_id)
-            
-            clientes_perdidos_anterior = [
-                cliente_id for cliente_id, ultima_fecha in ultimas_citas_anterior.items()
-                if ultima_fecha + timedelta(days=CHURN_DAYS) < end_anterior
-            ]
+        if clientes_anteriores:
+            churn_anterior = await calcular_churn_real(clientes_anteriores, end_anterior, sede_id)
+            churn_rate_anterior = (churn_anterior / len(clientes_anteriores)) * 100
         else:
-            clientes_perdidos_anterior = []
+            churn_rate_anterior = 0
         
-        churn_rate_anterior = (len(clientes_perdidos_anterior) / max(1, len(clientes_muy_anteriores))) * 100
         crecimiento_churn = churn_rate - churn_rate_anterior
         
+        logger.info(f"📉 Churn: {churn_rate:.1f}% ({churn_actual if 'churn_actual' in locals() else 0} clientes)")
+        
         # ========= 4. TICKET PROMEDIO =========
-        total_ingresos = sum(c.get("precio", 0) for c in citas_actuales)
+        total_ingresos = sum(c.get("valor_total", 0) for c in citas_actuales)
         ticket_promedio = total_ingresos / max(1, len(citas_actuales))
         
-        total_ingresos_anterior = sum(c.get("precio", 0) for c in citas_anteriores)
+        total_ingresos_anterior = sum(c.get("valor_total", 0) for c in citas_anteriores)
         ticket_promedio_anterior = total_ingresos_anterior / max(1, len(citas_anteriores))
         
         crecimiento_ticket = calcular_crecimiento(ticket_promedio_anterior, ticket_promedio)
@@ -355,23 +386,26 @@ async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=Non
             "ticket_promedio": {
                 "valor": f"{round(ticket_promedio, 2)} €",
                 "crecimiento": f"+{crecimiento_ticket}%" if crecimiento_ticket >= 0 else f"{crecimiento_ticket}%"
+            },
+            "debug_info": {
+                "total_clientes": len(clientes_actuales),
+                "clientes_nuevos": len(nuevos_actuales),
+                "clientes_recurrentes": recurrentes_actuales,
+                "total_citas": len(citas_actuales)
             }
         }
         
-        # Guardar en caché
         set_cache(cache_key, result)
         
-        logger.info(f"✅ KPIs calculados: {len(clientes_actuales)} clientes, {len(nuevos_actuales)} nuevos")
+        logger.info(f"✅ KPIs calculados exitosamente")
         
         return result
     
     except Exception as e:
-        logger.error(f"Error en get_kpi_overview: {e}", exc_info=True)
-        # Retornar valores por defecto en caso de error
+        logger.error(f"❌ Error en get_kpi_overview: {e}", exc_info=True)
         return {
             "nuevos_clientes": {"valor": 0, "crecimiento": "0%"},
             "tasa_recurrencia": {"valor": "0%", "crecimiento": "0%"},
             "tasa_churn": {"valor": "0%", "crecimiento": "0%"},
             "ticket_promedio": {"valor": "0 €", "crecimiento": "0%"}
         }
-    

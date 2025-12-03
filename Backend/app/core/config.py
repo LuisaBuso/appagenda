@@ -9,12 +9,13 @@ from app.scheduling.routes import app_router as scheduling_router
 from app.admin.routes_locales import router as admin_locales_router
 from app.admin.routes_servicios import router as admin_servicios_router
 from app.admin.routes_profesionales import router as admin_profesionales_router
-from app.inventary.routes import app_router as inventary_router
 from app.analytics.routes_churn import router as churn_router
 from app.analytics.routes_analytics import router as analytics_router
-#from app.database.indexes import create_indexes
+from app.analytics.routes_dashboard import router as dashboard_router
+from app.inventary.routes import app_router as inventary_router
+# from app.database.indexes import create_indexes
 from app.database.mongo import db  
-#from app.database.indexes import create_indexes  
+# from app.database.indexes import create_indexes  
 
 load_dotenv()
 
@@ -25,6 +26,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "https://agenda.rizosfelices.co"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -40,10 +42,10 @@ async def health():
     return {"status": "healthy"}
 
 
-"""@app.on_event("startup")
-async def startup_event():
-    await create_indexes(db)
-    print("ÍNDICES CREADOS EN MONGODB")"""
+# @app.on_event("startup")
+# async def startup_event():
+#     await create_indexes(db)
+#     print("ÍNDICES CREADOS EN MONGODB")
 
 # Incluir todos los routers
 app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
@@ -51,7 +53,8 @@ app.include_router(scheduling_router, prefix="/scheduling")
 app.include_router(admin_locales_router)
 app.include_router(admin_servicios_router)
 app.include_router(admin_profesionales_router)
-app.include_router(churn_router)
-app.include_router(analytics_router)
 app.include_router(inventary_router, prefix="/inventary")
 app.include_router(routes_clientes.router, prefix="/clientes", tags=["Clientes"])
+app.include_router(churn_router)
+app.include_router(analytics_router)
+app.include_router(dashboard_router)

@@ -1,8 +1,6 @@
 """
-Routes para análisis de Churn de clientes
-Optimizado con agregaciones y mejor manejo de errores
-
-✅ ADAPTADO: Funciona con IDs cortos (CL-00247, CT-12345, etc.)
+VERSIÓN CORREGIDA de routes_churn.py
+✅ FIX: TypeError al sumar string + timedelta (línea 270)
 """
 from fastapi import APIRouter, Response, Query, HTTPException
 from datetime import datetime, timedelta
@@ -20,6 +18,16 @@ router = APIRouter(prefix="/analytics", tags=["Analytics"])
 CHURN_DAYS = 60
 
 
+# === HELPER PARA CONVERSIÓN DE FECHAS ===
+
+def datetime_to_date_string(dt: datetime) -> str:
+    """
+    🔧 Convierte datetime a string YYYY-MM-DD
+    Necesario porque MongoDB almacena fechas como string
+    """
+    return dt.strftime("%Y-%m-%d")
+
+
 # === FUNCIONES HELPER OPTIMIZADAS ===
 
 async def get_clientes_activos_periodo(
@@ -28,22 +36,22 @@ async def get_clientes_activos_periodo(
     sede_id: Optional[str] = None
 ) -> List[str]:
     """
-    Obtiene clientes únicos que tuvieron citas en un período.
-    Usa agregación en lugar de iterar sobre todas las citas.
-    
-    ✅ ADAPTADO: cliente_id ya es string (CL-00247)
+    ✅ FIXED: Convierte datetime a string para comparación
     """
     try:
         match_query = {
             "estado": {"$ne": "cancelada"},
-            "cliente_id": {"$exists": True, "$ne": None}  # Asegurar que existe
+            "cliente_id": {"$exists": True, "$ne": None}
         }
         
         if sede_id:
             match_query["sede_id"] = sede_id
         
+        # 🔧 Convertir datetime a string
         if start_date and end_date:
-            match_query["fecha"] = {"$gte": start_date, "$lte": end_date}
+            start_str = datetime_to_date_string(start_date)
+            end_str = datetime_to_date_string(end_date)
+            match_query["fecha"] = {"$gte": start_str, "$lte": end_str}
         
         pipeline = [
             {"$match": match_query},
@@ -53,7 +61,6 @@ async def get_clientes_activos_periodo(
         
         result = await collection_citas.aggregate(pipeline).to_list(None)
         
-        # ✅ CAMBIO: Ya no convertimos a string, solo validamos que sea string
         clientes_ids = []
         for doc in result:
             cliente_id = doc.get("cliente_id")
@@ -72,10 +79,8 @@ async def get_ultima_visita_clientes(
     sede_id: Optional[str] = None
 ) -> Dict[str, datetime]:
     """
-    Obtiene la última visita de cada cliente.
-    UNA SOLA QUERY con agregación en lugar de N queries.
-    
-    ✅ ADAPTADO: cliente_id ya es string (CL-00247)
+    ✅ FIXED: Convierte fecha string a datetime en el resultado
+    🔧 CRÍTICO: Ahora retorna datetime, NO string
     """
     try:
         match_query = {
@@ -96,11 +101,27 @@ async def get_ultima_visita_clientes(
         
         result = await collection_citas.aggregate(pipeline).to_list(None)
         
-        # ✅ CAMBIO: _id ya es string, no necesitamos conversión
-        return {doc["_id"]: doc["ultima_visita"] for doc in result}
+        # 🔧 CRÍTICO: Convertir string a datetime
+        ultimas_visitas = {}
+        for doc in result:
+            cliente_id = doc["_id"]
+            fecha_str = doc["ultima_visita"]
+            
+            try:
+                # Convertir "2025-10-01" a datetime
+                fecha_dt = datetime.fromisoformat(fecha_str)
+                ultimas_visitas[cliente_id] = fecha_dt
+            except (ValueError, TypeError) as e:
+                logger.warning(
+                    f"⚠️ Fecha inválida para cliente {cliente_id}: {fecha_str} - {e}"
+                )
+                continue
+        
+        logger.info(f"📅 Últimas visitas obtenidas: {len(ultimas_visitas)}/{len(clientes_ids)}")
+        return ultimas_visitas
     
     except Exception as e:
-        logger.error(f"Error en get_ultima_visita_clientes: {e}")
+        logger.error(f"❌ Error en get_ultima_visita_clientes: {e}", exc_info=True)
         return {}
 
 
@@ -110,15 +131,15 @@ async def verificar_visitas_futuras(
     sede_id: Optional[str] = None
 ) -> Dict[str, bool]:
     """
-    Verifica si los clientes tienen visitas posteriores a una fecha.
-    UNA SOLA QUERY con agregación.
-    
-    ✅ ADAPTADO: cliente_id ya es string (CL-00247)
+    ✅ FIXED: Convierte datetime a string para comparación
     """
     try:
+        # 🔧 Convertir datetime a string
+        fecha_corte_str = datetime_to_date_string(fecha_corte)
+        
         match_query = {
             "cliente_id": {"$in": clientes_ids},
-            "fecha": {"$gt": fecha_corte},
+            "fecha": {"$gt": fecha_corte_str},
             "estado": {"$ne": "cancelada"}
         }
         if sede_id:
@@ -132,46 +153,38 @@ async def verificar_visitas_futuras(
         
         result = await collection_citas.aggregate(pipeline).to_list(None)
         
-        # ✅ CAMBIO: Ya no convertimos a string
         clientes_con_visitas = set(doc["cliente_id"] for doc in result)
         
         return {cid: cid in clientes_con_visitas for cid in clientes_ids}
     
     except Exception as e:
-        logger.error(f"Error en verificar_visitas_futuras: {e}")
+        logger.error(f"❌ Error en verificar_visitas_futuras: {e}")
         return {cid: False for cid in clientes_ids}
 
 
 async def get_datos_clientes_batch(clientes_ids: List[str]) -> Dict[str, Dict]:
     """
-    Obtiene datos de múltiples clientes en UNA SOLA QUERY.
-    
-    ✅ ADAPTADO: Ahora busca por cliente_id (string) en lugar de _id (ObjectId)
-    Los clientes ahora tienen campo cliente_id = "CL-00247"
+    ✅ Busca por cliente_id (string) con fallback a _id
     """
     try:
-        # ✅ CAMBIO CRÍTICO: Buscar por campo cliente_id en lugar de _id
-        # Asumiendo que la colección clients tiene un campo cliente_id con el ID corto
         clientes = await collection_clients.find(
             {"cliente_id": {"$in": clientes_ids}}
         ).to_list(None)
         
-        # Crear diccionario usando cliente_id como clave
         return {c["cliente_id"]: c for c in clientes if c.get("cliente_id")}
     
     except Exception as e:
-        logger.error(f"Error en get_datos_clientes_batch: {e}")
+        logger.error(f"❌ Error en get_datos_clientes_batch: {e}")
         
-        # ⚠️ FALLBACK: Si falla, intentar buscar por _id (compatibilidad con datos antiguos)
+        # ⚠️ FALLBACK: Intentar buscar por _id (compatibilidad con datos antiguos)
         try:
             logger.warning("Intentando fallback con búsqueda por _id...")
             from bson import ObjectId
             
-            # Intentar convertir IDs a ObjectId para datos legacy
             object_ids = []
             for cid in clientes_ids:
                 try:
-                    if len(cid) == 24:  # Posible ObjectId
+                    if len(cid) == 24:
                         object_ids.append(ObjectId(cid))
                 except:
                     pass
@@ -181,7 +194,6 @@ async def get_datos_clientes_batch(clientes_ids: List[str]) -> Dict[str, Dict]:
                     {"_id": {"$in": object_ids}}
                 ).to_list(None)
                 
-                # Retornar usando cliente_id si existe, sino _id
                 result = {}
                 for c in clientes:
                     key = c.get("cliente_id") or str(c.get("_id"))
@@ -189,7 +201,7 @@ async def get_datos_clientes_batch(clientes_ids: List[str]) -> Dict[str, Dict]:
                 
                 return result
         except Exception as fallback_error:
-            logger.error(f"Error en fallback de get_datos_clientes_batch: {fallback_error}")
+            logger.error(f"❌ Error en fallback: {fallback_error}")
         
         return {}
 
@@ -204,26 +216,18 @@ async def obtener_churn_clientes(
     end_date: Optional[str] = Query(None, description="Fecha fin para análisis (YYYY-MM-DD)")
 ):
     """
-    Obtiene lista de clientes en riesgo de abandono (churn).
+    ✅ FIXED: TypeError corregido - ahora suma datetime + timedelta correctamente
     
-    ✅ ADAPTADO: Funciona con IDs cortos (CL-00247)
+    Obtiene lista de clientes en riesgo de abandono (churn).
     
     Un cliente está en churn si:
     - Su última visita fue hace más de CHURN_DAYS (60 días)
     - No tiene citas programadas a futuro
-    
-    Parámetros:
-    - export: Si es True, descarga Excel. Si es False, devuelve JSON
-    - sede_id: Filtrar solo clientes de una sede específica
-    - start_date/end_date: Analizar solo clientes activos en ese rango
-    
-    OPTIMIZADO: Usa agregaciones en lugar de bucles con queries individuales
     """
     
     try:
         hoy = datetime.now()
         
-        # Parsear fechas si se proporcionan
         start = None
         end = None
         
@@ -243,7 +247,7 @@ async def obtener_churn_clientes(
                     detail="La fecha de inicio debe ser menor o igual a la fecha fin"
                 )
         
-        # ✅ PASO 1: Obtener clientes únicos del período (UNA QUERY)
+        # ✅ PASO 1: Obtener clientes únicos del período
         clientes_ids = await get_clientes_activos_periodo(start, end, sede_id)
         
         if not clientes_ids:
@@ -260,16 +264,18 @@ async def obtener_churn_clientes(
         
         logger.info(f"📊 Analizando churn de {len(clientes_ids)} clientes...")
         
-        # ✅ PASO 2: Obtener última visita de todos los clientes (UNA QUERY)
+        # ✅ PASO 2: Obtener última visita de todos los clientes
+        # 🔧 CRÍTICO: Esta función ahora retorna datetime, NO string
         ultimas_visitas = await get_ultima_visita_clientes(clientes_ids, sede_id)
         
         # ✅ PASO 3: Filtrar clientes que superaron el límite de churn
         clientes_candidatos_churn = []
         
         for cliente_id, ultima_visita in ultimas_visitas.items():
+            # 🔧 FIX: Ahora ultima_visita es datetime, NO string
+            # Por lo tanto, esta suma funciona correctamente
             fecha_limite = ultima_visita + timedelta(days=CHURN_DAYS)
             
-            # Si aún no pasó el límite, no está en churn
             if fecha_limite >= hoy:
                 continue
             
@@ -290,13 +296,16 @@ async def obtener_churn_clientes(
         logger.info(f"⚠️ {len(clientes_candidatos_churn)} clientes candidatos a churn")
         
         # ✅ PASO 4: Verificar si tienen visitas futuras
-        # Para cada cliente, verificamos individualmente (optimización pendiente)
         tienen_visitas_futuras = {}
         for cliente_id in clientes_candidatos_churn:
-            ultima = ultimas_visitas[cliente_id]
+            ultima = ultimas_visitas[cliente_id]  # Ahora es datetime
+            
+            # 🔧 Convertir datetime a string para la query
+            ultima_str = datetime_to_date_string(ultima)
+            
             match_query = {
                 "cliente_id": cliente_id,
-                "fecha": {"$gt": ultima},
+                "fecha": {"$gt": ultima_str},
                 "estado": {"$ne": "cancelada"}
             }
             if sede_id:
@@ -305,7 +314,6 @@ async def obtener_churn_clientes(
             visita_futura = await collection_citas.find_one(match_query)
             tienen_visitas_futuras[cliente_id] = visita_futura is not None
         
-        # Filtrar solo los que NO tienen visitas futuras (están en churn real)
         clientes_en_churn = [
             cid for cid in clientes_candidatos_churn 
             if not tienen_visitas_futuras.get(cid, False)
@@ -325,7 +333,7 @@ async def obtener_churn_clientes(
         
         logger.info(f"🔴 {len(clientes_en_churn)} clientes en churn real")
         
-        # ✅ PASO 5: Obtener datos de clientes en batch (UNA QUERY)
+        # ✅ PASO 5: Obtener datos de clientes en batch
         clientes_data_map = await get_datos_clientes_batch(clientes_en_churn)
         
         # ✅ PASO 6: Construir resultado
@@ -336,7 +344,6 @@ async def obtener_churn_clientes(
             
             if not cliente_data:
                 logger.warning(f"⚠️ Cliente {cliente_id} no encontrado en BD de clientes")
-                # Agregar con datos básicos aunque no encontremos el registro completo
                 clientes_perdidos.append({
                     "cliente_id": cliente_id,
                     "nombre": "Desconocido",
@@ -349,7 +356,7 @@ async def obtener_churn_clientes(
                 })
                 continue
             
-            ultima_visita = ultimas_visitas[cliente_id]
+            ultima_visita = ultimas_visitas[cliente_id]  # datetime
             dias_inactivo = (hoy - ultima_visita).days
             
             clientes_perdidos.append({
@@ -362,7 +369,6 @@ async def obtener_churn_clientes(
                 "dias_inactivo": dias_inactivo
             })
         
-        # Ordenar por días de inactividad (más críticos primero)
         clientes_perdidos.sort(key=lambda x: x["dias_inactivo"], reverse=True)
         
         logger.info(f"✅ Análisis de churn completado: {len(clientes_perdidos)} clientes en riesgo")
@@ -408,4 +414,3 @@ async def obtener_churn_clientes(
             status_code=500,
             detail=f"Error al obtener clientes en churn: {str(e)}"
         )
-    
