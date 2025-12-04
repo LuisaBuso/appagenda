@@ -20,7 +20,7 @@ const DEFAULT_VALUES = {
   repetir: false,
   tipoRepeticion: "diariamente" as const,
   intervalo: 1,
-  tipoFinalizacion: "repeticiones" as const,
+  tipoFinalizacion: "repeticiones" as "repeticiones" | "fecha",
   repeticiones: 1,
   fechaFinal: "",
   incluyeOriginal: true,

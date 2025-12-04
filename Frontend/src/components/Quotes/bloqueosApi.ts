@@ -11,7 +11,7 @@ export interface Bloqueo {
 }
 
 export async function getBloqueos(token: string) {
-  const res = await fetch(`${API_BASE_URL}/bloqueos`, {
+  const res = await fetch(`${API_BASE_URL}bloqueos`, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -21,7 +21,7 @@ export async function getBloqueos(token: string) {
 }
 
 export async function createBloqueo(data: Bloqueo, token: string) {
-  const res = await fetch(`${API_BASE_URL}/scheduling/block/`, {
+  const res = await fetch(`${API_BASE_URL}scheduling/block/`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -34,7 +34,7 @@ export async function createBloqueo(data: Bloqueo, token: string) {
 }
 
 export async function deleteBloqueo(id: string, token: string) {
-  const res = await fetch(`${API_BASE_URL}/bloqueos/${id}`, {
+  const res = await fetch(`${API_BASE_URL}bloqueos/${id}`, {
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${token}`,

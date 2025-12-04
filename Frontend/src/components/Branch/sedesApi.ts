@@ -12,7 +12,7 @@ export interface Sede {
 }
 
 export async function getSedes(token: string): Promise<Sede[]> {
-  const res = await fetch(`${API_BASE_URL}/admin/locales/`, {
+  const res = await fetch(`${API_BASE_URL}admin/locales/`, {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
