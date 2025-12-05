@@ -28,9 +28,7 @@ collection_salidas = db["exits"]
 collection_card = db["fichas"]
 collection_commissions = db["commissions"]
 collection_products = db["products"]
-
-
-
-
+collection_invoices = db["invoices"]  # Nueva colección
+collection_sales = db["sales"]  
 def connect_to_mongo():
     pass
