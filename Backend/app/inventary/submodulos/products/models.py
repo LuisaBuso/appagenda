@@ -1,16 +1,39 @@
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Optional, Dict
 from datetime import datetime
 
 class Producto(BaseModel):
-    nombre: str
-    codigo: Optional[str] = None
-    descripcion: Optional[str] = None
-    categoria: Optional[str] = None
-    precio: float
-    stock_actual: int = 0
-    stock_minimo: int = 5
-    sede_id: Optional[str] = None
-    franquicia_id: Optional[str] = None
-    fecha_creacion: Optional[datetime] = None
-
+    nombre: str = Field(..., description="Nombre del producto")
+    codigo: Optional[str] = Field(None, description="Código del producto")
+    descripcion: Optional[str] = Field(None, description="Descripción del producto")
+    categoria: Optional[str] = Field(None, description="Categoría del producto")
+    
+    # Precios en diferentes monedas (escalable)
+    precios: Dict[str, float] = Field(
+        ...,
+        description="Precios en diferentes monedas: {'COP': 250000, 'USD': 62.50, 'MXN': 1125.00}",
+        example={"COP": 250000, "USD": 62.50, "MXN": 1125.00}
+    )
+    
+    stock_actual: int = Field(default=0, ge=0, description="Stock actual")
+    stock_minimo: int = Field(default=5, ge=0, description="Stock mínimo")
+    sede_id: Optional[str] = Field(None, description="ID de la sede")
+    franquicia_id: Optional[str] = Field(None, description="ID de la franquicia")
+    fecha_creacion: Optional[datetime] = Field(None, description="Fecha de creación")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "nombre": "SHAMPOO MEN SALON",
+                "codigo": "1050",
+                "descripcion": "Shampoo profesional para hombres",
+                "categoria": "USO SALON",
+                "precios": {
+                    "COP": 250000,
+                    "USD": 62.50,
+                    "MXN": 1125.00
+                },
+                "stock_actual": 50,
+                "stock_minimo": 5
+            }
+        }
