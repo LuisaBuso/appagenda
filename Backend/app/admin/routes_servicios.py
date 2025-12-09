@@ -85,7 +85,7 @@ async def crear_servicio(
 
 
 # ===================================================
-# 📋 Listar servicios
+# 📋 Listar servicios - CORREGIDO
 # ===================================================
 @router.get("/", response_model=list)
 async def listar_servicios(
@@ -101,20 +101,34 @@ async def listar_servicios(
     Query params:
     - activo: Filtrar por estado (true/false)
     """
-    query = {}
     
-    # Filtrar por estado si se especifica
-    if activo is not None:
-        query["activo"] = activo
-    
-    # ⭐ FILTRAR SEGÚN PERMISOS
+    # ⭐ CONSTRUIR QUERY SEGÚN ROL
     if current_user["rol"] == "admin_sede":
-        # Admin sede ve: servicios globales + servicios de su sede
-        query["$or"] = [
-            {"sede_id": current_user["sede_id"]},  # De su sede
-            {"sede_id": None}  # Globales
-        ]
-    # super_admin ve todos (sin filtro adicional)
+        # Admin sede ve: servicios globales (sede_id es null) + servicios de su sede
+        sede_filter = {
+            "$or": [
+                {"sede_id": current_user["sede_id"]},  # De su sede
+                {"sede_id": {"$exists": False}},       # No tiene campo sede_id
+                {"sede_id": None}                       # sede_id es null
+            ]
+        }
+        
+        # Combinar con filtro de activo si existe
+        if activo is not None:
+            query = {
+                "$and": [
+                    sede_filter,
+                    {"activo": activo}
+                ]
+            }
+        else:
+            query = sede_filter
+            
+    else:  # super_admin
+        # Super admin ve todos los servicios
+        query = {}
+        if activo is not None:
+            query["activo"] = activo
 
     servicios = await collection_servicios.find(query).to_list(None)
     
