@@ -10,8 +10,8 @@ from app.database.mongo import (
     collection_commissions,
     collection_clients,
     collection_locales,
-    collection_invoices,  # Nueva colección
-    collection_sales      # Nueva colección
+    collection_invoices,
+    collection_sales
 )
 from app.auth.routes import get_current_user
 
@@ -31,7 +31,7 @@ def generar_identificador() -> str:
 
 
 # ============================================================
-# 🧾 Facturar cita - VERSIÓN MEJORADA
+# 🧾 Facturar cita - VERSIÓN CON MÚLTIPLES MONEDAS
 # ============================================================
 @router.post("/quotes/facturar/{cita_id}")
 async def facturar_cita(
@@ -61,7 +61,20 @@ async def facturar_cita(
         raise HTTPException(status_code=400, detail="La cita ya está pagada")
 
     # ====================================
-    # 2️⃣ OBTENER DATOS RELACIONADOS
+    # 2️⃣ OBTENER SEDE Y MONEDA
+    # ====================================
+    sede = await collection_locales.find_one({
+        "sede_id": cita["sede_id"]
+    })
+    if not sede:
+        print("❌ Sede no encontrada")
+        raise HTTPException(status_code=404, detail="Sede no encontrada")
+
+    moneda_sede = sede.get("moneda", "COP")
+    print(f"💰 Moneda de la sede: {moneda_sede}")
+
+    # ====================================
+    # 3️⃣ OBTENER SERVICIO Y PRECIO EN MONEDA CORRECTA
     # ====================================
     servicio = await collection_servicios.find_one({
         "servicio_id": cita["servicio_id"]
@@ -70,6 +83,21 @@ async def facturar_cita(
         print("❌ Servicio no encontrado")
         raise HTTPException(status_code=404, detail="Servicio no encontrado")
 
+    # ⭐ OBTENER PRECIO EN LA MONEDA DE LA SEDE
+    precios_servicio = servicio.get("precios", {})
+    if moneda_sede not in precios_servicio:
+        print(f"❌ El servicio no tiene precio en {moneda_sede}")
+        raise HTTPException(
+            status_code=400, 
+            detail=f"El servicio '{servicio.get('nombre')}' no tiene precio configurado en {moneda_sede}"
+        )
+
+    valor_servicio = precios_servicio[moneda_sede]
+    print(f"💵 Precio del servicio en {moneda_sede}: {valor_servicio}")
+
+    # ====================================
+    # 4️⃣ OBTENER CLIENTE
+    # ====================================
     cliente = await collection_clients.find_one({
         "cliente_id": cita["cliente_id"]
     })
@@ -77,27 +105,17 @@ async def facturar_cita(
         print("❌ Cliente no encontrado")
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-    sede = await collection_locales.find_one({
-        "sede_id": cita["sede_id"]
-    })
-    if not sede:
-        print("❌ Sede no encontrada")
-        raise HTTPException(status_code=404, detail="Sede no encontrada")
-
-    print(f"🛠 Servicio encontrado: {servicio}")
-
     # ====================================
-    # 3️⃣ CALCULAR COMISIÓN
+    # 5️⃣ CALCULAR COMISIÓN
     # ====================================
     comision_porcentaje = servicio.get("comision_estilista", 0)
     print(f"📊 Porcentaje de comisión: {comision_porcentaje}%")
 
-    valor_servicio = cita["valor_total"]
     valor_comision = (valor_servicio * comision_porcentaje) / 100
     print(f"💰 Valor del servicio: {valor_servicio}, Valor de la comisión: {valor_comision}")
 
     # ====================================
-    # 4️⃣ PREPARAR ITEMS (SERVICIO + PRODUCTOS)
+    # 6️⃣ PREPARAR ITEMS (SERVICIO + PRODUCTOS)
     # ====================================
     items = []
     
@@ -108,7 +126,8 @@ async def facturar_cita(
         "nombre": cita["servicio_nombre"],
         "cantidad": 1,
         "precio_unitario": valor_servicio,
-        "subtotal": valor_servicio
+        "subtotal": valor_servicio,
+        "moneda": moneda_sede
     })
 
     # Agregar productos si existen
@@ -120,16 +139,17 @@ async def facturar_cita(
             "nombre": producto.get("nombre"),
             "cantidad": producto.get("cantidad", 1),
             "precio_unitario": producto.get("precio_unitario", 0),
-            "subtotal": producto.get("subtotal", 0)
+            "subtotal": producto.get("subtotal", 0),
+            "moneda": moneda_sede
         })
 
     # ====================================
-    # 5️⃣ CALCULAR TOTAL FINAL
+    # 7️⃣ CALCULAR TOTAL FINAL
     # ====================================
     total_final = sum(item["subtotal"] for item in items)
 
     # ====================================
-    # 6️⃣ GENERAR NÚMEROS ÚNICOS
+    # 8️⃣ GENERAR NÚMEROS ÚNICOS
     # ====================================
     numero_comprobante = generar_numero_comprobante()
     identificador = generar_identificador()
@@ -139,13 +159,14 @@ async def facturar_cita(
     print(f"🔢 Identificador: {identificador}")
 
     # ====================================
-    # 7️⃣ CREAR DOCUMENTO DE FACTURA (INVOICE)
+    # 9️⃣ CREAR DOCUMENTO DE FACTURA (INVOICE)
     # ====================================
     factura = {
         "identificador": identificador,
         "fecha_pago": fecha_actual,
         "local": sede.get("nombre"),
         "sede_id": cita["sede_id"],
+        "moneda": moneda_sede,  # ⭐ NUEVO
         "cliente_id": cita["cliente_id"],
         "nombre_cliente": cliente.get("nombre", "") + " " + cliente.get("apellido", ""),
         "cedula_cliente": cliente.get("cedula", ""),
@@ -166,9 +187,8 @@ async def facturar_cita(
     }
 
     # ====================================
-    # 8️⃣ CREAR DOCUMENTO DE VENTA (SALES)
+    # 🔟 CREAR DOCUMENTO DE VENTA (SALES)
     # ====================================
-    # Determinar desglose de pagos (puedes ajustar esto según tu lógica)
     desglose_pagos = {
         cita.get("metodo_pago", "efectivo"): total_final,
         "total": total_final
@@ -179,12 +199,13 @@ async def facturar_cita(
         "fecha_pago": fecha_actual,
         "local": sede.get("nombre"),
         "sede_id": cita["sede_id"],
+        "moneda": moneda_sede,  # ⭐ NUEVO
         "cliente_id": cita["cliente_id"],
         "nombre_cliente": cliente.get("nombre", "") + " " + cliente.get("apellido", ""),
         "cedula_cliente": cliente.get("cedula", ""),
         "email_cliente": cliente.get("correo", ""),
         "telefono_cliente": cliente.get("telefono", ""),
-        "items": items,  # Array con servicio y productos
+        "items": items,
         "desglose_pagos": desglose_pagos,
         
         # Campos adicionales útiles
@@ -195,7 +216,7 @@ async def facturar_cita(
     }
 
     # ====================================
-    # 9️⃣ ACTUALIZAR CITA
+    # 1️⃣1️⃣ ACTUALIZAR CITA
     # ====================================
     await collection_citas.update_one(
         {"_id": ObjectId(cita_id)},
@@ -213,7 +234,7 @@ async def facturar_cita(
     print("✅ Cita actualizada a estado 'completada' y 'pagado'")
 
     # ====================================
-    # 🔟 GUARDAR FACTURA Y VENTA
+    # 1️⃣2️⃣ GUARDAR FACTURA Y VENTA
     # ====================================
     try:
         await collection_invoices.insert_one(factura)
@@ -228,13 +249,14 @@ async def facturar_cita(
         print(f"⚠️ Error guardando venta: {e}")
 
     # ====================================
-    # 1️⃣1️⃣ ACUMULAR COMISIONES DEL ESTILISTA
+    # 1️⃣3️⃣ ACUMULAR COMISIONES DEL ESTILISTA
     # ====================================
     profesional_id = cita["profesional_id"]
     print(f"👤 Profesional ID: {profesional_id}")
 
     comision_document = await collection_commissions.find_one({
-        "profesional_id": profesional_id
+        "profesional_id": profesional_id,
+        "sede_id": cita["sede_id"]  # ⭐ Buscar por profesional Y sede
     })
     print(f"📂 Documento de comisión encontrado: {comision_document}")
 
@@ -251,11 +273,17 @@ async def facturar_cita(
     if comision_document:
         # Ya existe → incrementar
         await collection_commissions.update_one(
-            {"profesional_id": profesional_id},
+            {
+                "profesional_id": profesional_id,
+                "sede_id": cita["sede_id"]
+            },
             {
                 "$inc": {
                     "total_servicios": 1,
                     "total_comisiones": valor_comision
+                },
+                "$set": {
+                    "estado": "pendiente"
                 },
                 "$push": {
                     "servicios_detalle": servicio_comision
@@ -270,9 +298,11 @@ async def facturar_cita(
             "profesional_id": profesional_id,
             "profesional_nombre": cita["profesional_nombre"],
             "sede_id": cita["sede_id"],
+            "moneda": moneda_sede,  # ⭐ NUEVO
             "total_servicios": 1,
             "total_comisiones": valor_comision,
             "servicios_detalle": [servicio_comision],
+            "estado": "pendiente",
             "creado_en": datetime.now()
         }
         await collection_commissions.insert_one(nuevo_doc)
@@ -288,13 +318,15 @@ async def facturar_cita(
         "numero_comprobante": numero_comprobante,
         "identificador": identificador,
         "total": total_final,
+        "moneda": moneda_sede,  # ⭐ NUEVO
         "comision": comision_msg,
         "valor_comision_generada": valor_comision,
         "items_facturados": len(items),
         "detalles": {
             "servicio": valor_servicio,
             "productos": sum(p["subtotal"] for p in productos_cita),
-            "total": total_final
+            "total": total_final,
+            "moneda": moneda_sede  # ⭐ NUEVO
         }
     }
 

@@ -464,6 +464,3 @@ async def get_clientes_mi_sede(
     clientes = await clientes_cursor.to_list(length=None)
 
     return clientes  # Devuelve directamente el array
-
-
-

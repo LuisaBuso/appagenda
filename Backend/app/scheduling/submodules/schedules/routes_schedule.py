@@ -30,7 +30,7 @@ async def crear_horario(
 
     # 🔍 Evitar duplicados por estilista
     existing = await collection_horarios.find_one({
-        "estilista_id": horario.estilista_id
+        "profesional_id": horario.profesional_id
     })
     if existing:
         raise HTTPException(status_code=400, detail="El estilista ya tiene un horario registrado")
@@ -64,15 +64,15 @@ async def crear_horario(
 
 
 # ============================================
-# 📋 Listar horario por ESTILISTA_ID
+# 📋 Listar horario por PROFESIONAL_ID
 # ============================================
-@router.get("/stylist/{estilista_id}", response_model=dict)
+@router.get("/stylist/{profesional_id}", response_model=dict)
 async def listar_horarios_estilista(
-    estilista_id: str,
+    profesional_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    # Buscar por estilista_id (ES-36044)
-    horario = await collection_horarios.find_one({"estilista_id": estilista_id})
+    # Buscar por profesional_id (ES-36044)
+    horario = await collection_horarios.find_one({"profesional_id": profesional_id})
 
     if not horario:
         raise HTTPException(status_code=404, detail="Horario no encontrado")
