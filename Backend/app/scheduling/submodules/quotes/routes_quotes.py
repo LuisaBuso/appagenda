@@ -17,7 +17,7 @@ from app.database.mongo import (
     collection_estilista,
     collection_clients,
     collection_locales,
-    collection_block,  # si no existe en tu proyecto elimínalo del import
+    collection_block,
     collection_card,
     collection_commissions,
     collection_products
@@ -38,38 +38,27 @@ s3_client = boto3.client(
     region_name=os.getenv("AWS_REGION", "us-west-2")
 )
 
-
-
 def upload_to_s3(file: UploadFile, folder_path: str) -> str:
     """Sube un archivo a S3 y retorna la URL pública"""
     try:
-        # Generar nombre único para el archivo
         file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
         unique_filename = f"{uuid.uuid4()}.{file_extension}"
-        
-        # Construir la ruta completa en S3
         s3_key = f"{folder_path}/{unique_filename}"
         
-        # Subir archivo a S3
         s3_client.upload_fileobj(
             file.file,
             os.getenv("AWS_BUCKET_NAME"),
             s3_key,
         )
         
-        # Generar URL pública
         bucket_name = os.getenv("AWS_BUCKET_NAME")
         region = os.getenv("AWS_REGION", "us-west-2")
-        
-        # URL estilo: https://bucket-name.s3.region.amazonaws.com/key
         url = f"https://{bucket_name}.s3.{region}.amazonaws.com/{s3_key}"
         
         return url
     except Exception as e:
         print(f"Error subiendo archivo a S3: {e}")
         raise HTTPException(status_code=500, detail=f"Error subiendo archivo: {str(e)}")
-
-
 
 # -----------------------
 # EMAIL (config desde env)
@@ -97,7 +86,6 @@ def enviar_correo(destinatario: str, asunto: str, mensaje: str):
     except Exception as e:
         print("Error enviando email:", e)
 
-
 # -----------------------
 # HELPERS
 # -----------------------
@@ -115,17 +103,14 @@ async def resolve_cita_by_id(cita_id: str) -> Optional[dict]:
       2) _id (ObjectId)
     Devuelve el documento o None.
     """
-    # intentar por campo de negocio
     cita = await collection_citas.find_one({"cita_id": cita_id})
     if cita:
         return cita
-    # intentar por ObjectId
     try:
         cita = await collection_citas.find_one({"_id": ObjectId(cita_id)})
         return cita
     except Exception:
         return None
-
 
 # =============================================================
 # 🔹 OBTENER CITAS (filtro por sede o profesional) - OPTIMIZADO
@@ -136,25 +121,21 @@ async def obtener_citas(
     profesional_id: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user)
 ):
-    # ----------- Construir filtro -----------
     filtro = {}
     if sede_id:
         filtro["sede_id"] = sede_id
     if profesional_id:
         filtro["profesional_id"] = profesional_id
 
-    # ===== 1. Obtener todas las citas de una sola vez =====
     citas = await collection_citas.find(filtro).sort("fecha", 1).to_list(None)
 
     if not citas:
         return {"citas": []}
 
-    # ===== 2. Extraer IDs únicos =====
     servicio_ids = list({c.get("servicio_id") for c in citas})
     profesional_ids = list({c.get("profesional_id") for c in citas})
     sede_ids = list({c.get("sede_id") for c in citas})
 
-    # ===== 3. Cargar datos en lote (MUY RÁPIDO) =====
     servicios = await collection_servicios.find(
         {"servicio_id": {"$in": servicio_ids}}
     ).to_list(None)
@@ -167,12 +148,10 @@ async def obtener_citas(
         {"sede_id": {"$in": sede_ids}}
     ).to_list(None)
 
-    # ===== 4. Convertir listas en diccionarios (O(1) acceso) =====
     servicios_map = {s["servicio_id"]: s for s in servicios}
     profesionales_map = {p["profesional_id"]: p for p in profesionales}
     sedes_map = {s["sede_id"]: s for s in sedes}
 
-    # ===== 5. Enriquecer citas SIN consultar la BD =====
     for cita in citas:
         normalize_cita_doc(cita)
 
@@ -190,7 +169,6 @@ async def obtener_citas(
 
     return {"citas": citas}
 
-
 # =============================================================
 # 🔹 CREAR CITA (con validaciones, guardado y email)
 # =============================================================
@@ -201,11 +179,9 @@ async def crear_cita(
 ):
     print(f"🔍 crear_cita invoked by {current_user.get('email')} (rol={current_user.get('rol')})")
 
-    # permisos simples
     if current_user.get("rol") not in ["usuario", "admin_sede", "super_admin"]:
         raise HTTPException(status_code=403, detail="No autorizado para crear citas")
 
-    # convertir fecha a string ISO
     fecha_str = cita.fecha.strftime("%Y-%m-%d")
 
     # === obtener datos relacionados ===
@@ -217,7 +193,6 @@ async def crear_cita(
     if not servicio:
         raise HTTPException(status_code=404, detail="Servicio no encontrado")
 
-    # profesional: usamos profesional_id en la colección de estilistas
     profesional = await collection_estilista.find_one({"profesional_id": cita.profesional_id})
     if not profesional:
         raise HTTPException(status_code=404, detail="Profesional no encontrado")
@@ -226,8 +201,20 @@ async def crear_cita(
     if not sede:
         raise HTTPException(status_code=404, detail="Sede no encontrada")
 
+    # ⭐ OBTENER PRECIO SEGÚN MONEDA DE LA SEDE
+    moneda_sede = sede.get("moneda", "COP")
+    precios_servicio = servicio.get("precios", {})
+
+    if moneda_sede not in precios_servicio:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El servicio '{servicio.get('nombre')}' no tiene precio configurado en {moneda_sede}"
+        )
+
+    valor_total = precios_servicio[moneda_sede]
+    print(f"💵 Precio del servicio en {moneda_sede}: {valor_total}")
+
     # === pago / abono ===
-    valor_total = servicio.get("precio", 0) or 0
     abono = getattr(cita, "abono", 0) or 0
 
     if abono >= valor_total:
@@ -262,7 +249,7 @@ async def crear_cita(
     if not (hora_inicio_hor <= hora_inicio_cita < hora_fin_hor and hora_inicio_hor < hora_fin_cita <= hora_fin_hor):
         raise HTTPException(status_code=400, detail="La cita está fuera del horario laboral del profesional")
 
-    # === validar bloqueos (si existe collection_block) ===
+    # === validar bloqueos ===
     try:
         bloqueo = await collection_block.find_one({
             "profesional_id": cita.profesional_id,
@@ -273,7 +260,6 @@ async def crear_cita(
         if bloqueo:
             raise HTTPException(status_code=400, detail="El profesional tiene un bloqueo en ese horario")
     except Exception:
-        # si no existe collection_block o falla, ignorar (no crítico)
         pass
 
     # === validar solape con otras citas ===
@@ -294,8 +280,9 @@ async def crear_cita(
     data["abono"] = float(abono)
     data["saldo_pendiente"] = float(saldo_pendiente)
     data["estado_pago"] = estado_pago
+    data["moneda"] = moneda_sede  # ⭐ NUEVO
 
-    # Campos denormalizados para consumo frontend
+    # Campos denormalizados
     data["cliente_nombre"] = cliente.get("nombre")
     data["servicio_nombre"] = servicio.get("nombre")
     data["profesional_nombre"] = profesional.get("nombre")
@@ -307,7 +294,7 @@ async def crear_cita(
     result = await collection_citas.insert_one(data)
     data["_id"] = str(result.inserted_id)
 
-    # === construir email HTML bonito ===
+    # === construir email HTML ===
     estilo = """
     <style>
         body { font-family: Arial, sans-serif; color:#333; }
@@ -319,9 +306,12 @@ async def crear_cita(
         .label { color:#555; font-weight:600; }
         .value { color:#111; }
         .totals { margin-top:12px; padding-top:10px; border-top:2px solid #f0f0f0; }
-        .cta { display:block; text-align:center; margin-top:18px; padding:10px 14px; background:#ff6f91; color:white; border-radius:8px; text-decoration:none; width:60%; margin-left:auto; margin-right:auto; }
     </style>
     """
+
+    # Símbolos de moneda
+    simbolos = {"COP": "$", "USD": "US$", "MXN": "MX$", "EUR": "€"}
+    simbolo = simbolos.get(moneda_sede, "$")
 
     mensaje_html = f"""
     <html>
@@ -342,9 +332,9 @@ async def crear_cita(
           <div class="row"><div class="label">Hora</div><div class="value">{cita.hora_inicio} - {cita.hora_fin}</div></div>
 
           <div class="totals">
-            <div class="row"><div class="label">Precio total</div><div class="value">${valor_total:,.0f}</div></div>
-            <div class="row"><div class="label">Abono</div><div class="value">${abono:,.0f}</div></div>
-            <div class="row"><div class="label">Saldo pendiente</div><div class="value">${saldo_pendiente:,.0f}</div></div>
+            <div class="row"><div class="label">Precio total</div><div class="value">{simbolo}{valor_total:,.2f}</div></div>
+            <div class="row"><div class="label">Abono</div><div class="value">{simbolo}{abono:,.2f}</div></div>
+            <div class="row"><div class="label">Saldo pendiente</div><div class="value">{simbolo}{saldo_pendiente:,.2f}</div></div>
             <div class="row"><div class="label">Estado de pago</div><div class="value">{estado_pago.upper()}</div></div>
           </div>
 
@@ -355,12 +345,10 @@ async def crear_cita(
     </html>
     """
 
-    # Enviar correo al cliente (si tiene email)
     cliente_email = cliente.get("email") or cliente.get("correo") or None
     if cliente_email:
         enviar_correo(cliente_email, f"Confirmación cita {data.get('_id')}", mensaje_html)
 
-    # Opcional: enviar correo a profesional y administración
     try:
         prof_email = profesional.get("email")
         if prof_email:
@@ -368,12 +356,10 @@ async def crear_cita(
     except Exception:
         pass
 
-    # respuesta
     return {"success": True, "message": "Cita creada exitosamente", "cita_id": data["_id"], "data": data}
 
-
 # =============================================================
-# 🔹 EDITAR CITA (por cita_id o ObjectId)
+# 🔹 EDITAR CITA
 # =============================================================
 @router.put("/{cita_id}", response_model=dict)
 async def editar_cita(
@@ -381,14 +367,11 @@ async def editar_cita(
     cambios: dict,
     current_user: dict = Depends(get_current_user)
 ):
-    # solo admin/editors permitidos
     if current_user.get("rol") not in ["admin_sede", "super_admin"]:
         raise HTTPException(status_code=403, detail="No autorizado para editar citas")
 
-    # intentar actualizar por cita_id (campo negocio)
     result = await collection_citas.update_one({"cita_id": cita_id}, {"$set": cambios})
     if result.matched_count == 0:
-        # intentar por ObjectId
         try:
             oid = ObjectId(cita_id)
             result = await collection_citas.update_one({"_id": oid}, {"$set": cambios})
@@ -398,25 +381,21 @@ async def editar_cita(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
 
-    # devolver documento actualizado
     cita = await resolve_cita_by_id(cita_id)
     if cita:
         normalize_cita_doc(cita)
     return {"success": True, "cita": cita}
-
 
 # =============================================================
 # 🔹 CANCELAR CITA
 # =============================================================
 @router.post("/{cita_id}/cancelar", response_model=dict)
 async def cancelar_cita(cita_id: str, current_user: dict = Depends(get_current_user)):
-    # permisos: usuario puede cancelar su propia cita; admin puede cualquiera
     cita = await resolve_cita_by_id(cita_id)
     if not cita:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
 
     if current_user.get("rol") == "usuario":
-        # comparar ids (cliente_id vs user info). Ajusta si tu user id se llama diferente.
         if cita.get("cliente_id") != current_user.get("user_id") and cita.get("cliente_id") != current_user.get("cliente_id"):
             raise HTTPException(status_code=403, detail="Solo puedes cancelar tus propias citas")
 
@@ -428,7 +407,6 @@ async def cancelar_cita(cita_id: str, current_user: dict = Depends(get_current_u
 
     return {"success": True, "mensaje": "Cita cancelada", "cita_id": cita_id}
 
-
 # =============================================================
 # 🔹 CONFIRMAR CITA
 # =============================================================
@@ -438,7 +416,6 @@ async def confirmar_cita(cita_id: str, current_user: dict = Depends(get_current_
     if not cita:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
 
-    # solo admin o profesional de la sede puede confirmar (simplificado)
     await collection_citas.update_one({"_id": ObjectId(cita["_id"])}, {"$set": {
         "estado": "confirmada",
         "confirmada_por": current_user.get("email"),
@@ -447,12 +424,15 @@ async def confirmar_cita(cita_id: str, current_user: dict = Depends(get_current_
 
     return {"success": True, "mensaje": "Cita confirmada", "cita_id": cita_id}
 
-
 # =============================================================
-# 🔹 MARCAR COMPLETADA
+# 🔹 MARCAR COMPLETADA (solo cuando se factura - ver routes_quotes)
 # =============================================================
 @router.post("/{cita_id}/completar", response_model=dict)
 async def completar_cita(cita_id: str, current_user: dict = Depends(get_current_user)):
+    """
+    ⚠️ DEPRECADO: Usar el endpoint de facturación en routes_quotes.py
+    Este endpoint se mantiene por compatibilidad pero no genera comisiones.
+    """
     cita = await resolve_cita_by_id(cita_id)
     if not cita:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
@@ -464,7 +444,6 @@ async def completar_cita(cita_id: str, current_user: dict = Depends(get_current_
     }})
 
     return {"success": True, "mensaje": "Cita completada", "cita_id": cita_id}
-
 
 # =============================================================
 # 🔹 MARCAR NO ASISTIÓ
@@ -482,6 +461,9 @@ async def no_asistio(cita_id: str, current_user: dict = Depends(get_current_user
     }})
 
     return {"success": True, "mensaje": "Marcada como no asistió", "cita_id": cita_id}
+
+# ... (resto de endpoints sin cambios: fichas, estilista, productos, etc.)
+# Los mantengo igual porque no necesitan modificaciones para monedas
 
 
 # =============================================================
@@ -840,7 +822,7 @@ async def get_citas_sede(current_user: dict = Depends(get_current_user)):
 
 
 # ============================================================
-# 📦 Agregar productos a una cita
+# 📦 Agregar productos a una cita - CON MÚLTIPLES MONEDAS
 # ============================================================
 @router.post("/cita/{cita_id}/agregar-productos", response_model=dict)
 async def agregar_productos_a_cita(
@@ -848,6 +830,9 @@ async def agregar_productos_a_cita(
     productos: List[ProductoItem],
     current_user: dict = Depends(get_current_user)
 ):
+    """
+    Agrega productos a una cita usando el precio según la moneda de la sede.
+    """
     # Solo admin sede o admin
     if current_user["rol"] not in ["admin_sede", "admin"]:
         raise HTTPException(
@@ -860,7 +845,15 @@ async def agregar_productos_a_cita(
     if not cita:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
 
-    # Asegurar campo productos
+    # ⭐ OBTENER MONEDA DE LA CITA (que viene de la sede)
+    moneda_cita = cita.get("moneda")
+    if not moneda_cita:
+        raise HTTPException(
+            status_code=400,
+            detail="Esta cita no tiene moneda asignada. Contacta soporte."
+        )
+
+    # Productos actuales
     productos_actuales = cita.get("productos", [])
 
     # Procesar nuevos productos
@@ -868,13 +861,34 @@ async def agregar_productos_a_cita(
     total_productos = 0
 
     for p in productos:
-        subtotal = p.cantidad * p.precio_unitario
+        # ⭐ BUSCAR PRODUCTO EN BD
+        producto_db = await collection_products.find_one({"id": p.producto_id})
+        
+        if not producto_db:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Producto con ID '{p.producto_id}' no encontrado"
+            )
+        
+        # ⭐ OBTENER PRECIO EN LA MONEDA CORRECTA
+        precios_producto = producto_db.get("precios", {})
+        
+        if moneda_cita not in precios_producto:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El producto '{producto_db.get('nombre')}' no tiene precio configurado en {moneda_cita}"
+            )
+        
+        precio_unitario = precios_producto[moneda_cita]
+        subtotal = p.cantidad * precio_unitario
+        
         nuevos_productos.append({
             "producto_id": p.producto_id,
-            "nombre": p.nombre,
+            "nombre": producto_db.get("nombre"),  # ⭐ Tomar nombre de BD
             "cantidad": p.cantidad,
-            "precio_unitario": p.precio_unitario,
-            "subtotal": subtotal
+            "precio_unitario": precio_unitario,  # ⭐ Precio en moneda correcta
+            "subtotal": subtotal,
+            "moneda": moneda_cita  # ⭐ Guardar moneda
         })
         total_productos += subtotal
 
@@ -883,7 +897,16 @@ async def agregar_productos_a_cita(
 
     # Recalcular totales
     nuevo_total = cita.get("valor_total", 0) + total_productos
-    nuevo_saldo = cita.get("saldo_pendiente", 0) + total_productos
+    abono_actual = cita.get("abono", 0)
+    nuevo_saldo = nuevo_total - abono_actual
+
+    # ⭐ RECALCULAR ESTADO DE PAGO
+    if nuevo_saldo <= 0:
+        nuevo_estado_pago = "pagado"
+    elif abono_actual > 0:
+        nuevo_estado_pago = "abonado"
+    else:
+        nuevo_estado_pago = "pendiente"
 
     # Actualizar cita
     await collection_citas.update_one(
@@ -892,17 +915,22 @@ async def agregar_productos_a_cita(
             "$set": {
                 "productos": productos_final,
                 "valor_total": nuevo_total,
-                "saldo_pendiente": nuevo_saldo
+                "saldo_pendiente": nuevo_saldo,
+                "estado_pago": nuevo_estado_pago  # ⭐ ACTUALIZAR ESTADO
             }
         }
     )
 
-    # Usar tu helper para serializar ObjectId
+    # Obtener cita actualizada
     cita_actualizada = await collection_citas.find_one({"_id": ObjectId(cita_id)})
     cita_actualizada["_id"] = str(cita_actualizada["_id"])
 
     return {
+        "success": True,
         "message": "Productos agregados correctamente",
+        "productos_agregados": len(nuevos_productos),
+        "total_productos": total_productos,
+        "moneda": moneda_cita,
         "cita": cita_actualizada
     }
 
@@ -946,7 +974,7 @@ async def facturar_cita(
     print(f"🛠 Servicio encontrado: {servicio}")
 
     # porcentaje de comisión (ej: 30)
-    comision_porcentaje = servicio.get("comision", 0)
+    comision_porcentaje = servicio.get("comision_estilista", 0)
     print(f"📊 Porcentaje de comisión: {comision_porcentaje}%")
 
     # calcular comisión

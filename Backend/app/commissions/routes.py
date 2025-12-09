@@ -1,0 +1,428 @@
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from typing import List, Optional
+from datetime import datetime
+from bson import ObjectId
+from app.auth.routes import get_current_user
+from app.database.mongo import collection_commissions
+from .models import (
+    ComisionResponse, 
+    ComisionDetalleResponse, 
+    LiquidarComisionRequest,
+)
+
+router = APIRouter(
+    prefix="",
+    tags=["Comisiones"]
+)
+
+# ==============================================================
+# HELPERS
+# ==============================================================
+
+def verificar_permisos_liquidacion(user: dict):
+    """Verifica que el usuario tenga permisos para liquidar"""
+    roles_permitidos = ["superadmin", "admin_sede"]
+    if user.get("rol") not in roles_permitidos:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permisos para liquidar comisiones"
+        )
+
+def validar_object_id(comision_id: str):
+    """Valida que sea un ObjectId válido"""
+    if not ObjectId.is_valid(comision_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="ID de comisión inválido"
+        )
+
+async def obtener_comision_por_id(comision_id: str) -> dict:
+    """Busca una comisión por ID"""
+    comision = await collection_commissions.find_one({"_id": ObjectId(comision_id)})
+    if not comision:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Comisión no encontrada"
+        )
+    return comision
+
+def verificar_acceso_sede(user: dict, comision: dict):
+    """Verifica que admin_sede solo acceda a su propia sede"""
+    if user.get("rol") == "admin_sede":
+        if comision["sede_id"] != user.get("sede_id"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes permisos para acceder a esta comisión"
+            )
+
+def puede_liquidar_comision(comision: dict) -> tuple[bool, str]:
+    """
+    Verifica si una comisión puede ser liquidada.
+    REGLA: Una comisión NO puede abarcar más de 15 días.
+    """
+    servicios = comision.get("servicios_detalle", [])
+    if not servicios:
+        return False, "La comisión no tiene servicios"
+    
+    fechas = []
+    for servicio in servicios:
+        try:
+            fecha = datetime.strptime(servicio["fecha"], "%Y-%m-%d")
+            fechas.append(fecha)
+        except:
+            continue
+    
+    if not fechas:
+        return False, "No se pudieron validar las fechas de los servicios"
+    
+    fecha_mas_antigua = min(fechas)
+    fecha_mas_reciente = max(fechas)
+    dias_totales = (fecha_mas_reciente - fecha_mas_antigua).days + 1
+    
+    if dias_totales > 15:
+        return False, f"Esta comisión abarca {dias_totales} días. El máximo permitido es 15 días"
+    
+    return True, "Comisión lista para liquidar"
+
+def construir_query_filtros(user: dict, filtros: Optional[dict] = None):
+    """Construye el query considerando el rol del usuario"""
+    query = {}
+    
+    # Filtro por sede según rol
+    if user.get("rol") == "admin_sede":
+        query["sede_id"] = user.get("sede_id")
+    
+    if not filtros:
+        return query
+    
+    # Aplicar filtros
+    if filtros.get("profesional_id"):
+        query["profesional_id"] = filtros["profesional_id"]
+    
+    if filtros.get("sede_id") and user.get("rol") == "superadmin":
+        query["sede_id"] = filtros["sede_id"]
+    
+    if filtros.get("estado"):
+        if filtros["estado"] == "pendiente":
+            # Incluir comisiones sin estado o con estado pendiente
+            query["$or"] = [
+                {"estado": "pendiente"},
+                {"estado": {"$exists": False}}
+            ]
+        else:
+            query["estado"] = filtros["estado"]
+    
+    # Buscar por rango de fechas en servicios_detalle
+    if filtros.get("fecha_inicio") or filtros.get("fecha_fin"):
+        fecha_query = {}
+        if filtros.get("fecha_inicio"):
+            fecha_query["$gte"] = filtros["fecha_inicio"]
+        if filtros.get("fecha_fin"):
+            fecha_query["$lte"] = filtros["fecha_fin"]
+        
+        if fecha_query:
+            query["servicios_detalle.fecha"] = fecha_query
+    
+    return query
+
+def formatear_comision_response(comision: dict) -> ComisionResponse:
+    """Formatea un documento de comisión a ComisionResponse"""
+    return ComisionResponse(
+        id=str(comision["_id"]),
+        profesional_id=comision["profesional_id"],
+        profesional_nombre=comision["profesional_nombre"],
+        sede_id=comision["sede_id"],
+        moneda=comision.get("moneda"),  # ⭐ Sin default - viene de DB
+        total_servicios=comision["total_servicios"],
+        total_comisiones=comision["total_comisiones"],
+        periodo_inicio=comision.get("periodo_inicio", ""),
+        periodo_fin=comision.get("periodo_fin", ""),
+        estado=comision.get("estado", "pendiente"),
+        creado_en=comision["creado_en"],
+        liquidada_por=comision.get("liquidada_por"),
+        liquidada_en=comision.get("liquidada_en")
+    )
+
+# ==============================================================
+# ENDPOINTS
+# ==============================================================
+
+@router.get("/", response_model=List[ComisionResponse])
+async def obtener_comisiones(
+    profesional_id: Optional[str] = Query(None),
+    sede_id: Optional[str] = Query(None),
+    estado: Optional[str] = Query(None),
+    fecha_inicio: Optional[str] = Query(None, description="Filtrar desde esta fecha (YYYY-MM-DD)"),
+    fecha_fin: Optional[str] = Query(None, description="Filtrar hasta esta fecha (YYYY-MM-DD)"),
+    user: dict = Depends(get_current_user)
+):
+    """
+    Obtiene el listado de comisiones según el rol:
+    - superadmin: ve todas las comisiones
+    - admin_sede: solo ve comisiones de su sede
+    """
+    try:
+        filtros = {
+            "profesional_id": profesional_id,
+            "sede_id": sede_id,
+            "estado": estado,
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin
+        }
+        
+        query = construir_query_filtros(user, filtros)
+        comisiones = await collection_commissions.find(query).sort("creado_en", -1).to_list(1000)
+        
+        return [formatear_comision_response(c) for c in comisiones]
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al obtener comisiones: {str(e)}"
+        )
+
+@router.get("/{comision_id}", response_model=ComisionDetalleResponse)
+async def obtener_comision_detalle(
+    comision_id: str,
+    user: dict = Depends(get_current_user)
+):
+    """Obtiene el detalle completo de una comisión incluyendo todos los servicios"""
+    try:
+        validar_object_id(comision_id)
+        comision = await obtener_comision_por_id(comision_id)
+        verificar_acceso_sede(user, comision)
+        
+        return ComisionDetalleResponse(
+            id=str(comision["_id"]),
+            profesional_id=comision["profesional_id"],
+            profesional_nombre=comision["profesional_nombre"],
+            sede_id=comision["sede_id"],
+            total_servicios=comision["total_servicios"],
+            total_comisiones=comision["total_comisiones"],
+            servicios_detalle=comision["servicios_detalle"],
+            periodo_inicio=comision.get("periodo_inicio", ""),
+            periodo_fin=comision.get("periodo_fin", ""),
+            estado=comision.get("estado", "pendiente"),
+            creado_en=comision["creado_en"],
+            liquidada_por=comision.get("liquidada_por"),
+            liquidada_en=comision.get("liquidada_en")
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al obtener detalle de comisión: {str(e)}"
+        )
+
+@router.post("/{comision_id}/liquidar")
+async def liquidar_comision(
+    comision_id: str,
+    request: LiquidarComisionRequest,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Liquida una comisión pendiente.
+    REGLA: Solo se pueden liquidar comisiones que NO abarquen más de 15 días.
+    """
+    try:
+        verificar_permisos_liquidacion(user)
+        validar_object_id(comision_id)
+        comision = await obtener_comision_por_id(comision_id)
+        verificar_acceso_sede(user, comision)
+        
+        # Verificar que esté pendiente
+        estado_actual = comision.get("estado", "pendiente")
+        if estado_actual != "pendiente":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Esta comisión ya está {estado_actual}"
+            )
+        
+        # Validar regla de 15 días
+        puede_liquidar, mensaje = puede_liquidar_comision(comision)
+        if not puede_liquidar:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=mensaje
+            )
+        
+        # Actualizar estado
+        update_data = {
+            "estado": "liquidada",
+            "liquidada_por": user.get("email"),
+            "liquidada_en": datetime.utcnow()
+        }
+        
+        if request.notas:
+            update_data["notas_liquidacion"] = request.notas
+        
+        resultado = await collection_commissions.update_one(
+            {"_id": ObjectId(comision_id)},
+            {"$set": update_data}
+        )
+        
+        if resultado.modified_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error al liquidar la comisión"
+            )
+        
+        return {
+            "message": "Comisión liquidada exitosamente",
+            "comision_id": comision_id,
+            "liquidada_por": user.get("email"),
+            "liquidada_en": update_data["liquidada_en"]
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al liquidar comisión: {str(e)}"
+        )
+
+@router.get("/pendientes/resumen")
+async def obtener_resumen_pendientes(
+    user: dict = Depends(get_current_user)
+):
+    """
+    Obtiene un resumen de las comisiones pendientes:
+    - Total de comisiones pendientes
+    - Monto total pendiente
+    - Por profesional
+    """
+    try:
+        # Buscar pendientes (sin estado o con estado pendiente)
+        query = {
+            "$or": [
+                {"estado": "pendiente"},
+                {"estado": {"$exists": False}}
+            ]
+        }
+        
+        # Si es admin_sede, solo su sede
+        if user.get("rol") == "admin_sede":
+            query["sede_id"] = user.get("sede_id")
+        
+        comisiones_pendientes = await collection_commissions.find(query).to_list(1000)
+        
+        # Calcular resumen
+        total_comisiones = len(comisiones_pendientes)
+        monto_total = sum(c["total_comisiones"] for c in comisiones_pendientes)
+        
+        # Obtener moneda (puede ser null para comisiones viejas)
+        moneda = comisiones_pendientes[0].get("moneda") if comisiones_pendientes else None
+        
+        # Agrupar por profesional
+        por_profesional = {}
+        for comision in comisiones_pendientes:
+            prof_id = comision["profesional_id"]
+            if prof_id not in por_profesional:
+                por_profesional[prof_id] = {
+                    "profesional_id": prof_id,
+                    "profesional_nombre": comision["profesional_nombre"],
+                    "cantidad_periodos": 0,
+                    "total_comisiones": 0,
+                    "moneda": comision.get("moneda")  # ⭐ Puede ser null
+                }
+            
+            por_profesional[prof_id]["cantidad_periodos"] += 1
+            por_profesional[prof_id]["total_comisiones"] += comision["total_comisiones"]
+        
+        return {
+            "total_comisiones_pendientes": total_comisiones,
+            "monto_total_pendiente": monto_total,
+            "moneda": moneda,  # ⭐ Puede ser null para comisiones viejas
+            "por_profesional": list(por_profesional.values())
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al obtener resumen: {str(e)}"
+        )
+
+@router.post("/liquidar-multiple")
+async def liquidar_multiples_comisiones(
+    comisiones_ids: List[str],
+    notas: Optional[str] = None,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Liquida múltiples comisiones a la vez.
+    REGLA: Solo liquida las que NO superen 15 días de rango.
+    """
+    try:
+        verificar_permisos_liquidacion(user)
+        
+        # Validar IDs
+        object_ids = []
+        for cid in comisiones_ids:
+            validar_object_id(cid)
+            object_ids.append(ObjectId(cid))
+        
+        # Construir query - buscar pendientes (con o sin campo estado)
+        query = {
+            "_id": {"$in": object_ids},
+            "$or": [
+                {"estado": "pendiente"},
+                {"estado": {"$exists": False}}
+            ]
+        }
+        
+        # Si es admin_sede, solo su sede
+        if user.get("rol") == "admin_sede":
+            query["sede_id"] = user.get("sede_id")
+        
+        comisiones = await collection_commissions.find(query).to_list(1000)
+        
+        liquidadas = []
+        rechazadas = []
+        
+        # Validar cada comisión
+        for comision in comisiones:
+            puede_liquidar_flag, mensaje = puede_liquidar_comision(comision)
+            
+            if puede_liquidar_flag:
+                liquidadas.append(comision["_id"])
+            else:
+                rechazadas.append({
+                    "comision_id": str(comision["_id"]),
+                    "profesional": comision["profesional_nombre"],
+                    "motivo": mensaje
+                })
+        
+        # Liquidar las que cumplieron
+        if liquidadas:
+            update_data = {
+                "estado": "liquidada",
+                "liquidada_por": user.get("email"),
+                "liquidada_en": datetime.utcnow()
+            }
+            
+            if notas:
+                update_data["notas_liquidacion"] = notas
+            
+            await collection_commissions.update_many(
+                {"_id": {"$in": liquidadas}},
+                {"$set": update_data}
+            )
+        
+        return {
+            "message": "Proceso de liquidación completado",
+            "liquidadas": len(liquidadas),
+            "rechazadas": len(rechazadas),
+            "detalle_rechazadas": rechazadas,
+            "liquidada_por": user.get("email")
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al liquidar comisiones: {str(e)}"
+        )

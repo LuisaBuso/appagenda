@@ -9,7 +9,6 @@ from datetime import datetime
 from typing import Optional
 import logging
 
-from fastapi import APIRouter, HTTPException, Depends
 from app.admin.models import Local
 from app.database.mongo import collection_locales
 from app.auth.routes import get_current_user
@@ -35,22 +34,6 @@ def local_to_dict(local: dict) -> dict:
 
 
 # ================================================
-# Helper: Generar ID incremental tipo 001, 002, ...
-# ================================================
-async def generar_id_unico():
-    # Buscamos el último local según el campo id_unico
-    ultimo_local = await collection_locales.find_one(
-        sort=[("id_unico", -1)]
-    )
-    if not ultimo_local:
-        return "001"
-    
-    ultimo_id = int(ultimo_local["id_unico"])
-    nuevo_id = str(ultimo_id + 1).zfill(3)
-    return nuevo_id
-
-
-# ================================================
 # ✅ Crear Local (Sede) — con sede_id tipo SD-XXXXX
 # ================================================
 @router.post("/", response_model=dict)
@@ -62,13 +45,12 @@ async def crear_local(
     if current_user["rol"] not in ["super_admin", "admin_franquicia"]:
         raise HTTPException(status_code=403, detail="No autorizado para crear sedes")
 
-    # 🆔 Generar sede_id tipo SD-89958
+    # 🆔 Generar sede_id tipo SD-XXXXX
     import random
     random_number = random.randint(10000, 99999)
     sede_id = f"SD-{random_number}"
 
     # ⏳ Fecha actual
-    from datetime import datetime
     fecha_actual = datetime.utcnow()
 
     # 📦 Construir documento a insertar
@@ -77,6 +59,8 @@ async def crear_local(
         "direccion": local.direccion,
         "informacion_adicional": local.informacion_adicional,
         "zona_horaria": local.zona_horaria,
+        "pais": local.pais,
+        "moneda": local.moneda,
         "telefono": local.telefono,
         "email": local.email,
         "sede_id": sede_id,
@@ -91,7 +75,9 @@ async def crear_local(
     return {
         "msg": "✅ Local creado exitosamente",
         "mongo_id": str(result.inserted_id),
-        "sede_id": sede_id
+        "sede_id": sede_id,
+        "pais": local.pais,
+        "moneda": local.moneda
     }
 
 
@@ -134,6 +120,7 @@ async def listar_locales(
             detail="Error al listar locales"
         )
 
+
 # ================================================
 # 🔍 Get Local by sede_id
 # ================================================
@@ -157,6 +144,7 @@ async def update_local(
     if current_user["rol"] not in ["super_admin", "admin_franquicia"]:
         raise HTTPException(status_code=403, detail="Not authorized to update branches")
 
+    # Construir datos a actualizar (solo campos proporcionados)
     update_data = {k: v for k, v in data.dict().items() if v is not None}
 
     result = await collection_locales.update_one(
@@ -189,4 +177,3 @@ async def delete_local(sede_id: str, current_user: dict = Depends(get_current_us
         raise HTTPException(status_code=404, detail="Local not found")
 
     return {"msg": "🗑️ Local deleted successfully"}
-

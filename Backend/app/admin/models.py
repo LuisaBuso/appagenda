@@ -1,22 +1,30 @@
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List
+from pydantic import BaseModel, EmailStr, Field, validator
+from typing import Optional, List, Dict
 from datetime import datetime
 
-# ==========================
-# 📍 MODELO: Local / Sede
-# ==========================
+# =====================================================
+# 🏢 MODELO: Local (Sede)
+# =====================================================
 class Local(BaseModel):
     nombre: str
     direccion: str
     informacion_adicional: Optional[str] = None
     zona_horaria: str
+    pais: Optional[str] = None
+    moneda: str = Field(..., description="Código de moneda: COP, USD, MXN")
     telefono: Optional[str] = None
     email: Optional[EmailStr] = None
-
+    
+    @validator('moneda')
+    def validar_moneda(cls, v):
+        monedas_validas = ['COP', 'USD', 'MXN', 'EUR', 'PEN', 'ARS']
+        if v and v.upper() not in monedas_validas:
+            raise ValueError(f'Moneda debe ser: {", ".join(monedas_validas)}')
+        return v.upper() if v else v
 
 
 # =====================================================
-# 💇‍♀️ MODELO: Profesional / Estilista (Administración)
+# 💇‍♀️ MODELO: Profesional / Estilista
 # =====================================================
 class Profesional(BaseModel):
     nombre: str
@@ -28,25 +36,45 @@ class Profesional(BaseModel):
     password: str
 
 
-        
-
 # ============================================
-# 💅 MODELO: Servicio (Administración)
+# 💅 MODELO: Servicio
 # ============================================
 class ServicioAdmin(BaseModel):
-    nombre: str = Field(..., description="Nombre del servicio, ej: Corte de Caballero")
-    duracion_minutos: int = Field(..., description="Duración en minutos del servicio")
-    precio: float = Field(..., description="Precio del servicio")
-    comision_estilista: Optional[float] = Field(None, description="Comisión asignada al estilista")
-    categoria: Optional[str] = Field(None, description="Categoría del servicio, ej: corte, color, peinado")
-    requiere_producto: bool = Field(default=False, description="Indica si el servicio requiere productos")
-    activo: bool = Field(default=True, description="Indica si el servicio está activo")
-
-    # IDs relacionales (por unique_id)
-    franquicia_id: Optional[str] = Field(None, description="Unique ID de la franquicia (si aplica)")
-    sede_id: Optional[str] = Field(None, description="Unique ID de la sede (si aplica)")
-
+    nombre: str = Field(..., description="Nombre del servicio")
+    duracion_minutos: int = Field(..., description="Duración en minutos")
+    precios: Dict[str, float] = Field(
+        ..., 
+        description="Precios por moneda: {'COP': 50000, 'USD': 12.50}"
+    )
+    comision_estilista: Optional[float] = Field(
+        None, 
+        description="Porcentaje de comisión del estilista"
+    )
+    categoria: Optional[str] = Field(None, description="Categoría del servicio")
+    requiere_producto: bool = Field(default=False)
+    activo: bool = Field(default=True)
+    
+    # IDs relacionales
+    sede_id: Optional[str] = None
+    
     # Auditoría
     creado_por: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    
+    @validator('precios')
+    def validar_precios(cls, v):
+        if not v:
+            raise ValueError('Debe incluir al menos un precio')
+        for moneda, precio in v.items():
+            if precio <= 0:
+                raise ValueError(f'Precio en {moneda} debe ser mayor a 0')
+        return v
+    
+    @validator('comision_estilista')
+    def validar_comision(cls, v):
+        if v is not None and (v < 0 or v > 100):
+            raise ValueError('Comisión debe estar entre 0 y 100')
+        return v
+
+

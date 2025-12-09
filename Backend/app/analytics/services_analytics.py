@@ -1,6 +1,6 @@
 """
-VERSIÓN CORREGIDA FINAL de services_analytics.py
-🔧 FIX DEFINITIVO: Usa fecha_creacion de colección clientes
+VERSIÓN CON MULTI-MONEDA
+🔧 Ticket promedio ahora se calcula por moneda
 """
 from app.database.mongo import collection_citas, collection_clients
 from datetime import timedelta, datetime
@@ -80,10 +80,7 @@ async def get_fechas_creacion_clientes(
     clientes_ids: Set[str],
     sede_id: Optional[str] = None
 ) -> Dict[str, datetime]:
-    """
-    🔧 NUEVA FUNCIÓN: Obtiene fecha_creacion de cada cliente desde collection_clients
-    Esta es la fecha REAL de cuando el cliente se registró
-    """
+    """Obtiene fecha_creacion de cada cliente desde collection_clients"""
     try:
         query = {"cliente_id": {"$in": list(clientes_ids)}}
         if sede_id:
@@ -102,7 +99,6 @@ async def get_fechas_creacion_clientes(
             if not cliente_id:
                 continue
             
-            # Convertir fecha_creacion a datetime si es necesario
             if isinstance(fecha_creacion, datetime):
                 fechas_creacion[cliente_id] = fecha_creacion
             elif isinstance(fecha_creacion, str):
@@ -164,21 +160,15 @@ async def calcular_nuevos_clientes(
     end_date: datetime,
     sede_id: Optional[str] = None
 ) -> List[str]:
-    """
-    🔧 FIX DEFINITIVO: Un cliente es NUEVO si su fecha_creacion está en el período
-    NO usa primera cita, usa el campo fecha_creacion de collection_clients
-    """
+    """Un cliente es NUEVO si su fecha_creacion está en el período"""
     try:
-        # Obtener fechas de creación desde collection_clients
         fechas_creacion = await get_fechas_creacion_clientes(clientes_actuales, sede_id)
         
-        # Filtrar clientes cuya fecha_creacion esté en el rango
         nuevos = [
             cliente_id for cliente_id, fecha_creacion in fechas_creacion.items()
             if start_date.date() <= fecha_creacion.date() <= end_date.date()
         ]
         
-        # Clientes sin fecha_creacion: asumimos que son antiguos (no nuevos)
         clientes_sin_fecha = clientes_actuales - set(fechas_creacion.keys())
         if clientes_sin_fecha:
             logger.warning(
@@ -229,9 +219,7 @@ async def calcular_churn_real(
     fecha_referencia: datetime,
     sede_id: Optional[str] = None
 ) -> int:
-    """
-    Calcula churn usando la misma lógica que routes_churn.py
-    """
+    """Calcula churn real"""
     try:
         ultimas_citas = await get_ultimas_citas_clientes(clientes_ids, sede_id)
         
@@ -240,9 +228,7 @@ async def calcular_churn_real(
         for cliente_id, ultima_fecha in ultimas_citas.items():
             fecha_limite = ultima_fecha + timedelta(days=CHURN_DAYS)
             
-            # Si la fecha límite ya pasó, está en churn
             if fecha_limite < fecha_referencia:
-                # Verificar que no tenga citas futuras
                 ultima_str = datetime_to_date_string(ultima_fecha)
                 
                 match_query = {
@@ -272,10 +258,41 @@ def calcular_crecimiento(valor_anterior: float, valor_actual: float) -> float:
     return round(((valor_actual - valor_anterior) / valor_anterior) * 100, 1)
 
 
+def calcular_ticket_por_moneda(citas: List[Dict]) -> Dict:
+    """
+    ⭐ NUEVO: Calcula ticket promedio separado por moneda
+    """
+    tickets_por_moneda = {}
+    
+    for cita in citas:
+        moneda = cita.get("moneda", "COP")  # Default COP para citas viejas
+        valor = cita.get("valor_total", 0)
+        
+        if moneda not in tickets_por_moneda:
+            tickets_por_moneda[moneda] = {
+                "total": 0,
+                "cantidad": 0
+            }
+        
+        tickets_por_moneda[moneda]["total"] += valor
+        tickets_por_moneda[moneda]["cantidad"] += 1
+    
+    # Calcular promedios
+    resultado = {}
+    for moneda, datos in tickets_por_moneda.items():
+        if datos["cantidad"] > 0:
+            promedio = datos["total"] / datos["cantidad"]
+            resultado[moneda] = {
+                "valor": round(promedio, 2),
+                "citas": datos["cantidad"],
+                "total": round(datos["total"], 2)
+            }
+    
+    return resultado
+
+
 async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=None):
-    """
-    🔧 VERSIÓN FINAL: KPIs usando fecha_creacion para determinar nuevos clientes
-    """
+    """KPIs con soporte multi-moneda"""
     
     cache_key = get_cache_key(
         "kpi_overview",
@@ -319,7 +336,6 @@ async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=Non
         logger.info(f"📊 Período anterior: {len(citas_anteriores)} citas, {len(clientes_anteriores)} clientes únicos")
         
         # ========= 1. NUEVOS CLIENTES =========
-        # 🔧 Ahora usa fecha_creacion
         nuevos_actuales = await calcular_nuevos_clientes(
             clientes_actuales, start_date, end_date, sede_id
         )
@@ -360,14 +376,27 @@ async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=Non
         
         logger.info(f"📉 Churn: {churn_rate:.1f}% ({churn_actual if 'churn_actual' in locals() else 0} clientes)")
         
-        # ========= 4. TICKET PROMEDIO =========
-        total_ingresos = sum(c.get("valor_total", 0) for c in citas_actuales)
-        ticket_promedio = total_ingresos / max(1, len(citas_actuales))
+        # ========= 4. TICKET PROMEDIO POR MONEDA ⭐ =========
+        tickets_actuales = calcular_ticket_por_moneda(citas_actuales)
+        tickets_anteriores = calcular_ticket_por_moneda(citas_anteriores)
         
-        total_ingresos_anterior = sum(c.get("valor_total", 0) for c in citas_anteriores)
-        ticket_promedio_anterior = total_ingresos_anterior / max(1, len(citas_anteriores))
+        # Calcular crecimiento por moneda
+        tickets_con_crecimiento = {}
+        for moneda, datos_actuales in tickets_actuales.items():
+            datos_anteriores = tickets_anteriores.get(moneda, {"valor": 0})
+            
+            crecimiento = calcular_crecimiento(
+                datos_anteriores["valor"],
+                datos_actuales["valor"]
+            )
+            
+            tickets_con_crecimiento[moneda] = {
+                "valor": datos_actuales["valor"],
+                "citas": datos_actuales["citas"],
+                "crecimiento": f"+{crecimiento}%" if crecimiento >= 0 else f"{crecimiento}%"
+            }
         
-        crecimiento_ticket = calcular_crecimiento(ticket_promedio_anterior, ticket_promedio)
+        logger.info(f"💰 Tickets promedio: {tickets_con_crecimiento}")
         
         # ========= RESULTADO =========
         result = {
@@ -383,10 +412,7 @@ async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=Non
                 "valor": f"{round(churn_rate)}%",
                 "crecimiento": f"+{round(crecimiento_churn)}%" if crecimiento_churn >= 0 else f"{round(crecimiento_churn)}%"
             },
-            "ticket_promedio": {
-                "valor": f"{round(ticket_promedio, 2)} €",
-                "crecimiento": f"+{crecimiento_ticket}%" if crecimiento_ticket >= 0 else f"{crecimiento_ticket}%"
-            },
+            "ticket_promedio": tickets_con_crecimiento,  # ⭐ NUEVO: Por moneda
             "debug_info": {
                 "total_clientes": len(clientes_actuales),
                 "clientes_nuevos": len(nuevos_actuales),
@@ -407,6 +433,5 @@ async def get_kpi_overview(start_date: datetime, end_date: datetime, sede_id=Non
             "nuevos_clientes": {"valor": 0, "crecimiento": "0%"},
             "tasa_recurrencia": {"valor": "0%", "crecimiento": "0%"},
             "tasa_churn": {"valor": "0%", "crecimiento": "0%"},
-            "ticket_promedio": {"valor": "0 €", "crecimiento": "0%"}
+            "ticket_promedio": {}
         }
-    
