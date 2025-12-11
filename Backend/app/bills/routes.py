@@ -56,9 +56,19 @@ async def facturar_cita(
 
     print(f"📄 Cita encontrada: {cita}")
 
-    if cita["estado_pago"] == "pagado":
-        print("⚠️ La cita ya está pagada")
-        raise HTTPException(status_code=400, detail="La cita ya está pagada")
+    # ✅ Verificar si YA está facturada
+    estado_factura = cita.get("estado_factura")
+    if estado_factura == "facturado":
+        print("⚠️ La cita ya está facturada")
+        raise HTTPException(status_code=400, detail="La cita ya está facturada")
+
+    # ✅ Verificar que esté pagada antes de facturar
+    estado_pago = cita.get("estado_pago", "")
+    if estado_pago != "pagado":
+        print("⚠️ La cita debe estar pagada antes de facturar")
+        raise HTTPException(status_code=400, detail="La cita debe estar pagada completamente antes de facturar")
+
+    print("✅ Cita lista para facturar (pagada pero no facturada)")
 
     # ====================================
     # 2️⃣ OBTENER SEDE, MONEDA Y REGLAS DE COMISIÓN
@@ -257,7 +267,8 @@ async def facturar_cita(
                 "saldo_pendiente": 0,
                 "fecha_facturacion": fecha_actual,
                 "numero_comprobante": numero_comprobante,
-                "facturado_por": current_user.get("email")
+                "facturado_por": current_user.get("email"),
+                "estado_factura": "facturado"
             }
         }
     )
