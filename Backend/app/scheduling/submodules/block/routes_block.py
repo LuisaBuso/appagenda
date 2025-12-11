@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from app.scheduling.models import Bloqueo
 from app.database.mongo import collection_block
 from app.auth.routes import get_current_user
-from datetime import datetime
+from datetime import datetime, time
 from typing import List
 from bson import ObjectId
 
@@ -18,7 +18,7 @@ def bloqueo_to_dict(b):
 
 
 # =========================================================
-# 🔹 Crear bloqueo (solo admin_sede, admin_franquicia o estilista)
+# 🔹 Crear bloqueo (admin_sede, admin_franquicia, super_admin, estilista)
 # =========================================================
 @router.post("/", response_model=dict)
 async def crear_bloqueo(
@@ -30,10 +30,13 @@ async def crear_bloqueo(
     if rol not in ["admin_sede", "admin_franquicia", "super_admin", "estilista"]:
         raise HTTPException(status_code=403, detail="No autorizado para crear bloqueos")
 
-    # Validar solapamiento con otros bloqueos
+    # Convertir `fecha` de date → datetime (Mongo solo acepta datetime)
+    fecha_dt = datetime.combine(bloqueo.fecha, time.min)
+
+    # Validar solapamientos
     existing = await collection_block.find_one({
-        "estilista_id": bloqueo.estilista_id,
-        "fecha": bloqueo.fecha,
+        "profesional_id": bloqueo.profesional_id,
+        "fecha": fecha_dt,
         "hora_inicio": {"$lte": bloqueo.hora_fin},
         "hora_fin": {"$gte": bloqueo.hora_inicio}
     })
@@ -41,35 +44,42 @@ async def crear_bloqueo(
     if existing:
         raise HTTPException(status_code=400, detail="El horario se cruza con otro bloqueo existente")
 
+    # Preparar data para guardar
     data = bloqueo.dict()
+    data["fecha"] = fecha_dt  # Guardar fecha como datetime correcto
     data["creado_por"] = current_user["email"]
-    data["fecha_creacion"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    data["fecha_creacion"] = datetime.now()
 
     result = await collection_block.insert_one(data)
     data["_id"] = str(result.inserted_id)
+
     return {"msg": "Bloqueo creado exitosamente", "bloqueo": data}
 
 
 # =========================================================
-# 🔹 Listar bloqueos de un estilista
+# 🔹 Listar bloqueos de un profesional
 # =========================================================
-@router.get("/estilista/{estilista_id}", response_model=List[dict])
-async def listar_bloqueos_estilista(
-    estilista_id: str,
+@router.get("/{profesional_id}", response_model=List[dict])
+async def listar_bloqueos_profesional(
+    profesional_id: str,
     current_user: dict = Depends(get_current_user)
 ):
     rol = current_user["rol"]
 
-    # El estilista solo puede ver sus propios bloqueos
-    if rol == "estilista" and current_user["email"] != estilista_id:
+    # 🔐 El estilista solo puede ver sus propios bloqueos
+    if rol == "estilista" and current_user["profesional_id"] != profesional_id:
         raise HTTPException(status_code=403, detail="No autorizado para ver otros bloqueos")
 
-    bloqueos = await collection_block.find({"estilista_id": estilista_id}).to_list(None)
+    # 🔎 Obtener bloqueos por profesional_id
+    bloqueos = await collection_block.find({
+        "profesional_id": profesional_id
+    }).to_list(None)
+
     return [bloqueo_to_dict(b) for b in bloqueos]
 
 
 # =========================================================
-# 🔹 Eliminar bloqueo (solo admin_sede, admin_franquicia o super_admin)
+# 🔹 Eliminar bloqueo
 # =========================================================
 @router.delete("/{bloqueo_id}", response_model=dict)
 async def eliminar_bloqueo(
@@ -78,12 +88,45 @@ async def eliminar_bloqueo(
 ):
     rol = current_user["rol"]
 
-    if rol not in ["admin_sede", "admin_franquicia", "super_admin"]:
+    # 🔎 Buscar el bloqueo primero
+    bloqueo = await collection_block.find_one({"_id": ObjectId(bloqueo_id)})
+
+    if not bloqueo:
+        raise HTTPException(status_code=404, detail="Bloqueo no encontrado")
+
+    # =====================================================
+    # 🔐 1. SUPER ADMIN → puede eliminar cualquier bloqueo
+    # =====================================================
+    if rol == "super_admin":
+        pass  # permitido
+
+    # =====================================================
+    # 🔐 2. ADMIN SEDE → solo bloqueos de su misma sede
+    # =====================================================
+    elif rol == "admin_sede":
+        if bloqueo.get("sede_id") != current_user.get("sede_id"):
+            raise HTTPException(status_code=403, detail="No autorizado para eliminar este bloqueo")
+
+    # =====================================================
+    # 🔐 3. ESTILISTA → solo sus propios bloqueos
+    # =====================================================
+    elif rol == "estilista":
+        if bloqueo.get("profesional_id") != current_user.get("profesional_id"):
+            raise HTTPException(status_code=403, detail="No autorizado para eliminar este bloqueo")
+
+    # =====================================================
+    # ❌ Otros roles no permitidos
+    # =====================================================
+    else:
         raise HTTPException(status_code=403, detail="No autorizado para eliminar bloqueos")
 
+    # =====================================================
+    # 🗑️  Eliminar bloqueo
+    # =====================================================
     result = await collection_block.delete_one({"_id": ObjectId(bloqueo_id)})
 
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Bloqueo no encontrado")
 
     return {"msg": "Bloqueo eliminado correctamente"}
+

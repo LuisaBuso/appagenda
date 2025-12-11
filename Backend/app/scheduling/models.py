@@ -45,6 +45,7 @@ class Bloqueo(BaseModel):
     hora_fin: str
     motivo: Optional[str] = None
 
+
 # === CITA ===
 class Cita(BaseModel):
     sede_id: str

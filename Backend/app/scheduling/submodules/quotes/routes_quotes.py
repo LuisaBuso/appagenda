@@ -250,28 +250,34 @@ async def crear_cita(
         raise HTTPException(status_code=400, detail="La cita está fuera del horario laboral del profesional")
 
     # === validar bloqueos ===
-    try:
-        bloqueo = await collection_block.find_one({
-            "profesional_id": cita.profesional_id,
-            "fecha": fecha_str,
-            "hora_inicio": {"$lt": cita.hora_fin},
-            "hora_fin": {"$gt": cita.hora_inicio}
-        })
-        if bloqueo:
-            raise HTTPException(status_code=400, detail="El profesional tiene un bloqueo en ese horario")
-    except Exception:
-        pass
+    bloqueo = await collection_block.find_one({
+        "profesional_id": cita.profesional_id,
+        "fecha": fecha_str,
+        "hora_inicio": {"$lt": cita.hora_fin},
+        "hora_fin": {"$gt": cita.hora_inicio}
+    })
+    if bloqueo:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"El profesional tiene un bloqueo en ese horario (Motivo: {bloqueo.get('motivo', 'No especificado')})"
+        )
 
-    # === validar solape con otras citas ===
+    # === validar solape con otras citas (SOLO para diferentes clientes) ===
+    # 🔥 CORRECCIÓN: Permitir al mismo cliente múltiples citas, pero no a diferentes clientes con el mismo profesional
     solape = await collection_citas.find_one({
         "profesional_id": cita.profesional_id,
+        "cliente_id": {"$ne": cita.cliente_id},  # Solo verificar citas de OTROS clientes
         "fecha": fecha_str,
         "hora_inicio": {"$lt": cita.hora_fin},
         "hora_fin": {"$gt": cita.hora_inicio},
         "estado": {"$ne": "cancelada"}
     })
     if solape:
-        raise HTTPException(status_code=400, detail="El profesional ya tiene una cita en ese horario")
+        cliente_solape_nombre = solape.get("cliente_nombre", "Cliente")
+        raise HTTPException(
+            status_code=400, 
+            detail=f"El profesional ya tiene una cita con {cliente_solape_nombre} en ese horario"
+        )
 
     # === preparar documento y guardar ===
     data = cita.dict()
@@ -280,84 +286,514 @@ async def crear_cita(
     data["abono"] = float(abono)
     data["saldo_pendiente"] = float(saldo_pendiente)
     data["estado_pago"] = estado_pago
-    data["moneda"] = moneda_sede  # ⭐ NUEVO
+    data["moneda"] = moneda_sede
+    data["estado"] = "confirmada"  # Estado por defecto
 
     # Campos denormalizados
     data["cliente_nombre"] = cliente.get("nombre")
+    data["cliente_email"] = cliente.get("email") or cliente.get("correo")
+    data["cliente_telefono"] = cliente.get("telefono") or cliente.get("celular")
     data["servicio_nombre"] = servicio.get("nombre")
+    data["servicio_duracion"] = servicio.get("duracion_minutos")
     data["profesional_nombre"] = profesional.get("nombre")
+    data["profesional_email"] = profesional.get("email")
     data["sede_nombre"] = sede.get("nombre")
+    data["sede_direccion"] = sede.get("direccion")
+    data["sede_telefono"] = sede.get("telefono")
 
     data["creada_por"] = current_user.get("email")
-    data["fecha_creacion"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    data["creada_por_rol"] = current_user.get("rol")
+    data["fecha_creacion"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    data["ultima_actualizacion"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     result = await collection_citas.insert_one(data)
-    data["_id"] = str(result.inserted_id)
+    cita_id = str(result.inserted_id)
+    data["_id"] = cita_id
 
-    # === construir email HTML ===
+    # === construir email HTML mejorado ===
     estilo = """
     <style>
-        body { font-family: Arial, sans-serif; color:#333; }
-        .card { max-width:700px; margin:auto; border:1px solid #eee; border-radius:10px; padding:20px; }
-        .header { text-align:center; }
-        .logo { max-width:160px; }
-        .title { font-size:20px; margin-top:10px; font-weight:700; }
-        .row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed #eee; }
-        .label { color:#555; font-weight:600; }
-        .value { color:#111; }
-        .totals { margin-top:12px; padding-top:10px; border-top:2px solid #f0f0f0; }
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-color: #f8f9fa;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .email-container {
+            max-width: 700px;
+            margin: 30px auto;
+            background: white;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+        }
+        
+        .email-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 30px;
+            text-align: center;
+        }
+        
+        .logo {
+            width: 180px;
+            margin-bottom: 20px;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
+        }
+        
+        .header-title {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        
+        .header-subtitle {
+            font-size: 16px;
+            opacity: 0.9;
+            font-weight: 300;
+        }
+        
+        .cita-id {
+            background: rgba(255, 255, 255, 0.15);
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 50px;
+            font-size: 14px;
+            margin-top: 15px;
+            letter-spacing: 1px;
+        }
+        
+        .email-body {
+            padding: 40px 30px;
+        }
+        
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #4a5568;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e9ecef;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .section-title i {
+            color: #667eea;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .info-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .info-label {
+            font-size: 13px;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+        }
+        
+        .info-value {
+            font-size: 16px;
+            font-weight: 500;
+            color: #2d3748;
+        }
+        
+        .pago-section {
+            background: linear-gradient(135deg, #f6f9ff 0%, #f0f4ff 100%);
+            border-radius: 15px;
+            padding: 25px;
+            margin: 30px 0;
+            border: 1px solid #e2e8f0;
+        }
+        
+        .pago-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .pago-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px dashed #cbd5e0;
+        }
+        
+        .pago-item.total {
+            border-bottom: 2px solid #4a5568;
+            font-weight: 600;
+            color: #2d3748;
+        }
+        
+        .estado-pago {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 50px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+        
+        .estado-pagado {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+        
+        .estado-abonado {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+        
+        .estado-pendiente {
+            background: #feebc8;
+            color: #744210;
+        }
+        
+        .instrucciones {
+            background: #e6fffa;
+            border-radius: 12px;
+            padding: 25px;
+            margin-top: 30px;
+            border-left: 4px solid #38b2ac;
+        }
+        
+        .instrucciones-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #234e52;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .instrucciones-list {
+            list-style: none;
+        }
+        
+        .instrucciones-list li {
+            padding: 8px 0;
+            color: #4a5568;
+        }
+        
+        .instrucciones-list li:before {
+            content: "✓";
+            color: #38b2ac;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        
+        .email-footer {
+            background: #2d3748;
+            color: #cbd5e0;
+            padding: 30px;
+            text-align: center;
+            font-size: 14px;
+        }
+        
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        
+        .footer-links a {
+            color: #90cdf4;
+            text-decoration: none;
+        }
+        
+        .footer-links a:hover {
+            text-decoration: underline;
+        }
+        
+        .social-icons {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .social-icon {
+            width: 36px;
+            height: 36px;
+            background: #4a5568;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            text-decoration: none;
+            transition: all 0.3s ease;
+        }
+        
+        .social-icon:hover {
+            transform: translateY(-3px);
+            background: #667eea;
+        }
+        
+        @media (max-width: 600px) {
+            .email-container {
+                margin: 10px;
+                border-radius: 15px;
+            }
+            
+            .email-header {
+                padding: 30px 20px;
+            }
+            
+            .email-body {
+                padding: 30px 20px;
+            }
+            
+            .info-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .pago-grid {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
     """
 
     # Símbolos de moneda
-    simbolos = {"COP": "$", "USD": "US$", "MXN": "MX$", "EUR": "€"}
-    simbolo = simbolos.get(moneda_sede, "$")
+    simbolos = {
+        "COP": {"simbolo": "$", "nombre": "COP"},
+        "USD": {"simbolo": "US$", "nombre": "USD"},
+        "MXN": {"simbolo": "MX$", "nombre": "MXN"},
+        "EUR": {"simbolo": "€", "nombre": "EUR"}
+    }
+    moneda_info = simbolos.get(moneda_sede, {"simbolo": "$", "nombre": "COP"})
+    
+    # Determinar clase CSS para estado de pago
+    estado_pago_class = {
+        "pagado": "estado-pagado",
+        "abonado": "estado-abonado",
+        "pendiente": "estado-pendiente"
+    }.get(estado_pago, "estado-pendiente")
 
     mensaje_html = f"""
-    <html>
-    {estilo}
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Confirmación de Cita - Rizos Felices</title>
+        {estilo}
+    </head>
     <body>
-      <div class="card">
-        <div class="header">
-          <img class="logo" src="https://rizosfelicesdata.s3.us-east-2.amazonaws.com/logo+principal+rosado+letra+blanco_Mesa+de+tra+(1).png" alt="Rizos Felices">
-          <div class="title">Confirmación de Cita</div>
+        <div class="email-container">
+            <!-- Header -->
+            <div class="email-header">
+                <img class="logo" src="https://rizosfelicesdata.s3.us-east-2.amazonaws.com/logo+principal+rosado+letra+blanco_Mesa+de+tra+(1).png" alt="Rizos Felices">
+                <h1 class="header-title">¡Cita Confirmada!</h1>
+                <p class="header-subtitle">Tu reserva ha sido agendada exitosamente</p>
+                <div class="cita-id">ID de cita: {cita_id[:8].upper()}</div>
+            </div>
+            
+            <!-- Body -->
+            <div class="email-body">
+                <!-- Información de la cita -->
+                <div class="section-title">
+                    <span>📅 Detalles de la cita</span>
+                </div>
+                
+                <div class="info-grid">
+                    <div class="info-card">
+                        <div class="info-label">Cliente</div>
+                        <div class="info-value">{cliente.get('nombre')}</div>
+                    </div>
+                    
+                    <div class="info-card">
+                        <div class="info-label">Servicio</div>
+                        <div class="info-value">{servicio.get('nombre')}</div>
+                        <small>{servicio.get('duracion_minutos', 60)} minutos</small>
+                    </div>
+                    
+                    <div class="info-card">
+                        <div class="info-label">Profesional</div>
+                        <div class="info-value">{profesional.get('nombre')}</div>
+                    </div>
+                    
+                    <div class="info-card">
+                        <div class="info-label">Sede</div>
+                        <div class="info-value">{sede.get('nombre')}</div>
+                        <small>{sede.get('direccion', '')}</small>
+                    </div>
+                    
+                    <div class="info-card">
+                        <div class="info-label">Fecha</div>
+                        <div class="info-value">{fecha_str}</div>
+                    </div>
+                    
+                    <div class="info-card">
+                        <div class="info-label">Horario</div>
+                        <div class="info-value">{cita.hora_inicio} - {cita.hora_fin}</div>
+                    </div>
+                </div>
+                
+                <!-- Información de pago -->
+                <div class="section-title">
+                    <span>💰 Información de pago</span>
+                </div>
+                
+                <div class="pago-section">
+                    <div class="pago-grid">
+                        <div class="pago-item">
+                            <span>Precio total:</span>
+                            <span><strong>{moneda_info['simbolo']}{valor_total:,.2f} {moneda_info['nombre']}</strong></span>
+                        </div>
+                        
+                        <div class="pago-item">
+                            <span>Abono realizado:</span>
+                            <span>{moneda_info['simbolo']}{abono:,.2f}</span>
+                        </div>
+                        
+                        <div class="pago-item">
+                            <span>Saldo pendiente:</span>
+                            <span>{moneda_info['simbolo']}{saldo_pendiente:,.2f}</span>
+                        </div>
+                        
+                        <div class="pago-item total">
+                            <span>Estado:</span>
+                            <span>
+                                <span class="estado-pago {estado_pago_class}">
+                                    {estado_pago.upper()}
+                                </span>
+                            </span>
+                        </div>
+                    </div>
+                    
+                    {f'<p style="margin-top: 15px; font-size: 14px; color: #4a5568;">Saldo pendiente por pagar al momento del servicio.</p>' if saldo_pendiente > 0 else ''}
+                </div>
+                
+                <!-- Instrucciones -->
+                <div class="instrucciones">
+                    <div class="instrucciones-title">
+                        <span>📋 Recomendaciones importantes</span>
+                    </div>
+                    <ul class="instrucciones-list">
+                        <li>Llega 10 minutos antes de tu cita</li>
+                        <li>Trae tu identificación para confirmar la reserva</li>
+                        <li>Notifica cualquier cancelación con al menos 24 horas de anticipación</li>
+                        <li>Usa mascarilla si lo consideras necesario</li>
+                        <li>Consulta nuestras políticas en nuestro sitio web</li>
+                    </ul>
+                </div>
+                
+                <!-- Contacto de emergencia -->
+                <div style="margin-top: 30px; padding: 20px; background: #fff7ed; border-radius: 12px; border-left: 4px solid #ed8936;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                        <span style="font-size: 16px; font-weight: 600; color: #9c4221;">📞 ¿Necesitas ayuda?</span>
+                    </div>
+                    <p style="color: #744210; margin-bottom: 5px;">
+                        <strong>{sede.get('nombre')}:</strong> {sede.get('telefono', 'No disponible')}
+                    </p>
+                    <p style="color: #744210; font-size: 14px;">
+                        Horario de atención: {dia_info['hora_inicio']} - {dia_info['hora_fin']}
+                    </p>
+                </div>
+            </div>
+            
+            <!-- Footer -->
+            <div class="email-footer">
+                <p>© {datetime.now().year} Rizos Felices. Todos los derechos reservados.</p>
+                <div class="footer-links">
+                    <a href="#">Políticas de privacidad</a>
+                    <a href="#">Términos de servicio</a>
+                    <a href="#">Contacto</a>
+                </div>
+                <div class="social-icons">
+                    <a href="#" class="social-icon">FB</a>
+                    <a href="#" class="social-icon">IG</a>
+                    <a href="#" class="social-icon">TW</a>
+                    <a href="#" class="social-icon">WA</a>
+                </div>
+                <p style="margin-top: 20px; font-size: 12px; opacity: 0.7;">
+                    Este es un correo automático, por favor no responder.
+                </p>
+            </div>
         </div>
-
-        <div style="padding:12px 0;">
-          <div class="row"><div class="label">Cliente</div><div class="value">{cliente.get('nombre')}</div></div>
-          <div class="row"><div class="label">Servicio</div><div class="value">{servicio.get('nombre')}</div></div>
-          <div class="row"><div class="label">Profesional</div><div class="value">{profesional.get('nombre')}</div></div>
-          <div class="row"><div class="label">Sede</div><div class="value">{sede.get('nombre')}</div></div>
-          <div class="row"><div class="label">Fecha</div><div class="value">{fecha_str}</div></div>
-          <div class="row"><div class="label">Hora</div><div class="value">{cita.hora_inicio} - {cita.hora_fin}</div></div>
-
-          <div class="totals">
-            <div class="row"><div class="label">Precio total</div><div class="value">{simbolo}{valor_total:,.2f}</div></div>
-            <div class="row"><div class="label">Abono</div><div class="value">{simbolo}{abono:,.2f}</div></div>
-            <div class="row"><div class="label">Saldo pendiente</div><div class="value">{simbolo}{saldo_pendiente:,.2f}</div></div>
-            <div class="row"><div class="label">Estado de pago</div><div class="value">{estado_pago.upper()}</div></div>
-          </div>
-
-          <p style="text-align:center; margin-top:18px;">Gracias por agendar con nosotros 🤎</p>
-        </div>
-      </div>
     </body>
     </html>
     """
 
-    cliente_email = cliente.get("email") or cliente.get("correo") or None
+    # === enviar emails ===
+    cliente_email = cliente.get("email") or cliente.get("correo")
     if cliente_email:
-        enviar_correo(cliente_email, f"Confirmación cita {data.get('_id')}", mensaje_html)
+        try:
+            enviar_correo(
+                cliente_email, 
+                f"✅ Confirmación de cita - {fecha_str} {cita.hora_inicio}", 
+                mensaje_html
+            )
+            print(f"📧 Email enviado a cliente: {cliente_email}")
+        except Exception as e:
+            print(f"⚠️ Error enviando email al cliente: {e}")
 
+    # Enviar al profesional si tiene email
     try:
         prof_email = profesional.get("email")
         if prof_email:
-            enviar_correo(prof_email, f"Nuevo turno asignado - {fecha_str} {cita.hora_inicio}", mensaje_html)
-    except Exception:
-        pass
+            # Modificar ligeramente el email para el profesional
+            prof_subject = f"📅 Nueva cita asignada - {fecha_str} {cita.hora_inicio} - {cliente.get('nombre')}"
+            enviar_correo(prof_email, prof_subject, mensaje_html)
+            print(f"📧 Email enviado a profesional: {prof_email}")
+    except Exception as e:
+        print(f"⚠️ Error enviando email al profesional: {e}")
 
-    return {"success": True, "message": "Cita creada exitosamente", "cita_id": data["_id"], "data": data}
+    # También enviar a admin de sede si es diferente del creador
+    try:
+        admin_sede_email = sede.get("email_contacto")
+        if admin_sede_email and admin_sede_email != current_user.get("email"):
+            admin_subject = f"📋 Nueva cita registrada - {fecha_str} - {cliente.get('nombre')}"
+            enviar_correo(admin_sede_email, admin_subject, mensaje_html)
+    except Exception as e:
+        print(f"⚠️ Error enviando email a admin sede: {e}")
 
+    return {
+        "success": True, 
+        "message": "Cita creada exitosamente", 
+        "cita_id": cita_id,
+        "data": {
+            "cita_id": cita_id,
+            "cliente": cliente.get("nombre"),
+            "servicio": servicio.get("nombre"),
+            "profesional": profesional.get("nombre"),
+            "fecha": fecha_str,
+            "horario": f"{cita.hora_inicio} - {cita.hora_fin}",
+            "valor_total": valor_total,
+            "estado_pago": estado_pago,
+            "saldo_pendiente": saldo_pendiente,
+            "emails_enviados": {
+                "cliente": bool(cliente_email),
+                "profesional": bool(prof_email)
+            }
+        }
+    }
 # =============================================================
 # 🔹 EDITAR CITA
 # =============================================================
