@@ -1,7 +1,7 @@
 """
 Routes para gestión de Locales (Sedes)
 IDs cortos NO secuenciales: SD-00247
-Sin franquicia_id (solo roles)
+Con reglas_comision por sede
 """
 from fastapi import APIRouter, HTTPException, Depends, Query
 from bson import ObjectId
@@ -29,6 +29,10 @@ def local_to_dict(local: dict) -> dict:
     # Fallback para locales sin sede_id
     if "sede_id" not in local or not local["sede_id"]:
         local["sede_id"] = str(local["_id"])
+    
+    # Fallback para reglas_comision si no existe
+    if "reglas_comision" not in local:
+        local["reglas_comision"] = {"tipo": "servicios"}
     
     return local
 
@@ -61,6 +65,7 @@ async def crear_local(
         "zona_horaria": local.zona_horaria,
         "pais": local.pais,
         "moneda": local.moneda,
+        "reglas_comision": local.reglas_comision or {"tipo": "servicios"},  # ✅ NUEVO
         "telefono": local.telefono,
         "email": local.email,
         "sede_id": sede_id,
@@ -77,7 +82,8 @@ async def crear_local(
         "mongo_id": str(result.inserted_id),
         "sede_id": sede_id,
         "pais": local.pais,
-        "moneda": local.moneda
+        "moneda": local.moneda,
+        "reglas_comision": data["reglas_comision"]  # ✅ NUEVO
     }
 
 
