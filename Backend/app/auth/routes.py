@@ -54,7 +54,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
             "nombre": user.get("nombre"),
             "sede_id": user.get("sede_id"),    # ⭐ Para admin_sede
             "franquicia_id": user.get("franquicia_id"),  # ⭐ Para admin_franquicia
-            "user_id": str(user.get("_id"))    # ⭐ Para validaciones
+            "user_id": str(user.get("_id")),    # ⭐ Para validaciones
+            "profesional_id": user.get("profesional_id"),
         }
     except JWTError:
         raise credentials_exception
