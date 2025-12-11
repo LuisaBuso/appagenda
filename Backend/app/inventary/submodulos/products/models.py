@@ -7,6 +7,7 @@ class Producto(BaseModel):
     codigo: Optional[str] = Field(None, description="Código del producto")
     descripcion: Optional[str] = Field(None, description="Descripción del producto")
     categoria: Optional[str] = Field(None, description="Categoría del producto")
+    comision: Optional[float] = None # Porcentaje de comisión para el producto
     
     # Precios en diferentes monedas (escalable)
     precios: Dict[str, float] = Field(
@@ -28,6 +29,7 @@ class Producto(BaseModel):
                 "codigo": "1050",
                 "descripcion": "Shampoo profesional para hombres",
                 "categoria": "USO SALON",
+                "comision": 5,
                 "precios": {
                     "COP": 250000,
                     "USD": 62.50,

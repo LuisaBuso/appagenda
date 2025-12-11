@@ -822,7 +822,7 @@ async def get_citas_sede(current_user: dict = Depends(get_current_user)):
 
 
 # ============================================================
-# 📦 Agregar productos a una cita - CON MÚLTIPLES MONEDAS
+# 📦 Agregar productos a una cita - CON MÚLTIPLES MONEDAS Y COMISIONES
 # ============================================================
 @router.post("/cita/{cita_id}/agregar-productos", response_model=dict)
 async def agregar_productos_a_cita(
@@ -832,6 +832,7 @@ async def agregar_productos_a_cita(
 ):
     """
     Agrega productos a una cita usando el precio según la moneda de la sede.
+    ⭐ NUEVO: Calcula comisión del producto si la sede lo permite.
     """
     # Solo admin sede o admin
     if current_user["rol"] not in ["admin_sede", "admin"]:
@@ -853,12 +854,27 @@ async def agregar_productos_a_cita(
             detail="Esta cita no tiene moneda asignada. Contacta soporte."
         )
 
+    # ⭐ OBTENER REGLAS DE COMISIÓN DE LA SEDE
+    sede = await collection_locales.find_one({"sede_id": cita["sede_id"]})
+    if not sede:
+        raise HTTPException(status_code=404, detail="Sede no encontrada")
+    
+    reglas_comision = sede.get("reglas_comision", {"tipo": "servicios"})
+    tipo_comision = reglas_comision.get("tipo", "servicios")
+    
+    # ⭐ VERIFICAR SI LA SEDE PERMITE COMISIÓN DE PRODUCTOS
+    permite_comision_productos = tipo_comision in ["productos", "mixto"]
+    
+    print(f"🏢 Sede: {sede.get('nombre')} - Tipo comisión: {tipo_comision}")
+    print(f"📦 ¿Permite comisión de productos?: {permite_comision_productos}")
+
     # Productos actuales
     productos_actuales = cita.get("productos", [])
 
     # Procesar nuevos productos
     nuevos_productos = []
     total_productos = 0
+    total_comision_productos = 0
 
     for p in productos:
         # ⭐ BUSCAR PRODUCTO EN BD
@@ -882,13 +898,29 @@ async def agregar_productos_a_cita(
         precio_unitario = precios_producto[moneda_cita]
         subtotal = p.cantidad * precio_unitario
         
+        # ⭐ CALCULAR COMISIÓN DEL PRODUCTO (SI APLICA)
+        comision_porcentaje = 0
+        comision_producto = 0
+        
+        if permite_comision_productos:
+            comision_porcentaje = producto_db.get("comision", 0)
+            comision_producto = (subtotal * comision_porcentaje) / 100
+            total_comision_productos += comision_producto
+            
+            print(f"✅ Producto '{producto_db.get('nombre')}': "
+                  f"{comision_porcentaje}% = {comision_producto} {moneda_cita}")
+        else:
+            print(f"⚠️ Producto '{producto_db.get('nombre')}': Sin comisión (sede no permite)")
+        
         nuevos_productos.append({
             "producto_id": p.producto_id,
-            "nombre": producto_db.get("nombre"),  # ⭐ Tomar nombre de BD
+            "nombre": producto_db.get("nombre"),
             "cantidad": p.cantidad,
-            "precio_unitario": precio_unitario,  # ⭐ Precio en moneda correcta
+            "precio_unitario": precio_unitario,
             "subtotal": subtotal,
-            "moneda": moneda_cita  # ⭐ Guardar moneda
+            "moneda": moneda_cita,
+            "comision_porcentaje": comision_porcentaje,  # ⭐ NUEVO
+            "comision_valor": comision_producto  # ⭐ NUEVO
         })
         total_productos += subtotal
 
@@ -916,7 +948,7 @@ async def agregar_productos_a_cita(
                 "productos": productos_final,
                 "valor_total": nuevo_total,
                 "saldo_pendiente": nuevo_saldo,
-                "estado_pago": nuevo_estado_pago  # ⭐ ACTUALIZAR ESTADO
+                "estado_pago": nuevo_estado_pago
             }
         }
     )
@@ -930,6 +962,9 @@ async def agregar_productos_a_cita(
         "message": "Productos agregados correctamente",
         "productos_agregados": len(nuevos_productos),
         "total_productos": total_productos,
+        "total_comision_productos": total_comision_productos,  # ⭐ NUEVO
+        "tipo_comision_sede": tipo_comision,  # ⭐ NUEVO
+        "permite_comision_productos": permite_comision_productos,  # ⭐ NUEVO
         "moneda": moneda_cita,
         "cita": cita_actualizada
     }
@@ -1071,7 +1106,7 @@ async def finalizar_servicio(
         )
 
     # Verificar que la cita exista
-    cita = await collection_citas.find_one({"_id": cita_id})
+    cita = await collection_citas.find_one({"_id": ObjectId(cita_id)})
     if not cita:
         raise HTTPException(
             status_code=404,
@@ -1093,9 +1128,10 @@ async def finalizar_servicio(
     }
 
     await collection_citas.update_one(
-        {"_id": cita_id},
-        {"$set": update_data}
+    {"_id": ObjectId(cita_id)},
+    {"$set": update_data}
     )
+
 
     return {
         "success": True,

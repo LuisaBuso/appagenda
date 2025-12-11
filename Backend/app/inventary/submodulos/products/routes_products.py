@@ -3,7 +3,7 @@ from app.inventary.submodulos.products.models import Producto
 from app.database.mongo import collection_productos
 from app.auth.routes import get_current_user
 from datetime import datetime
-from typing import List, Optional,Dict
+from typing import List, Optional, Dict
 from bson import ObjectId
 
 router = APIRouter(prefix="/productos")
@@ -43,6 +43,7 @@ async def crear_producto(
     """
     Crea un producto global con precios en múltiples monedas.
     Solo super_admin puede crear productos.
+    ⭐ Incluye campo 'comision' para cálculo de comisiones.
     """
     rol = current_user.get("rol")
 
@@ -69,6 +70,10 @@ async def crear_producto(
     data = producto.dict(exclude_none=True)
     data["fecha_creacion"] = datetime.now()
     data["creado_por"] = current_user["email"]
+    
+    # ⭐ Asegurar que comision existe (default 0 si no viene)
+    if "comision" not in data or data["comision"] is None:
+        data["comision"] = 0
 
     result = await collection_productos.insert_one(data)
     data["_id"] = str(result.inserted_id)
@@ -89,6 +94,7 @@ async def listar_productos(
     """
     Lista productos disponibles.
     Si se especifica 'moneda', agrega el campo 'precio_local' con el precio convertido.
+    ⭐ Incluye campo 'comision' en la respuesta.
     """
     rol = current_user.get("rol")
     if rol not in ["admin_sede", "admin_franquicia", "super_admin", "estilista"]:
@@ -108,6 +114,10 @@ async def listar_productos(
     
     for p in productos:
         p_dict = producto_to_dict(p)
+        
+        # ⭐ Asegurar que comision existe en la respuesta
+        if "comision" not in p_dict:
+            p_dict["comision"] = 0
         
         # Si se especifica moneda, agregar precio_local
         if moneda:
@@ -131,12 +141,17 @@ async def obtener_producto(
     """
     Obtiene un producto específico por ID.
     Puede incluir conversión de moneda.
+    ⭐ Incluye campo 'comision' en la respuesta.
     """
     producto = await collection_productos.find_one({"_id": ObjectId(producto_id)})
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
     p_dict = producto_to_dict(producto)
+    
+    # ⭐ Asegurar que comision existe en la respuesta
+    if "comision" not in p_dict:
+        p_dict["comision"] = 0
     
     # Si se especifica moneda, agregar precio_local
     if moneda:
@@ -158,6 +173,7 @@ async def editar_producto(
     """
     Edita un producto.
     Solo super_admin puede editar productos.
+    ⭐ Permite actualizar el campo 'comision'.
     """
     rol = current_user.get("rol")
     if rol != "super_admin":
@@ -231,6 +247,10 @@ async def productos_stock_bajo(
     for p in productos:
         p_dict = producto_to_dict(p)
         
+        # ⭐ Asegurar que comision existe
+        if "comision" not in p_dict:
+            p_dict["comision"] = 0
+        
         # Agregar precio en moneda solicitada
         if moneda:
             p_dict["precio_local"] = get_precio_moneda(p, moneda)
@@ -283,4 +303,43 @@ async def actualizar_precios(
     return {
         "msg": "Precios actualizados correctamente",
         "precios": precios_actuales
+    }
+
+
+# =========================================================
+# ⭐ NUEVO: Actualizar comisión de un producto (SUPER_ADMIN)
+# =========================================================
+@router.patch("/{producto_id}/comision", response_model=dict)
+async def actualizar_comision(
+    producto_id: str,
+    comision: float = Query(..., ge=0, le=100, description="Porcentaje de comisión (0-100)"),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Actualiza solo el porcentaje de comisión de un producto.
+    
+    Ejemplo: ?comision=15.5 para establecer 15.5% de comisión
+    """
+    rol = current_user.get("rol")
+    if rol != "super_admin":
+        raise HTTPException(
+            status_code=403, 
+            detail="Solo super_admin puede actualizar comisiones"
+        )
+
+    # Verificar que producto existe
+    producto = await collection_productos.find_one({"_id": ObjectId(producto_id)})
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    result = await collection_productos.update_one(
+        {"_id": ObjectId(producto_id)},
+        {"$set": {"comision": comision}}
+    )
+
+    return {
+        "msg": "Comisión actualizada correctamente",
+        "producto": producto.get("nombre"),
+        "comision_anterior": producto.get("comision", 0),
+        "comision_nueva": comision
     }

@@ -31,7 +31,7 @@ def generar_identificador() -> str:
 
 
 # ============================================================
-# 🧾 Facturar cita - VERSIÓN CON MÚLTIPLES MONEDAS
+# 🧾 Facturar cita - VERSIÓN CON MÚLTIPLES MONEDAS Y REGLAS DE COMISIÓN
 # ============================================================
 @router.post("/quotes/facturar/{cita_id}")
 async def facturar_cita(
@@ -61,7 +61,7 @@ async def facturar_cita(
         raise HTTPException(status_code=400, detail="La cita ya está pagada")
 
     # ====================================
-    # 2️⃣ OBTENER SEDE Y MONEDA
+    # 2️⃣ OBTENER SEDE, MONEDA Y REGLAS DE COMISIÓN
     # ====================================
     sede = await collection_locales.find_one({
         "sede_id": cita["sede_id"]
@@ -71,7 +71,11 @@ async def facturar_cita(
         raise HTTPException(status_code=404, detail="Sede no encontrada")
 
     moneda_sede = sede.get("moneda", "COP")
+    reglas_comision = sede.get("reglas_comision", {"tipo": "servicios"})
+    tipo_comision = reglas_comision.get("tipo", "servicios")
+    
     print(f"💰 Moneda de la sede: {moneda_sede}")
+    print(f"📊 Tipo de comisión de la sede: {tipo_comision}")
 
     # ====================================
     # 3️⃣ OBTENER SERVICIO Y PRECIO EN MONEDA CORRECTA
@@ -106,18 +110,24 @@ async def facturar_cita(
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     # ====================================
-    # 5️⃣ CALCULAR COMISIÓN
+    # 5️⃣ CALCULAR COMISIÓN DEL SERVICIO (SI APLICA)
     # ====================================
-    comision_porcentaje = servicio.get("comision_estilista", 0)
-    print(f"📊 Porcentaje de comisión: {comision_porcentaje}%")
-
-    valor_comision = (valor_servicio * comision_porcentaje) / 100
-    print(f"💰 Valor del servicio: {valor_servicio}, Valor de la comisión: {valor_comision}")
+    comision_porcentaje = 0
+    valor_comision_servicio = 0
+    
+    # ⭐ SOLO CALCULAR COMISIÓN DE SERVICIO SI LA SEDE LO PERMITE
+    if tipo_comision in ["servicios", "mixto"]:
+        comision_porcentaje = servicio.get("comision_estilista", 0)
+        valor_comision_servicio = (valor_servicio * comision_porcentaje) / 100
+        print(f"✅ Comisión por servicio habilitada: {comision_porcentaje}% = {valor_comision_servicio}")
+    else:
+        print(f"⚠️ Comisión por servicio deshabilitada en esta sede (tipo={tipo_comision})")
 
     # ====================================
     # 6️⃣ PREPARAR ITEMS (SERVICIO + PRODUCTOS)
     # ====================================
     items = []
+    total_comision_productos = 0
     
     # Item del servicio principal
     items.append({
@@ -127,26 +137,44 @@ async def facturar_cita(
         "cantidad": 1,
         "precio_unitario": valor_servicio,
         "subtotal": valor_servicio,
-        "moneda": moneda_sede
+        "moneda": moneda_sede,
+        "comision": valor_comision_servicio if tipo_comision in ["servicios", "mixto"] else 0
     })
 
     # Agregar productos si existen
     productos_cita = cita.get("productos", [])
     for producto in productos_cita:
+        precio_producto = producto.get("precio_unitario", 0)
+        cantidad = producto.get("cantidad", 1)
+        subtotal_producto = producto.get("subtotal", precio_producto * cantidad)
+        
+        # ⭐ CALCULAR COMISIÓN DE PRODUCTO (SI APLICA)
+        comision_producto = 0
+        if tipo_comision in ["productos", "mixto"]:
+            porcentaje_producto = producto.get("comision_porcentaje", 0)
+            comision_producto = (subtotal_producto * porcentaje_producto) / 100
+            total_comision_productos += comision_producto
+            print(f"✅ Comisión por producto '{producto.get('nombre')}': {porcentaje_producto}% = {comision_producto}")
+        
         items.append({
             "tipo": "producto",
             "producto_id": producto.get("producto_id"),
             "nombre": producto.get("nombre"),
-            "cantidad": producto.get("cantidad", 1),
-            "precio_unitario": producto.get("precio_unitario", 0),
-            "subtotal": producto.get("subtotal", 0),
-            "moneda": moneda_sede
+            "cantidad": cantidad,
+            "precio_unitario": precio_producto,
+            "subtotal": subtotal_producto,
+            "moneda": moneda_sede,
+            "comision": comision_producto
         })
 
     # ====================================
-    # 7️⃣ CALCULAR TOTAL FINAL
+    # 7️⃣ CALCULAR TOTAL FINAL Y COMISIÓN TOTAL
     # ====================================
     total_final = sum(item["subtotal"] for item in items)
+    valor_comision_total = valor_comision_servicio + total_comision_productos
+    
+    print(f"💰 Total de la venta: {total_final} {moneda_sede}")
+    print(f"💵 Comisión total generada: {valor_comision_total} {moneda_sede}")
 
     # ====================================
     # 8️⃣ GENERAR NÚMEROS ÚNICOS
@@ -166,7 +194,8 @@ async def facturar_cita(
         "fecha_pago": fecha_actual,
         "local": sede.get("nombre"),
         "sede_id": cita["sede_id"],
-        "moneda": moneda_sede,  # ⭐ NUEVO
+        "moneda": moneda_sede,
+        "tipo_comision": tipo_comision,  # ⭐ NUEVO
         "cliente_id": cita["cliente_id"],
         "nombre_cliente": cliente.get("nombre", "") + " " + cliente.get("apellido", ""),
         "cedula_cliente": cliente.get("cedula", ""),
@@ -199,7 +228,8 @@ async def facturar_cita(
         "fecha_pago": fecha_actual,
         "local": sede.get("nombre"),
         "sede_id": cita["sede_id"],
-        "moneda": moneda_sede,  # ⭐ NUEVO
+        "moneda": moneda_sede,
+        "tipo_comision": tipo_comision,  # ⭐ NUEVO
         "cliente_id": cita["cliente_id"],
         "nombre_cliente": cliente.get("nombre", "") + " " + cliente.get("apellido", ""),
         "cedula_cliente": cliente.get("cedula", ""),
@@ -249,65 +279,74 @@ async def facturar_cita(
         print(f"⚠️ Error guardando venta: {e}")
 
     # ====================================
-    # 1️⃣3️⃣ ACUMULAR COMISIONES DEL ESTILISTA
+    # 1️⃣3️⃣ ACUMULAR COMISIONES DEL ESTILISTA (SI APLICA)
     # ====================================
-    profesional_id = cita["profesional_id"]
-    print(f"👤 Profesional ID: {profesional_id}")
+    comision_msg = "No aplica comisión para esta sede"
+    
+    # ⭐ SOLO GUARDAR COMISIONES SI HAY ALGO QUE COMISIONAR
+    if valor_comision_total > 0:
+        profesional_id = cita["profesional_id"]
+        print(f"👤 Profesional ID: {profesional_id}")
 
-    comision_document = await collection_commissions.find_one({
-        "profesional_id": profesional_id,
-        "sede_id": cita["sede_id"]  # ⭐ Buscar por profesional Y sede
-    })
-    print(f"📂 Documento de comisión encontrado: {comision_document}")
-
-    servicio_comision = {
-        "servicio_id": cita["servicio_id"],
-        "servicio_nombre": cita["servicio_nombre"],
-        "valor_servicio": valor_servicio,
-        "porcentaje": comision_porcentaje,
-        "valor_comision": valor_comision,
-        "fecha": cita["fecha"],
-        "numero_comprobante": numero_comprobante
-    }
-
-    if comision_document:
-        # Ya existe → incrementar
-        await collection_commissions.update_one(
-            {
-                "profesional_id": profesional_id,
-                "sede_id": cita["sede_id"]
-            },
-            {
-                "$inc": {
-                    "total_servicios": 1,
-                    "total_comisiones": valor_comision
-                },
-                "$set": {
-                    "estado": "pendiente"
-                },
-                "$push": {
-                    "servicios_detalle": servicio_comision
-                }
-            }
-        )
-        comision_msg = "Comisión actualizada"
-        print("🔄 Comisión actualizada en el documento existente")
-    else:
-        # No existe → crear registro nuevo
-        nuevo_doc = {
+        comision_document = await collection_commissions.find_one({
             "profesional_id": profesional_id,
-            "profesional_nombre": cita["profesional_nombre"],
-            "sede_id": cita["sede_id"],
-            "moneda": moneda_sede,  # ⭐ NUEVO
-            "total_servicios": 1,
-            "total_comisiones": valor_comision,
-            "servicios_detalle": [servicio_comision],
-            "estado": "pendiente",
-            "creado_en": datetime.now()
+            "sede_id": cita["sede_id"]
+        })
+        print(f"📂 Documento de comisión encontrado: {comision_document}")
+
+        # Preparar detalle de comisión
+        servicio_comision = {
+            "servicio_id": cita["servicio_id"],
+            "servicio_nombre": cita["servicio_nombre"],
+            "valor_servicio": valor_servicio,
+            "porcentaje": comision_porcentaje,
+            "valor_comision_servicio": valor_comision_servicio,
+            "valor_comision_productos": total_comision_productos,
+            "valor_comision_total": valor_comision_total,
+            "fecha": cita["fecha"],
+            "numero_comprobante": numero_comprobante,
+            "tipo_comision_sede": tipo_comision
         }
-        await collection_commissions.insert_one(nuevo_doc)
-        comision_msg = "Comisión creada"
-        print("🆕 Nuevo documento de comisión creado")
+
+        if comision_document:
+            # Ya existe → incrementar
+            await collection_commissions.update_one(
+                {
+                    "profesional_id": profesional_id,
+                    "sede_id": cita["sede_id"]
+                },
+                {
+                    "$inc": {
+                        "total_servicios": 1,
+                        "total_comisiones": valor_comision_total
+                    },
+                    "$set": {
+                        "estado": "pendiente"
+                    },
+                    "$push": {
+                        "servicios_detalle": servicio_comision
+                    }
+                }
+            )
+            comision_msg = f"Comisión actualizada (+{valor_comision_total} {moneda_sede})"
+            print("🔄 Comisión actualizada en el documento existente")
+        else:
+            # No existe → crear registro nuevo
+            nuevo_doc = {
+                "profesional_id": profesional_id,
+                "profesional_nombre": cita["profesional_nombre"],
+                "sede_id": cita["sede_id"],
+                "moneda": moneda_sede,
+                "tipo_comision": tipo_comision,  # ⭐ NUEVO
+                "total_servicios": 1,
+                "total_comisiones": valor_comision_total,
+                "servicios_detalle": [servicio_comision],
+                "estado": "pendiente",
+                "creado_en": datetime.now()
+            }
+            await collection_commissions.insert_one(nuevo_doc)
+            comision_msg = f"Comisión creada ({valor_comision_total} {moneda_sede})"
+            print("🆕 Nuevo documento de comisión creado")
 
     # ====================================
     # RESPUESTA FINAL
@@ -318,15 +357,19 @@ async def facturar_cita(
         "numero_comprobante": numero_comprobante,
         "identificador": identificador,
         "total": total_final,
-        "moneda": moneda_sede,  # ⭐ NUEVO
+        "moneda": moneda_sede,
+        "tipo_comision_sede": tipo_comision,  # ⭐ NUEVO
         "comision": comision_msg,
-        "valor_comision_generada": valor_comision,
+        "valor_comision_generada": valor_comision_total,
         "items_facturados": len(items),
         "detalles": {
             "servicio": valor_servicio,
+            "comision_servicio": valor_comision_servicio,
             "productos": sum(p["subtotal"] for p in productos_cita),
+            "comision_productos": total_comision_productos,
             "total": total_final,
-            "moneda": moneda_sede  # ⭐ NUEVO
+            "comision_total": valor_comision_total,
+            "moneda": moneda_sede
         }
     }
 

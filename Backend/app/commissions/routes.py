@@ -8,6 +8,7 @@ from .models import (
     ComisionResponse, 
     ComisionDetalleResponse, 
     LiquidarComisionRequest,
+    ResumenComisionPorTipo,
 )
 
 router = APIRouter(
@@ -104,13 +105,16 @@ def construir_query_filtros(user: dict, filtros: Optional[dict] = None):
     
     if filtros.get("estado"):
         if filtros["estado"] == "pendiente":
-            # Incluir comisiones sin estado o con estado pendiente
             query["$or"] = [
                 {"estado": "pendiente"},
                 {"estado": {"$exists": False}}
             ]
         else:
             query["estado"] = filtros["estado"]
+    
+    # ⭐ NUEVO: Filtrar por tipo de comisión
+    if filtros.get("tipo_comision"):
+        query["tipo_comision"] = filtros["tipo_comision"]
     
     # Buscar por rango de fechas en servicios_detalle
     if filtros.get("fecha_inicio") or filtros.get("fecha_fin"):
@@ -132,7 +136,8 @@ def formatear_comision_response(comision: dict) -> ComisionResponse:
         profesional_id=comision["profesional_id"],
         profesional_nombre=comision["profesional_nombre"],
         sede_id=comision["sede_id"],
-        moneda=comision.get("moneda"),  # ⭐ Sin default - viene de DB
+        moneda=comision.get("moneda"),
+        tipo_comision=comision.get("tipo_comision", "servicios"),  # ⭐ NUEVO
         total_servicios=comision["total_servicios"],
         total_comisiones=comision["total_comisiones"],
         periodo_inicio=comision.get("periodo_inicio", ""),
@@ -143,6 +148,28 @@ def formatear_comision_response(comision: dict) -> ComisionResponse:
         liquidada_en=comision.get("liquidada_en")
     )
 
+# ⭐ NUEVA FUNCIÓN: Calcular totales desglosados por tipo
+def calcular_totales_por_tipo(servicios_detalle: list) -> dict:
+    """
+    Calcula totales de comisiones desglosados por tipo
+    """
+    total_servicios = 0
+    total_productos = 0
+    
+    for servicio in servicios_detalle:
+        total_servicios += servicio.get("valor_comision_servicio", 0)
+        total_productos += servicio.get("valor_comision_productos", 0)
+    
+    total_general = total_servicios + total_productos
+    
+    return {
+        "total_comisiones_servicios": total_servicios,
+        "total_comisiones_productos": total_productos,
+        "total_comisiones": total_general,
+        "porcentaje_servicios": (total_servicios / total_general * 100) if total_general > 0 else 0,
+        "porcentaje_productos": (total_productos / total_general * 100) if total_general > 0 else 0
+    }
+
 # ==============================================================
 # ENDPOINTS
 # ==============================================================
@@ -152,6 +179,7 @@ async def obtener_comisiones(
     profesional_id: Optional[str] = Query(None),
     sede_id: Optional[str] = Query(None),
     estado: Optional[str] = Query(None),
+    tipo_comision: Optional[str] = Query(None, description="servicios | productos | mixto"),  # ⭐ NUEVO
     fecha_inicio: Optional[str] = Query(None, description="Filtrar desde esta fecha (YYYY-MM-DD)"),
     fecha_fin: Optional[str] = Query(None, description="Filtrar hasta esta fecha (YYYY-MM-DD)"),
     user: dict = Depends(get_current_user)
@@ -166,6 +194,7 @@ async def obtener_comisiones(
             "profesional_id": profesional_id,
             "sede_id": sede_id,
             "estado": estado,
+            "tipo_comision": tipo_comision,  # ⭐ NUEVO
             "fecha_inicio": fecha_inicio,
             "fecha_fin": fecha_fin
         }
@@ -192,13 +221,20 @@ async def obtener_comision_detalle(
         comision = await obtener_comision_por_id(comision_id)
         verificar_acceso_sede(user, comision)
         
+        # ⭐ CALCULAR TOTALES DESGLOSADOS
+        totales = calcular_totales_por_tipo(comision.get("servicios_detalle", []))
+        
         return ComisionDetalleResponse(
             id=str(comision["_id"]),
             profesional_id=comision["profesional_id"],
             profesional_nombre=comision["profesional_nombre"],
             sede_id=comision["sede_id"],
+            moneda=comision.get("moneda"),
+            tipo_comision=comision.get("tipo_comision", "servicios"),  # ⭐ NUEVO
             total_servicios=comision["total_servicios"],
             total_comisiones=comision["total_comisiones"],
+            total_comisiones_servicios=totales["total_comisiones_servicios"],  # ⭐ NUEVO
+            total_comisiones_productos=totales["total_comisiones_productos"],  # ⭐ NUEVO
             servicios_detalle=comision["servicios_detalle"],
             periodo_inicio=comision.get("periodo_inicio", ""),
             periodo_fin=comision.get("periodo_fin", ""),
@@ -293,6 +329,7 @@ async def obtener_resumen_pendientes(
     - Total de comisiones pendientes
     - Monto total pendiente
     - Por profesional
+    - ⭐ NUEVO: Desglose por tipo (servicios/productos)
     """
     try:
         # Buscar pendientes (sin estado o con estado pendiente)
@@ -313,6 +350,16 @@ async def obtener_resumen_pendientes(
         total_comisiones = len(comisiones_pendientes)
         monto_total = sum(c["total_comisiones"] for c in comisiones_pendientes)
         
+        # ⭐ NUEVO: Calcular totales por tipo
+        total_comisiones_servicios = 0
+        total_comisiones_productos = 0
+        
+        for comision in comisiones_pendientes:
+            servicios = comision.get("servicios_detalle", [])
+            for servicio in servicios:
+                total_comisiones_servicios += servicio.get("valor_comision_servicio", 0)
+                total_comisiones_productos += servicio.get("valor_comision_productos", 0)
+        
         # Obtener moneda (puede ser null para comisiones viejas)
         moneda = comisiones_pendientes[0].get("moneda") if comisiones_pendientes else None
         
@@ -326,16 +373,27 @@ async def obtener_resumen_pendientes(
                     "profesional_nombre": comision["profesional_nombre"],
                     "cantidad_periodos": 0,
                     "total_comisiones": 0,
-                    "moneda": comision.get("moneda")  # ⭐ Puede ser null
+                    "total_comisiones_servicios": 0,  # ⭐ NUEVO
+                    "total_comisiones_productos": 0,  # ⭐ NUEVO
+                    "moneda": comision.get("moneda"),
+                    "tipo_comision": comision.get("tipo_comision", "servicios")  # ⭐ NUEVO
                 }
             
             por_profesional[prof_id]["cantidad_periodos"] += 1
             por_profesional[prof_id]["total_comisiones"] += comision["total_comisiones"]
+            
+            # ⭐ SUMAR TOTALES POR TIPO
+            servicios = comision.get("servicios_detalle", [])
+            for servicio in servicios:
+                por_profesional[prof_id]["total_comisiones_servicios"] += servicio.get("valor_comision_servicio", 0)
+                por_profesional[prof_id]["total_comisiones_productos"] += servicio.get("valor_comision_productos", 0)
         
         return {
             "total_comisiones_pendientes": total_comisiones,
             "monto_total_pendiente": monto_total,
-            "moneda": moneda,  # ⭐ Puede ser null para comisiones viejas
+            "total_comisiones_servicios": total_comisiones_servicios,  # ⭐ NUEVO
+            "total_comisiones_productos": total_comisiones_productos,  # ⭐ NUEVO
+            "moneda": moneda,
             "por_profesional": list(por_profesional.values())
         }
     
@@ -343,6 +401,90 @@ async def obtener_resumen_pendientes(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al obtener resumen: {str(e)}"
+        )
+
+# ⭐ NUEVO ENDPOINT: Resumen desglosado por tipo
+@router.get("/resumen/por-tipo", response_model=List[ResumenComisionPorTipo])
+async def obtener_resumen_por_tipo(
+    sede_id: Optional[str] = Query(None),
+    profesional_id: Optional[str] = Query(None),
+    estado: str = Query("pendiente", description="pendiente | liquidada | todas"),
+    user: dict = Depends(get_current_user)
+):
+    """
+    Obtiene un resumen detallado de comisiones desglosadas por tipo
+    (servicios vs productos) para análisis.
+    """
+    try:
+        # Construir query base
+        query = {}
+        
+        if estado == "pendiente":
+            query["$or"] = [
+                {"estado": "pendiente"},
+                {"estado": {"$exists": False}}
+            ]
+        elif estado != "todas":
+            query["estado"] = estado
+        
+        # Filtros adicionales
+        if user.get("rol") == "admin_sede":
+            query["sede_id"] = user.get("sede_id")
+        elif sede_id:
+            query["sede_id"] = sede_id
+        
+        if profesional_id:
+            query["profesional_id"] = profesional_id
+        
+        # Obtener comisiones
+        comisiones = await collection_commissions.find(query).to_list(1000)
+        
+        # Agrupar por profesional + sede
+        resumen_por_profesional = {}
+        
+        for comision in comisiones:
+            key = f"{comision['profesional_id']}_{comision['sede_id']}"
+            
+            if key not in resumen_por_profesional:
+                resumen_por_profesional[key] = {
+                    "profesional_id": comision["profesional_id"],
+                    "profesional_nombre": comision["profesional_nombre"],
+                    "sede_id": comision["sede_id"],
+                    "moneda": comision.get("moneda", "COP"),
+                    "tipo_comision_sede": comision.get("tipo_comision", "servicios"),
+                    "total_servicios": 0,
+                    "total_comisiones": 0,
+                    "comisiones_por_servicios": 0,
+                    "comisiones_por_productos": 0,
+                    "estado": estado,
+                    "periodo_inicio": "",
+                    "periodo_fin": ""
+                }
+            
+            # Sumar totales
+            resumen_por_profesional[key]["total_servicios"] += comision["total_servicios"]
+            resumen_por_profesional[key]["total_comisiones"] += comision["total_comisiones"]
+            
+            # Calcular desglose por tipo
+            servicios = comision.get("servicios_detalle", [])
+            for servicio in servicios:
+                resumen_por_profesional[key]["comisiones_por_servicios"] += servicio.get("valor_comision_servicio", 0)
+                resumen_por_profesional[key]["comisiones_por_productos"] += servicio.get("valor_comision_productos", 0)
+        
+        # Calcular porcentajes
+        resultado = []
+        for datos in resumen_por_profesional.values():
+            total = datos["total_comisiones"]
+            datos["porcentaje_servicios"] = (datos["comisiones_por_servicios"] / total * 100) if total > 0 else 0
+            datos["porcentaje_productos"] = (datos["comisiones_por_productos"] / total * 100) if total > 0 else 0
+            resultado.append(ResumenComisionPorTipo(**datos))
+        
+        return resultado
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al obtener resumen por tipo: {str(e)}"
         )
 
 @router.post("/liquidar-multiple")
