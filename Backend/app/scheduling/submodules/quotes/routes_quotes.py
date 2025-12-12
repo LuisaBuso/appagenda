@@ -57,7 +57,6 @@ def upload_to_s3(file: UploadFile, folder_path: str) -> str:
             Key=s3_key,
             Body=file_bytes,
             ContentType=content_type,
-            ACL='public-read'  # ⭐️ Hace que la imagen sea accesible desde el navegador
         )
 
         # Generar URL pública
