@@ -39,26 +39,38 @@ s3_client = boto3.client(
 )
 
 def upload_to_s3(file: UploadFile, folder_path: str) -> str:
-    """Sube un archivo a S3 y retorna la URL pública"""
     try:
+        # Extensión real
         file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
         unique_filename = f"{uuid.uuid4()}.{file_extension}"
         s3_key = f"{folder_path}/{unique_filename}"
-        
-        s3_client.upload_fileobj(
-            file.file,
-            os.getenv("AWS_BUCKET_NAME"),
-            s3_key,
+
+        # Leer bytes del archivo
+        file_bytes = file.file.read()
+
+        # Obtener Content-Type correcto para que NO descargue
+        content_type = file.content_type or "image/jpeg"
+
+        # Subir correctamente al bucket con ContentType
+        s3_client.put_object(
+            Bucket=os.getenv("AWS_BUCKET_NAME"),
+            Key=s3_key,
+            Body=file_bytes,
+            ContentType=content_type,
         )
-        
+
+        # Generar URL pública
         bucket_name = os.getenv("AWS_BUCKET_NAME")
         region = os.getenv("AWS_REGION", "us-west-2")
+
         url = f"https://{bucket_name}.s3.{region}.amazonaws.com/{s3_key}"
-        
+
         return url
+
     except Exception as e:
         print(f"Error subiendo archivo a S3: {e}")
         raise HTTPException(status_code=500, detail=f"Error subiendo archivo: {str(e)}")
+
 
 # -----------------------
 # EMAIL (config desde env)
