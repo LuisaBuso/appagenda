@@ -1270,7 +1270,7 @@ async def get_citas_sede(current_user: dict = Depends(get_current_user)):
 
 
 # ============================================================
-# 📦 Agregar productos a una cita - CON MÚLTIPLES MONEDAS Y COMISIONES
+# 📦 Agregar productos a una cita - CON REDONDEO
 # ============================================================
 @router.post("/cita/{cita_id}/agregar-productos", response_model=dict)
 async def agregar_productos_a_cita(
@@ -1278,6 +1278,12 @@ async def agregar_productos_a_cita(
     productos: List[ProductoItem],
     current_user: dict = Depends(get_current_user)
 ):
+    """
+    Agrega productos a una cita usando el precio según la moneda de la sede.
+    ⭐ NUEVO: Calcula comisión del producto si la sede lo permite.
+    ⭐ Aplica redondeo para evitar errores de punto flotante.
+    """
+    # Solo admin sede o admin
     if current_user["rol"] not in ["admin_sede", "admin", "estilista"]:
         raise HTTPException(403, "No tienes permisos")
 
@@ -1319,49 +1325,43 @@ async def agregar_productos_a_cita(
                 400,
                 f"Producto {producto_db.get('nombre')} sin precio en {moneda_cita}"
             )
-
-        precio_unitario = precios[moneda_cita]
-        subtotal = p.cantidad * precio_unitario
-
-        # Comisión
-        comision_porcentaje = producto_db.get("comision", 0) if permite_comision_productos else 0
-        comision_valor = (subtotal * comision_porcentaje) / 100 if permite_comision_productos else 0
-
-        total_productos_agregados += subtotal
-        total_comision_productos += comision_valor
-
-        # ==============================
-        # 🔥 CONSOLIDAR PRODUCTO
-        # ==============================
-        if p.producto_id in productos_map:
-            existente = productos_map[p.producto_id]
-            existente["cantidad"] += p.cantidad
-            existente["subtotal"] += subtotal
-            existente["comision_valor"] += comision_valor
+        
+        precio_unitario = precios_producto[moneda_cita]
+        subtotal = round(p.cantidad * precio_unitario, 2)  # ⭐ REDONDEAR
+        
+        # ⭐ CALCULAR COMISIÓN DEL PRODUCTO (SI APLICA)
+        comision_porcentaje = 0
+        comision_producto = 0
+        
+        if permite_comision_productos:
+            comision_porcentaje = producto_db.get("comision", 0)
+            comision_producto = round((subtotal * comision_porcentaje) / 100, 2)  # ⭐ REDONDEAR
+            total_comision_productos += comision_producto
+            
+            print(f"✅ Producto '{producto_db.get('nombre')}': "
+                  f"{comision_porcentaje}% = {comision_producto} {moneda_cita}")
         else:
-            productos_map[p.producto_id] = {
-                "producto_id": p.producto_id,
-                "nombre": producto_db.get("nombre"),
-                "cantidad": p.cantidad,
-                "precio_unitario": precio_unitario,
-                "subtotal": subtotal,
-                "moneda": moneda_cita,
-                "comision_porcentaje": comision_porcentaje,
-                "comision_valor": comision_valor
-            }
+            print(f"⚠️ Producto '{producto_db.get('nombre')}': Sin comisión (sede no permite)")
+        
+        nuevos_productos.append({
+            "producto_id": p.producto_id,
+            "nombre": producto_db.get("nombre"),
+            "cantidad": p.cantidad,
+            "precio_unitario": precio_unitario,
+            "subtotal": subtotal,  # ⭐ YA REDONDEADO
+            "moneda": moneda_cita,
+            "comision_porcentaje": comision_porcentaje,
+            "comision_valor": comision_producto  # ⭐ YA REDONDEADO
+        })
+        total_productos += subtotal
 
     productos_final = list(productos_map.values())
 
-    # ==============================
-    # 🔢 RECALCULAR TOTALES
-    # ==============================
-    valor_servicios = cita.get("valor_total", 0) - sum(
-        p.get("subtotal", 0) for p in cita.get("productos", [])
-    )
-
-    nuevo_total = valor_servicios + sum(p["subtotal"] for p in productos_final)
-    abono = cita.get("abono", 0)
-    nuevo_saldo = nuevo_total - abono
+    # ⭐ REDONDEAR al recalcular totales
+    nuevo_total = round(cita.get("valor_total", 0) + total_productos, 2)
+    abono_actual = cita.get("abono", 0)
+    nuevo_saldo = round(nuevo_total - abono_actual, 2)
+    total_comision_productos = round(total_comision_productos, 2)
 
     if nuevo_saldo <= 0:
         estado_pago = "pagado"
@@ -1375,9 +1375,9 @@ async def agregar_productos_a_cita(
         {
             "$set": {
                 "productos": productos_final,
-                "valor_total": nuevo_total,
-                "saldo_pendiente": nuevo_saldo,
-                "estado_pago": estado_pago
+                "valor_total": nuevo_total,  # ⭐ REDONDEADO
+                "saldo_pendiente": nuevo_saldo,  # ⭐ REDONDEADO
+                "estado_pago": nuevo_estado_pago
             }
         }
     )
@@ -1388,16 +1388,18 @@ async def agregar_productos_a_cita(
     return {
         "success": True,
         "message": "Productos agregados correctamente",
-        "total_productos_agregados": total_productos_agregados,
+        "productos_agregados": len(nuevos_productos),
+        "total_productos": round(total_productos, 2),
         "total_comision_productos": total_comision_productos,
         "tipo_comision_sede": tipo_comision,
+        "permite_comision_productos": permite_comision_productos,
         "moneda": moneda_cita,
         "cita": cita_actualizada
     }
 
 
 # ============================================================
-# 🗑️ Eliminar producto de una cita
+# 🗑️ Eliminar producto de una cita - CON REDONDEO
 # ============================================================
 @router.delete("/cita/{cita_id}/productos/{producto_id}", response_model=dict)
 async def eliminar_producto_de_cita(
@@ -1407,7 +1409,8 @@ async def eliminar_producto_de_cita(
 ):
     """
     Elimina un producto específico de una cita y recalcula totales.
-    ⭐ Recalcula comisiones si la sede permite comisión de productos.
+    ⭐ Recalcula el total RESTANDO solo el producto eliminado.
+    ⭐ Aplica redondeo para corregir errores de punto flotante.
     """
     # Solo admin sede, admin o estilista
     if current_user["rol"] not in ["admin_sede", "admin", "estilista"]:
@@ -1446,15 +1449,14 @@ async def eliminar_producto_de_cita(
             detail=f"Producto con ID '{producto_id}' no encontrado en esta cita"
         )
 
-    # ⭐ CALCULAR TOTALES DESPUÉS DE ELIMINAR
-    total_productos_restante = sum(p.get("subtotal", 0) for p in productos_filtrados)
-    total_comision_restante = sum(p.get("comision_valor", 0) for p in productos_filtrados)
+    # ⭐ RESTAR SOLO EL PRODUCTO ELIMINADO + REDONDEO
+    subtotal_eliminado = producto_encontrado.get("subtotal", 0)
+    comision_eliminada = producto_encontrado.get("comision_valor", 0)
     
-    # Recalcular totales de la cita
-    valor_servicios = cita.get("valor_total", 0) - sum(p.get("subtotal", 0) for p in productos_actuales)
-    nuevo_total = valor_servicios + total_productos_restante
+    # Nuevo total = Total actual - Producto eliminado
+    nuevo_total = round(cita.get("valor_total", 0) - subtotal_eliminado, 2)
     abono_actual = cita.get("abono", 0)
-    nuevo_saldo = nuevo_total - abono_actual
+    nuevo_saldo = round(nuevo_total - abono_actual, 2)
 
     # ⭐ RECALCULAR ESTADO DE PAGO
     if nuevo_saldo <= 0:
@@ -1464,14 +1466,18 @@ async def eliminar_producto_de_cita(
     else:
         nuevo_estado_pago = "pendiente"
 
+    # ⭐ CALCULAR TOTALES PARA LA RESPUESTA (informativo)
+    total_productos_restante = round(sum(p.get("subtotal", 0) for p in productos_filtrados), 2)
+    total_comision_restante = round(sum(p.get("comision_valor", 0) for p in productos_filtrados), 2)
+
     # Actualizar cita
     await collection_citas.update_one(
         {"_id": ObjectId(cita_id)},
         {
             "$set": {
                 "productos": productos_filtrados,
-                "valor_total": nuevo_total,
-                "saldo_pendiente": nuevo_saldo,
+                "valor_total": nuevo_total,  # ⭐ REDONDEADO
+                "saldo_pendiente": nuevo_saldo,  # ⭐ REDONDEADO
                 "estado_pago": nuevo_estado_pago
             }
         }
@@ -1501,7 +1507,7 @@ async def eliminar_producto_de_cita(
 
 
 # ============================================================
-# 🗑️ Eliminar TODOS los productos de una cita
+# 🗑️ Eliminar TODOS los productos de una cita - CON REDONDEO
 # ============================================================
 @router.delete("/cita/{cita_id}/productos", response_model=dict)
 async def eliminar_todos_productos_de_cita(
@@ -1510,7 +1516,8 @@ async def eliminar_todos_productos_de_cita(
 ):
     """
     Elimina TODOS los productos de una cita y recalcula totales.
-    Útil si el cliente se arrepiente de todos los productos agregados.
+    ⭐ Resta la suma de todos los productos del total actual.
+    ⭐ Aplica redondeo para corregir errores de punto flotante.
     """
     # Solo admin sede, admin o estilista
     if current_user["rol"] not in ["admin_sede", "admin", "estilista"]:
@@ -1532,16 +1539,15 @@ async def eliminar_todos_productos_de_cita(
             detail="Esta cita no tiene productos agregados"
         )
 
-    # ⭐ CALCULAR TOTALES ELIMINADOS
-    total_productos_eliminados = sum(p.get("subtotal", 0) for p in productos_actuales)
-    total_comision_eliminada = sum(p.get("comision_valor", 0) for p in productos_actuales)
+    # ⭐ CALCULAR TOTALES A ELIMINAR + REDONDEO
+    total_productos_eliminados = round(sum(p.get("subtotal", 0) for p in productos_actuales), 2)
+    total_comision_eliminada = round(sum(p.get("comision_valor", 0) for p in productos_actuales), 2)
     cantidad_productos = len(productos_actuales)
 
-    # Recalcular totales de la cita (solo servicios)
-    valor_servicios = cita.get("valor_total", 0) - total_productos_eliminados
-    nuevo_total = valor_servicios
+    # ⭐ RESTAR TODOS LOS PRODUCTOS DEL TOTAL + REDONDEO
+    nuevo_total = round(cita.get("valor_total", 0) - total_productos_eliminados, 2)
     abono_actual = cita.get("abono", 0)
-    nuevo_saldo = nuevo_total - abono_actual
+    nuevo_saldo = round(nuevo_total - abono_actual, 2)
 
     # ⭐ RECALCULAR ESTADO DE PAGO
     if nuevo_saldo <= 0:
@@ -1557,8 +1563,8 @@ async def eliminar_todos_productos_de_cita(
         {
             "$set": {
                 "productos": [],
-                "valor_total": nuevo_total,
-                "saldo_pendiente": nuevo_saldo,
+                "valor_total": nuevo_total,  # ⭐ REDONDEADO
+                "saldo_pendiente": nuevo_saldo,  # ⭐ REDONDEADO
                 "estado_pago": nuevo_estado_pago
             }
         }
@@ -1579,6 +1585,7 @@ async def eliminar_todos_productos_de_cita(
         "moneda": cita.get("moneda"),
         "cita": cita_actualizada
     }
+
 
 # ============================================
 # ✅ Finalizar servicio

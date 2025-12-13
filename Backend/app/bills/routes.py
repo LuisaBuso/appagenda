@@ -64,7 +64,7 @@ async def facturar_cita(
 
     # ✅ Verificar que esté pagada antes de facturar
     estado_pago = cita.get("estado_pago", "")
-    if estado_pago not in ["pagado", "abonado"]:
+    if estado_pago not in ["pagado", "abonado", "pendiente"]:
         print("⚠️ La cita debe estar pagada antes de facturar")
         raise HTTPException(status_code=400, detail="La cita debe estar pagada completamente antes de facturar")
 
