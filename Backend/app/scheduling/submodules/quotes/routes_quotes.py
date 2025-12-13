@@ -39,26 +39,38 @@ s3_client = boto3.client(
 )
 
 def upload_to_s3(file: UploadFile, folder_path: str) -> str:
-    """Sube un archivo a S3 y retorna la URL pública"""
     try:
+        # Extensión real
         file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
         unique_filename = f"{uuid.uuid4()}.{file_extension}"
         s3_key = f"{folder_path}/{unique_filename}"
-        
-        s3_client.upload_fileobj(
-            file.file,
-            os.getenv("AWS_BUCKET_NAME"),
-            s3_key,
+
+        # Leer bytes del archivo
+        file_bytes = file.file.read()
+
+        # Obtener Content-Type correcto para que NO descargue
+        content_type = file.content_type or "image/jpeg"
+
+        # Subir correctamente al bucket con ContentType
+        s3_client.put_object(
+            Bucket=os.getenv("AWS_BUCKET_NAME"),
+            Key=s3_key,
+            Body=file_bytes,
+            ContentType=content_type,
         )
-        
+
+        # Generar URL pública
         bucket_name = os.getenv("AWS_BUCKET_NAME")
         region = os.getenv("AWS_REGION", "us-west-2")
+
         url = f"https://{bucket_name}.s3.{region}.amazonaws.com/{s3_key}"
-        
+
         return url
+
     except Exception as e:
         print(f"Error subiendo archivo a S3: {e}")
         raise HTTPException(status_code=500, detail=f"Error subiendo archivo: {str(e)}")
+
 
 # -----------------------
 # EMAIL (config desde env)
@@ -1273,63 +1285,45 @@ async def agregar_productos_a_cita(
     """
     # Solo admin sede o admin
     if current_user["rol"] not in ["admin_sede", "admin", "estilista"]:
-        raise HTTPException(
-            status_code=403,
-            detail="No tienes permisos para agregar productos"
-        )
+        raise HTTPException(403, "No tienes permisos")
 
-    # Buscar cita
     cita = await collection_citas.find_one({"_id": ObjectId(cita_id)})
     if not cita:
-        raise HTTPException(status_code=404, detail="Cita no encontrada")
+        raise HTTPException(404, "Cita no encontrada")
 
-    # ⭐ OBTENER MONEDA DE LA CITA (que viene de la sede)
     moneda_cita = cita.get("moneda")
     if not moneda_cita:
-        raise HTTPException(
-            status_code=400,
-            detail="Esta cita no tiene moneda asignada. Contacta soporte."
-        )
+        raise HTTPException(400, "La cita no tiene moneda")
 
-    # ⭐ OBTENER REGLAS DE COMISIÓN DE LA SEDE
     sede = await collection_locales.find_one({"sede_id": cita["sede_id"]})
     if not sede:
-        raise HTTPException(status_code=404, detail="Sede no encontrada")
-    
+        raise HTTPException(404, "Sede no encontrada")
+
     reglas_comision = sede.get("reglas_comision", {"tipo": "servicios"})
     tipo_comision = reglas_comision.get("tipo", "servicios")
-    
-    # ⭐ VERIFICAR SI LA SEDE PERMITE COMISIÓN DE PRODUCTOS
     permite_comision_productos = tipo_comision in ["productos", "mixto"]
-    
-    print(f"🏢 Sede: {sede.get('nombre')} - Tipo comisión: {tipo_comision}")
-    print(f"📦 ¿Permite comisión de productos?: {permite_comision_productos}")
 
-    # Productos actuales
-    productos_actuales = cita.get("productos", [])
+    # ==============================
+    # 🔑 INDEXAR PRODUCTOS EXISTENTES
+    # ==============================
+    productos_map = {
+        p["producto_id"]: p
+        for p in cita.get("productos", [])
+    }
 
-    # Procesar nuevos productos
-    nuevos_productos = []
-    total_productos = 0
+    total_productos_agregados = 0
     total_comision_productos = 0
 
     for p in productos:
-        # ⭐ BUSCAR PRODUCTO EN BD
         producto_db = await collection_products.find_one({"id": p.producto_id})
-        
         if not producto_db:
+            raise HTTPException(404, f"Producto {p.producto_id} no encontrado")
+
+        precios = producto_db.get("precios", {})
+        if moneda_cita not in precios:
             raise HTTPException(
-                status_code=404,
-                detail=f"Producto con ID '{p.producto_id}' no encontrado"
-            )
-        
-        # ⭐ OBTENER PRECIO EN LA MONEDA CORRECTA
-        precios_producto = producto_db.get("precios", {})
-        
-        if moneda_cita not in precios_producto:
-            raise HTTPException(
-                status_code=400,
-                detail=f"El producto '{producto_db.get('nombre')}' no tiene precio configurado en {moneda_cita}"
+                400,
+                f"Producto {producto_db.get('nombre')} sin precio en {moneda_cita}"
             )
         
         precio_unitario = precios_producto[moneda_cita]
@@ -1361,8 +1355,7 @@ async def agregar_productos_a_cita(
         })
         total_productos += subtotal
 
-    # Agregar productos a la cita
-    productos_final = productos_actuales + nuevos_productos
+    productos_final = list(productos_map.values())
 
     # ⭐ REDONDEAR al recalcular totales
     nuevo_total = round(cita.get("valor_total", 0) + total_productos, 2)
@@ -1370,15 +1363,13 @@ async def agregar_productos_a_cita(
     nuevo_saldo = round(nuevo_total - abono_actual, 2)
     total_comision_productos = round(total_comision_productos, 2)
 
-    # ⭐ RECALCULAR ESTADO DE PAGO
     if nuevo_saldo <= 0:
-        nuevo_estado_pago = "pagado"
-    elif abono_actual > 0:
-        nuevo_estado_pago = "abonado"
+        estado_pago = "pagado"
+    elif abono > 0:
+        estado_pago = "abonado"
     else:
-        nuevo_estado_pago = "pendiente"
+        estado_pago = "pendiente"
 
-    # Actualizar cita
     await collection_citas.update_one(
         {"_id": ObjectId(cita_id)},
         {
@@ -1391,7 +1382,6 @@ async def agregar_productos_a_cita(
         }
     )
 
-    # Obtener cita actualizada
     cita_actualizada = await collection_citas.find_one({"_id": ObjectId(cita_id)})
     cita_actualizada["_id"] = str(cita_actualizada["_id"])
 
