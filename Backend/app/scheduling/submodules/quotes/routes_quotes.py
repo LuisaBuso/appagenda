@@ -1270,7 +1270,7 @@ async def get_citas_sede(current_user: dict = Depends(get_current_user)):
 
 
 # ============================================================
-# 📦 Agregar productos a una cita - CON REDONDEO
+# 📦 Agregar productos a una cita - CON MÚLTIPLES MONEDAS Y COMISIONES
 # ============================================================
 @router.post("/cita/{cita_id}/agregar-productos", response_model=dict)
 async def agregar_productos_a_cita(
@@ -1278,12 +1278,6 @@ async def agregar_productos_a_cita(
     productos: List[ProductoItem],
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Agrega productos a una cita usando el precio según la moneda de la sede.
-    ⭐ NUEVO: Calcula comisión del producto si la sede lo permite.
-    ⭐ Aplica redondeo para evitar errores de punto flotante.
-    """
-    # Solo admin sede o admin
     if current_user["rol"] not in ["admin_sede", "admin", "estilista"]:
         raise HTTPException(403, "No tienes permisos")
 
@@ -1325,43 +1319,49 @@ async def agregar_productos_a_cita(
                 400,
                 f"Producto {producto_db.get('nombre')} sin precio en {moneda_cita}"
             )
-        
-        precio_unitario = precios_producto[moneda_cita]
-        subtotal = round(p.cantidad * precio_unitario, 2)  # ⭐ REDONDEAR
-        
-        # ⭐ CALCULAR COMISIÓN DEL PRODUCTO (SI APLICA)
-        comision_porcentaje = 0
-        comision_producto = 0
-        
-        if permite_comision_productos:
-            comision_porcentaje = producto_db.get("comision", 0)
-            comision_producto = round((subtotal * comision_porcentaje) / 100, 2)  # ⭐ REDONDEAR
-            total_comision_productos += comision_producto
-            
-            print(f"✅ Producto '{producto_db.get('nombre')}': "
-                  f"{comision_porcentaje}% = {comision_producto} {moneda_cita}")
+
+        precio_unitario = precios[moneda_cita]
+        subtotal = round(p.cantidad * precio_unitario, 2)  # ⭐ REDONDEO
+
+        # Comisión
+        comision_porcentaje = producto_db.get("comision", 0) if permite_comision_productos else 0
+        comision_valor = round((subtotal * comision_porcentaje) / 100, 2) if permite_comision_productos else 0  # ⭐ REDONDEO
+
+        total_productos_agregados += subtotal
+        total_comision_productos += comision_valor
+
+        # ==============================
+        # 🔥 CONSOLIDAR PRODUCTO
+        # ==============================
+        if p.producto_id in productos_map:
+            existente = productos_map[p.producto_id]
+            existente["cantidad"] += p.cantidad
+            existente["subtotal"] = round(existente["subtotal"] + subtotal, 2)  # ⭐ REDONDEO
+            existente["comision_valor"] = round(existente["comision_valor"] + comision_valor, 2)  # ⭐ REDONDEO
         else:
-            print(f"⚠️ Producto '{producto_db.get('nombre')}': Sin comisión (sede no permite)")
-        
-        nuevos_productos.append({
-            "producto_id": p.producto_id,
-            "nombre": producto_db.get("nombre"),
-            "cantidad": p.cantidad,
-            "precio_unitario": precio_unitario,
-            "subtotal": subtotal,  # ⭐ YA REDONDEADO
-            "moneda": moneda_cita,
-            "comision_porcentaje": comision_porcentaje,
-            "comision_valor": comision_producto  # ⭐ YA REDONDEADO
-        })
-        total_productos += subtotal
+            productos_map[p.producto_id] = {
+                "producto_id": p.producto_id,
+                "nombre": producto_db.get("nombre"),
+                "cantidad": p.cantidad,
+                "precio_unitario": precio_unitario,
+                "subtotal": subtotal,  # Ya está redondeado
+                "moneda": moneda_cita,
+                "comision_porcentaje": comision_porcentaje,
+                "comision_valor": comision_valor  # Ya está redondeado
+            }
 
     productos_final = list(productos_map.values())
 
-    # ⭐ REDONDEAR al recalcular totales
-    nuevo_total = round(cita.get("valor_total", 0) + total_productos, 2)
-    abono_actual = cita.get("abono", 0)
-    nuevo_saldo = round(nuevo_total - abono_actual, 2)
-    total_comision_productos = round(total_comision_productos, 2)
+    # ==============================
+    # 🔢 RECALCULAR TOTALES CON REDONDEO
+    # ==============================
+    valor_servicios = cita.get("valor_total", 0) - sum(
+        p.get("subtotal", 0) for p in cita.get("productos", [])
+    )
+
+    nuevo_total = round(valor_servicios + sum(p["subtotal"] for p in productos_final), 2)  # ⭐ REDONDEO
+    abono = cita.get("abono", 0)
+    nuevo_saldo = round(nuevo_total - abono, 2)  # ⭐ REDONDEO
 
     if nuevo_saldo <= 0:
         estado_pago = "pagado"
@@ -1377,7 +1377,7 @@ async def agregar_productos_a_cita(
                 "productos": productos_final,
                 "valor_total": nuevo_total,  # ⭐ REDONDEADO
                 "saldo_pendiente": nuevo_saldo,  # ⭐ REDONDEADO
-                "estado_pago": nuevo_estado_pago
+                "estado_pago": estado_pago
             }
         }
     )
@@ -1388,11 +1388,9 @@ async def agregar_productos_a_cita(
     return {
         "success": True,
         "message": "Productos agregados correctamente",
-        "productos_agregados": len(nuevos_productos),
-        "total_productos": round(total_productos, 2),
-        "total_comision_productos": total_comision_productos,
+        "total_productos_agregados": round(total_productos_agregados, 2),  # ⭐ REDONDEO
+        "total_comision_productos": round(total_comision_productos, 2),  # ⭐ REDONDEO
         "tipo_comision_sede": tipo_comision,
-        "permite_comision_productos": permite_comision_productos,
         "moneda": moneda_cita,
         "cita": cita_actualizada
     }
