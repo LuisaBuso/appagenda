@@ -1278,117 +1278,98 @@ async def agregar_productos_a_cita(
     productos: List[ProductoItem],
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Agrega productos a una cita usando el precio según la moneda de la sede.
-    ⭐ NUEVO: Calcula comisión del producto si la sede lo permite.
-    """
-    # Solo admin sede o admin
     if current_user["rol"] not in ["admin_sede", "admin", "estilista"]:
-        raise HTTPException(
-            status_code=403,
-            detail="No tienes permisos para agregar productos"
-        )
+        raise HTTPException(403, "No tienes permisos")
 
-    # Buscar cita
     cita = await collection_citas.find_one({"_id": ObjectId(cita_id)})
     if not cita:
-        raise HTTPException(status_code=404, detail="Cita no encontrada")
+        raise HTTPException(404, "Cita no encontrada")
 
-    # ⭐ OBTENER MONEDA DE LA CITA (que viene de la sede)
     moneda_cita = cita.get("moneda")
     if not moneda_cita:
-        raise HTTPException(
-            status_code=400,
-            detail="Esta cita no tiene moneda asignada. Contacta soporte."
-        )
+        raise HTTPException(400, "La cita no tiene moneda")
 
-    # ⭐ OBTENER REGLAS DE COMISIÓN DE LA SEDE
     sede = await collection_locales.find_one({"sede_id": cita["sede_id"]})
     if not sede:
-        raise HTTPException(status_code=404, detail="Sede no encontrada")
-    
+        raise HTTPException(404, "Sede no encontrada")
+
     reglas_comision = sede.get("reglas_comision", {"tipo": "servicios"})
     tipo_comision = reglas_comision.get("tipo", "servicios")
-    
-    # ⭐ VERIFICAR SI LA SEDE PERMITE COMISIÓN DE PRODUCTOS
     permite_comision_productos = tipo_comision in ["productos", "mixto"]
-    
-    print(f"🏢 Sede: {sede.get('nombre')} - Tipo comisión: {tipo_comision}")
-    print(f"📦 ¿Permite comisión de productos?: {permite_comision_productos}")
 
-    # Productos actuales
-    productos_actuales = cita.get("productos", [])
+    # ==============================
+    # 🔑 INDEXAR PRODUCTOS EXISTENTES
+    # ==============================
+    productos_map = {
+        p["producto_id"]: p
+        for p in cita.get("productos", [])
+    }
 
-    # Procesar nuevos productos
-    nuevos_productos = []
-    total_productos = 0
+    total_productos_agregados = 0
     total_comision_productos = 0
 
     for p in productos:
-        # ⭐ BUSCAR PRODUCTO EN BD
         producto_db = await collection_products.find_one({"id": p.producto_id})
-        
         if not producto_db:
+            raise HTTPException(404, f"Producto {p.producto_id} no encontrado")
+
+        precios = producto_db.get("precios", {})
+        if moneda_cita not in precios:
             raise HTTPException(
-                status_code=404,
-                detail=f"Producto con ID '{p.producto_id}' no encontrado"
+                400,
+                f"Producto {producto_db.get('nombre')} sin precio en {moneda_cita}"
             )
-        
-        # ⭐ OBTENER PRECIO EN LA MONEDA CORRECTA
-        precios_producto = producto_db.get("precios", {})
-        
-        if moneda_cita not in precios_producto:
-            raise HTTPException(
-                status_code=400,
-                detail=f"El producto '{producto_db.get('nombre')}' no tiene precio configurado en {moneda_cita}"
-            )
-        
-        precio_unitario = precios_producto[moneda_cita]
+
+        precio_unitario = precios[moneda_cita]
         subtotal = p.cantidad * precio_unitario
-        
-        # ⭐ CALCULAR COMISIÓN DEL PRODUCTO (SI APLICA)
-        comision_porcentaje = 0
-        comision_producto = 0
-        
-        if permite_comision_productos:
-            comision_porcentaje = producto_db.get("comision", 0)
-            comision_producto = (subtotal * comision_porcentaje) / 100
-            total_comision_productos += comision_producto
-            
-            print(f"✅ Producto '{producto_db.get('nombre')}': "
-                  f"{comision_porcentaje}% = {comision_producto} {moneda_cita}")
+
+        # Comisión
+        comision_porcentaje = producto_db.get("comision", 0) if permite_comision_productos else 0
+        comision_valor = (subtotal * comision_porcentaje) / 100 if permite_comision_productos else 0
+
+        total_productos_agregados += subtotal
+        total_comision_productos += comision_valor
+
+        # ==============================
+        # 🔥 CONSOLIDAR PRODUCTO
+        # ==============================
+        if p.producto_id in productos_map:
+            existente = productos_map[p.producto_id]
+            existente["cantidad"] += p.cantidad
+            existente["subtotal"] += subtotal
+            existente["comision_valor"] += comision_valor
         else:
-            print(f"⚠️ Producto '{producto_db.get('nombre')}': Sin comisión (sede no permite)")
-        
-        nuevos_productos.append({
-            "producto_id": p.producto_id,
-            "nombre": producto_db.get("nombre"),
-            "cantidad": p.cantidad,
-            "precio_unitario": precio_unitario,
-            "subtotal": subtotal,
-            "moneda": moneda_cita,
-            "comision_porcentaje": comision_porcentaje,  # ⭐ NUEVO
-            "comision_valor": comision_producto  # ⭐ NUEVO
-        })
-        total_productos += subtotal
+            productos_map[p.producto_id] = {
+                "producto_id": p.producto_id,
+                "nombre": producto_db.get("nombre"),
+                "cantidad": p.cantidad,
+                "precio_unitario": precio_unitario,
+                "subtotal": subtotal,
+                "moneda": moneda_cita,
+                "comision_porcentaje": comision_porcentaje,
+                "comision_valor": comision_valor
+            }
 
-    # Agregar productos a la cita
-    productos_final = productos_actuales + nuevos_productos
+    productos_final = list(productos_map.values())
 
-    # Recalcular totales
-    nuevo_total = cita.get("valor_total", 0) + total_productos
-    abono_actual = cita.get("abono", 0)
-    nuevo_saldo = nuevo_total - abono_actual
+    # ==============================
+    # 🔢 RECALCULAR TOTALES
+    # ==============================
+    valor_servicios = cita.get("valor_total", 0) - sum(
+        p.get("subtotal", 0) for p in cita.get("productos", [])
+    )
 
-    # ⭐ RECALCULAR ESTADO DE PAGO
+    nuevo_total = valor_servicios + sum(p["subtotal"] for p in productos_final)
+    abono = cita.get("abono", 0)
+    nuevo_saldo = nuevo_total - abono
+
     if nuevo_saldo <= 0:
-        nuevo_estado_pago = "pagado"
-    elif abono_actual > 0:
-        nuevo_estado_pago = "abonado"
+        estado_pago = "pagado"
+    elif abono > 0:
+        estado_pago = "abonado"
     else:
-        nuevo_estado_pago = "pendiente"
+        estado_pago = "pendiente"
 
-    # Actualizar cita
     await collection_citas.update_one(
         {"_id": ObjectId(cita_id)},
         {
@@ -1396,23 +1377,20 @@ async def agregar_productos_a_cita(
                 "productos": productos_final,
                 "valor_total": nuevo_total,
                 "saldo_pendiente": nuevo_saldo,
-                "estado_pago": nuevo_estado_pago
+                "estado_pago": estado_pago
             }
         }
     )
 
-    # Obtener cita actualizada
     cita_actualizada = await collection_citas.find_one({"_id": ObjectId(cita_id)})
     cita_actualizada["_id"] = str(cita_actualizada["_id"])
 
     return {
         "success": True,
         "message": "Productos agregados correctamente",
-        "productos_agregados": len(nuevos_productos),
-        "total_productos": total_productos,
-        "total_comision_productos": total_comision_productos,  # ⭐ NUEVO
-        "tipo_comision_sede": tipo_comision,  # ⭐ NUEVO
-        "permite_comision_productos": permite_comision_productos,  # ⭐ NUEVO
+        "total_productos_agregados": total_productos_agregados,
+        "total_comision_productos": total_comision_productos,
+        "tipo_comision_sede": tipo_comision,
         "moneda": moneda_cita,
         "cita": cita_actualizada
     }
