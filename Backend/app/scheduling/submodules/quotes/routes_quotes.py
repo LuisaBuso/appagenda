@@ -298,7 +298,7 @@ async def crear_cita(
     data["abono"] = float(abono)
     data["saldo_pendiente"] = float(saldo_pendiente)
     data["estado_pago"] = estado_pago
-    data["metido_pago"] = cita.metodo_pago
+    data["metodo_pago"] = cita.metodo_pago
     data["moneda"] = moneda_sede
     data["estado"] = "confirmada"  # Estado por defecto
 
