@@ -56,6 +56,7 @@ class Cita(BaseModel):
     hora_inicio: str
     hora_fin: str
     estado: str
+    metodo_pago: Optional[str] = None
     abono: Optional[float] = 0
 
 class FichaCreate(BaseModel):
@@ -99,3 +100,7 @@ class ProductoItem(BaseModel):
     nombre: str
     cantidad: int
     precio_unitario: float
+
+class PagoRequest(BaseModel):
+    monto: float
+    metodo_pago: Optional[str] = "efectivo"

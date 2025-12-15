@@ -15,3 +15,9 @@ env/
 .env
 
 migration/
+
+et --hard HEAD~2
+
+migration_output/
+
+prueba_migracion/

@@ -9,6 +9,7 @@ import boto3
 import json
 
 from app.scheduling.models import FichaCreate
+from app.scheduling.models import PagoRequest
 from app.scheduling.models import Cita, ProductoItem
 from app.database.mongo import (
     collection_citas,
@@ -19,7 +20,6 @@ from app.database.mongo import (
     collection_locales,
     collection_block,
     collection_card,
-    collection_commissions,
     collection_products
 )
 from app.auth.routes import get_current_user
@@ -298,6 +298,7 @@ async def crear_cita(
     data["abono"] = float(abono)
     data["saldo_pendiente"] = float(saldo_pendiente)
     data["estado_pago"] = estado_pago
+    data["metodo_pago"] = cita.metodo_pago
     data["moneda"] = moneda_sede
     data["estado"] = "confirmada"  # Estado por defecto
 
@@ -799,6 +800,7 @@ async def crear_cita(
             "horario": f"{cita.hora_inicio} - {cita.hora_fin}",
             "valor_total": valor_total,
             "estado_pago": estado_pago,
+            "metodo_pago": cita.metodo_pago,
             "saldo_pendiente": saldo_pendiente,
             "emails_enviados": {
                 "cliente": bool(cliente_email),
@@ -871,6 +873,95 @@ async def confirmar_cita(cita_id: str, current_user: dict = Depends(get_current_
     }})
 
     return {"success": True, "mensaje": "Cita confirmada", "cita_id": cita_id}
+
+# =============================================================
+# 🔹 ACTUALIZAR PAGO DE LA CITA
+# =============================================================
+@router.post("/citas/{cita_id}/pago")
+async def registrar_pago(
+    cita_id: str,
+    data: PagoRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    cita = await collection_citas.find_one({"_id": ObjectId(cita_id)})
+    if not cita:
+        raise HTTPException(status_code=404, detail="Cita no encontrada")
+
+    if cita.get("estado_factura") == "facturado":
+        raise HTTPException(status_code=400, detail="La cita ya fue facturada")
+
+    monto = data.monto
+    if monto <= 0:
+        raise HTTPException(status_code=400, detail="Monto inválido")
+
+    abono_actual = cita.get("abono", 0) or 0
+    valor_total = cita["valor_total"]
+
+    nuevo_abono = round(abono_actual + monto, 2)
+
+    if nuevo_abono > valor_total:
+        raise HTTPException(
+            status_code=400,
+            detail="El monto excede el valor total del servicio"
+        )
+
+    if nuevo_abono >= valor_total:
+        estado_pago = "pagado"
+    elif nuevo_abono > 0:
+        estado_pago = "abonado"
+    else:
+        estado_pago = "pendiente"
+
+    saldo_pendiente = round(valor_total - nuevo_abono, 2)
+
+    await collection_citas.update_one(
+        {"_id": ObjectId(cita_id)},
+        {
+            "$set": {
+                "abono": nuevo_abono,
+                "saldo_pendiente": saldo_pendiente,
+                "estado_pago": estado_pago,
+                "metodo_pago": data.metodo_pago,
+                "ultima_actualizacion": datetime.now()
+            }
+        }
+    )
+
+    return {
+        "success": True,
+        "abono": nuevo_abono,
+        "saldo_pendiente": saldo_pendiente,
+        "estado_pago": estado_pago
+    }
+
+# =============================================================
+# 🔹 MOSTRAR PAGO ACTUALIZADO
+# =============================================================
+@router.get("/citas/{cita_id}/pago")
+async def obtener_estado_pago(cita_id: str):
+    cita = await collection_citas.find_one(
+        {"_id": ObjectId(cita_id)},
+        {
+            "abono": 1,
+            "valor_total": 1,
+            "saldo_pendiente": 1,
+            "estado_pago": 1,
+            "moneda": 1,
+            "metodo_pago": 1 
+        }
+    )
+
+    if not cita:
+        raise HTTPException(status_code=404, detail="Cita no encontrada")
+
+    return {
+        "abono": cita.get("abono", 0),
+        "valor_total": cita["valor_total"],
+        "saldo_pendiente": cita["saldo_pendiente"],
+        "estado_pago": cita["estado_pago"],
+        "moneda": cita.get("moneda", "USD"),
+        "metodo_pago": cita.get("metodo_pago") 
+    }
 
 # =============================================================
 # 🔹 MARCAR COMPLETADA (solo cuando se factura - ver routes_quotes)
@@ -1005,6 +1096,8 @@ async def obtener_fichas_por_cliente(
         "total": len(resultado),
         "fichas": resultado
     }
+
+
 
 
 
@@ -1267,7 +1360,6 @@ async def get_citas_sede(current_user: dict = Depends(get_current_user)):
         "sede_id": sede_id,
         "citas": citas
     }
-
 
 # ============================================================
 # 📦 Agregar productos a una cita - CON MÚLTIPLES MONEDAS Y COMISIONES
