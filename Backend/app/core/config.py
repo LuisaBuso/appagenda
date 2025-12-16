@@ -15,6 +15,7 @@ from app.analytics.routes_dashboard import router as dashboard_router
 from app.inventary.routes import app_router as inventary_router
 from app.bills.routes import router as billing_router
 from app.commissions.routes import router as commissions_router
+from app.analytics.sales_dashboard import router as sales_dashboard_router
 # from app.database.indexes import create_indexes
 from app.database.mongo import db  
 # from app.database.indexes import create_indexes  
@@ -62,3 +63,4 @@ app.include_router(analytics_router)
 app.include_router(dashboard_router)
 app.include_router(billing_router, prefix="/api/billing", tags=["Facturación"])
 app.include_router(commissions_router, prefix="/api/commissions", tags=["Comisiones"])
+app.include_router(sales_dashboard_router, prefix="/api/sales-dashboard", tags=["Dashboard de ventas"])
