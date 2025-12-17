@@ -1170,6 +1170,233 @@ async def obtener_fichas_por_cliente(
         "fichas": resultado
     }
 
+# ============================================================
+# 📅 Obtener todas las citas del estilista autenticado
+# ============================================================
+@router.get("/citas/estilista", response_model=list)
+async def get_citas_estilista(
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["rol"] != "estilista":
+        raise HTTPException(
+            status_code=403,
+            detail="Solo los estilistas pueden ver sus citas"
+        )
+
+    email = current_user["email"]
+
+    estilista = await collection_estilista.find_one({"email": email})
+
+    if not estilista:
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontró el profesional asociado a este usuario"
+        )
+
+    profesional_id = estilista.get("profesional_id")
+    sede_id = estilista.get("sede_id")
+
+    # ===========================================
+    # FILTRO CORREGIDO
+    # ===========================================
+    citas = await collection_citas.find({
+        "$or": [
+            {"estilista_id": profesional_id},
+            {"profesional_id": profesional_id}
+        ]
+    }).sort("fecha", 1).to_list(None)
+
+    respuesta = []
+
+    for c in citas:
+
+        cliente = await collection_clients.find_one({"cliente_id": c.get("cliente_id")})
+        cliente_data = {
+            "cliente_id": c.get("cliente_id"),
+            "nombre": cliente.get("nombre") if cliente else "Desconocido",
+            "apellido": cliente.get("apellido") if cliente else "",
+            "telefono": cliente.get("telefono") if cliente else "",
+            "email": cliente.get("email") if cliente else "",
+        }
+
+        servicio = await collection_servicios.find_one({
+            "$or": [
+                {"servicio_id": c.get("servicio_id")},
+                {"unique_id": c.get("servicio_id")}
+            ]
+        })
+        servicio_data = {
+            "servicio_id": c.get("servicio_id"),
+            "nombre": servicio.get("nombre") if servicio else "Desconocido",
+            "precio": servicio.get("precio") if servicio else None
+        }
+
+        sede = await collection_locales.find_one({"sede_id": c.get("sede_id")})
+        sede_data = {
+            "sede_id": c.get("sede_id"),
+            "nombre": sede.get("nombre") if sede else "Sede desconocida"
+        }
+
+        respuesta.append({
+            "cita_id": str(c.get("_id")),
+            "cliente": cliente_data,
+            "servicio": servicio_data,
+            "sede": sede_data,
+            "estilista_id": profesional_id,
+            "fecha": c.get("fecha"),
+            "hora_inicio": c.get("hora_inicio"),
+            "hora_fin": c.get("hora_fin"),
+            "estado": c.get("estado"),
+            "comentario": c.get("comentario", None)
+        })
+
+    return respuesta
+
+
+def parse_ficha(data: str = Form(...)):
+    try:
+        parsed = json.loads(data)
+        return FichaCreate(**parsed)
+    except Exception as e:
+        print("Error parseando JSON de ficha:", e)
+        raise HTTPException(422, "Formato inválido en 'data'. Debe ser JSON válido.")   
+
+# ============================================================
+# 📌 Crear ficha 
+# ============================================================
+@router.post("/create-ficha", response_model=dict)
+async def crear_ficha(
+    data: FichaCreate = Depends(parse_ficha),
+    fotos_antes: Optional[List[UploadFile]] = File(None),
+    fotos_despues: Optional[List[UploadFile]] = File(None),
+    current_user: dict = Depends(get_current_user)
+):
+
+    print("📸 Fotos antes recibidas:", fotos_antes)
+    print("📸 Fotos después recibidas:", fotos_despues)
+    print("📝 Data recibida:", data.dict())
+
+    # ------------------------------
+    # VALIDAR
+    # ------------------------------
+    if current_user.get("rol") not in ["estilista", "admin_sede", "super_admin"]:
+        raise HTTPException(403, "No autorizado")
+
+    cliente = await collection_clients.find_one({"cliente_id": data.cliente_id})
+    if not cliente:
+        raise HTTPException(404, "Cliente no encontrado")
+
+    servicio = await collection_servicios.find_one({
+        "$or": [
+            {"servicio_id": data.servicio_id},
+            {"unique_id": data.servicio_id}
+        ]
+    })
+    if not servicio:
+        raise HTTPException(404, "Servicio no encontrado")
+
+    profesional = await collection_estilista.find_one({
+        "profesional_id": data.profesional_id
+    })
+    if not profesional:
+        raise HTTPException(404, "Profesional no encontrado")
+
+    sede = await collection_locales.find_one({"sede_id": data.sede_id})
+    if not sede:
+        raise HTTPException(404, "Sede no encontrada")
+
+    # ------------------------------
+    # SUBIR FOTOS
+    # ------------------------------
+    urls_antes = []
+    if fotos_antes:
+        for foto in fotos_antes:
+            print("⬆️ Subiendo foto ANTES:", foto.filename)
+            url = upload_to_s3(
+                foto,
+                f"companies/{sede.get('company_id','default')}/clients/{data.cliente_id}/fichas/{data.tipo_ficha}/antes"
+            )
+            urls_antes.append(url)
+
+    urls_despues = []
+    if fotos_despues:
+        for foto in fotos_despues:
+            print("⬆️ Subiendo foto DESPUÉS:", foto.filename)
+            url = upload_to_s3(
+                foto,
+                f"companies/{sede.get('company_id','default')}/clients/{data.cliente_id}/fichas/{data.tipo_ficha}/despues"
+            )
+            urls_despues.append(url)
+
+    # ------------------------------
+    # FIX RESPUESTAS
+    # ------------------------------
+    respuestas_final = data.respuestas
+
+    # si vienen dentro de datos_especificos
+    if "respuestas" in data.datos_especificos:
+        respuestas_final = data.datos_especificos.get("respuestas", [])
+
+    # ------------------------------
+    # OBJETO FINAL
+    # ------------------------------
+    ficha = {
+        "_id": ObjectId(),
+        "cliente_id": data.cliente_id,
+        "sede_id": data.sede_id,
+        "servicio_id": data.servicio_id,
+        "servicio_nombre": data.servicio_nombre or servicio.get("nombre"),
+        "profesional_id": data.profesional_id,
+        "profesional_nombre": data.profesional_nombre or profesional.get("nombre"),
+        "sede_nombre": sede.get("nombre"),
+
+        "fecha_ficha": data.fecha_ficha or datetime.utcnow().isoformat(),
+        "fecha_reserva": data.fecha_reserva,
+
+        "email": data.email or cliente.get("email"),
+        "nombre": data.nombre or cliente.get("nombre"),
+        "apellido": data.apellido or cliente.get("apellido"),
+        "cedula": data.cedula or cliente.get("cedula"),
+        "telefono": data.telefono or cliente.get("telefono"),
+
+        "precio": data.precio or servicio.get("precio", 0),
+        "estado": data.estado,
+        "estado_pago": data.estado_pago,
+
+        "tipo_ficha": data.tipo_ficha,
+
+        "datos_especificos": data.datos_especificos,
+        "descripcion_servicio": data.descripcion_servicio,
+        "respuestas": respuestas_final,
+
+        "fotos": {
+            "antes": urls_antes,
+            "despues": urls_despues,
+            "antes_urls": data.fotos_antes,
+            "despues_urls": data.fotos_despues
+        },
+
+        "autorizacion_publicacion": data.autorizacion_publicacion,
+        "comentario_interno": data.comentario_interno,
+
+        "created_at": datetime.utcnow(),
+        "created_by": current_user.get("email"),
+        "user_id": current_user.get("user_id"),
+
+        "procesado_imagenes": bool(urls_antes or urls_despues),
+        "origen": "manual"
+    }
+
+    await collection_card.insert_one(ficha)
+
+    ficha["_id"] = str(ficha["_id"])
+
+    return {
+        "success": True,
+        "message": "Ficha creada exitosamente",
+        "ficha": ficha
+    }
+
 def fix_mongo_id(doc):
     doc["_id"] = str(doc["_id"])
     return doc
