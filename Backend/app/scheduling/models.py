@@ -56,7 +56,7 @@ class Cita(BaseModel):
     hora_inicio: str
     hora_fin: str
     estado: str
-    metodo_pago: Optional[str] = None
+    metodo_pago_inicial: Optional[str] = None
     abono: Optional[float] = 0
 
 class FichaCreate(BaseModel):

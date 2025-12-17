@@ -228,10 +228,36 @@ async def facturar_cita(
     # ====================================
     # 🔟 CREAR DOCUMENTO DE VENTA (SALES)
     # ====================================
-    desglose_pagos = {
-        cita.get("metodo_pago", "efectivo"): total_final,
-        "total": total_final
-    }
+    
+    # ⭐ CALCULAR DESGLOSE DESDE EL HISTORIAL DE PAGOS
+    desglose_pagos = {}
+    historial_pagos = cita.get("historial_pagos", [])
+
+    if historial_pagos:
+        # Agrupar por método de pago
+        for pago in historial_pagos:
+            metodo = pago.get("metodo", "efectivo")
+            monto = pago.get("monto", 0)
+            if metodo in desglose_pagos:
+                desglose_pagos[metodo] += monto
+            else:
+                desglose_pagos[metodo] = monto
+        
+        # Redondear todos los valores
+        for metodo in desglose_pagos:
+            desglose_pagos[metodo] = round(desglose_pagos[metodo], 2)
+    else:
+        # ⭐ FALLBACK: Si no hay historial (citas viejas sin migrar)
+        metodo_pago = cita.get("metodo_pago_actual") or cita.get("metodo_pago") or "efectivo"
+        desglose_pagos[metodo_pago] = round(total_final, 2)
+
+    '''# ⭐ NUEVO: Agregar total de productos si existen
+    total_productos = sum(p.get("subtotal", 0) for p in productos_cita)
+    if total_productos > 0:
+        desglose_pagos["productos"] = round(total_productos, 2)'''
+
+    
+    desglose_pagos["total"] = round(total_final, 2)
 
     venta = {
         "identificador": identificador,
@@ -246,6 +272,7 @@ async def facturar_cita(
         "email_cliente": cliente.get("correo", ""),
         "telefono_cliente": cliente.get("telefono", ""),
         "items": items,
+        "historial_pagos": historial_pagos,  # ⭐ AGREGADO: Historial completo
         "desglose_pagos": desglose_pagos,
         
         # Campos adicionales útiles
@@ -294,15 +321,17 @@ async def facturar_cita(
     # 1️⃣3️⃣ ACUMULAR COMISIONES DEL ESTILISTA (SI APLICA)
     # ====================================
     comision_msg = "No aplica comisión para esta sede"
-    
+
     # ⭐ SOLO GUARDAR COMISIONES SI HAY ALGO QUE COMISIONAR
     if valor_comision_total > 0:
         profesional_id = cita["profesional_id"]
         print(f"👤 Profesional ID: {profesional_id}")
 
+        # 🔍 Buscar documento de comisión PENDIENTE
         comision_document = await collection_commissions.find_one({
             "profesional_id": profesional_id,
-            "sede_id": cita["sede_id"]
+            "sede_id": cita["sede_id"],
+            "estado": "pendiente"  # ⭐ Solo buscar pendientes
         })
         print(f"📂 Documento de comisión encontrado: {comision_document}")
 
@@ -320,45 +349,97 @@ async def facturar_cita(
             "tipo_comision_sede": tipo_comision
         }
 
+        # ⭐ NUEVA LÓGICA: Validar si se debe crear nuevo documento
+        crear_nuevo_documento = False
+        fecha_cita_actual = datetime.strptime(cita["fecha"], "%Y-%m-%d")
+
         if comision_document:
-            # Ya existe → incrementar
-            await collection_commissions.update_one(
-                {
-                    "profesional_id": profesional_id,
-                    "sede_id": cita["sede_id"]
-                },
-                {
-                    "$inc": {
-                        "total_servicios": 1,
-                        "total_comisiones": valor_comision_total
-                    },
-                    "$set": {
-                        "estado": "pendiente"
-                    },
-                    "$push": {
-                        "servicios_detalle": servicio_comision
-                    }
-                }
-            )
-            comision_msg = f"Comisión actualizada (+{valor_comision_total} {moneda_sede})"
-            print("🔄 Comisión actualizada en el documento existente")
-        else:
-            # No existe → crear registro nuevo
-            nuevo_doc = {
+            # Verificar rango de fechas del documento existente
+            servicios_existentes = comision_document.get("servicios_detalle", [])
+        
+            if servicios_existentes:
+                fechas = []
+                for s in servicios_existentes:
+                        try:
+                            fecha = datetime.strptime(s["fecha"], "%Y-%m-%d")
+                            fechas.append(fecha)
+                        except Exception as e:
+                            print(f"⚠️ Error parseando fecha: {e}")
+                            continue
+            
+            if fechas:
+                fecha_mas_antigua = min(fechas)
+                fecha_mas_reciente = max(fechas)
+                
+                # Calcular cuántos días abarcaría si agregamos esta cita
+                fecha_inicio_rango = min(fecha_mas_antigua, fecha_cita_actual)
+                fecha_fin_rango = max(fecha_mas_reciente, fecha_cita_actual)
+                dias_totales = (fecha_fin_rango - fecha_inicio_rango).days + 1
+                
+                print(f"📅 Rango actual: {dias_totales} días")
+                
+                # ⭐ Si supera 15 días, cerrar el actual y crear nuevo
+                if dias_totales > 15:
+                    print(f"⚠️ El rango superaría los 15 días ({dias_totales}). Creando nuevo documento.")
+                    crear_nuevo_documento = True
+                    
+                    # Actualizar períodos en el documento que se va a cerrar
+                    await collection_commissions.update_one(
+                        {"_id": comision_document["_id"]},
+                        {"$set": {
+                            "periodo_inicio": fecha_mas_antigua.strftime("%Y-%m-%d"),
+                            "periodo_fin": fecha_mas_reciente.strftime("%Y-%m-%d")
+                        }}
+                    )
+                    print(f"✅ Documento anterior cerrado. Período: {fecha_mas_antigua.strftime('%Y-%m-%d')} a {fecha_mas_reciente.strftime('%Y-%m-%d')}")
+
+    # ⭐ Decidir: Actualizar o Crear
+    if comision_document and not crear_nuevo_documento:
+        # Ya existe y NO supera 15 días → incrementar
+        await collection_commissions.update_one(
+            {
                 "profesional_id": profesional_id,
-                "profesional_nombre": cita["profesional_nombre"],
                 "sede_id": cita["sede_id"],
-                "moneda": moneda_sede,
-                "tipo_comision": tipo_comision,  # ⭐ NUEVO
-                "total_servicios": 1,
-                "total_comisiones": valor_comision_total,
-                "servicios_detalle": [servicio_comision],
-                "estado": "pendiente",
-                "creado_en": datetime.now()
+                "estado": "pendiente"
+            },
+            {
+                "$inc": {
+                    "total_servicios": 1,
+                    "total_comisiones": valor_comision_total
+                },
+                "$set": {
+                    "estado": "pendiente",
+                    "periodo_fin": cita["fecha"]  # ⭐ Actualizar fecha fin
+                },
+                "$push": {
+                    "servicios_detalle": servicio_comision
+                },
+                "$setOnInsert": {  # ⭐ Solo si es el primer servicio
+                    "periodo_inicio": cita["fecha"]
+                }
             }
-            await collection_commissions.insert_one(nuevo_doc)
-            comision_msg = f"Comisión creada ({valor_comision_total} {moneda_sede})"
-            print("🆕 Nuevo documento de comisión creado")
+        )
+        comision_msg = f"Comisión actualizada (+{valor_comision_total} {moneda_sede})"
+        print("🔄 Comisión actualizada en el documento existente")
+    else:
+        # No existe O superó 15 días → crear registro nuevo
+        nuevo_doc = {
+            "profesional_id": profesional_id,
+            "profesional_nombre": cita["profesional_nombre"],
+            "sede_id": cita["sede_id"],
+            "moneda": moneda_sede,
+            "tipo_comision": tipo_comision,
+            "total_servicios": 1,
+            "total_comisiones": valor_comision_total,
+            "servicios_detalle": [servicio_comision],
+            "periodo_inicio": cita["fecha"],  # ⭐ NUEVO
+            "periodo_fin": cita["fecha"],      # ⭐ NUEVO
+            "estado": "pendiente",
+            "creado_en": datetime.now()
+        }
+        await collection_commissions.insert_one(nuevo_doc)
+        comision_msg = f"Comisión creada ({valor_comision_total} {moneda_sede})"
+        print("🆕 Nuevo documento de comisión creado")
 
     # ====================================
     # RESPUESTA FINAL
