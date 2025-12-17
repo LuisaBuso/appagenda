@@ -272,7 +272,7 @@ async def crear_cita(
         "hora_fin": "18:00"
     }
 
-    # === validar bloqueos ===
+    """# === validar bloqueos ===
     bloqueo = await collection_block.find_one({
         "profesional_id": cita.profesional_id,
         "fecha": fecha_str,
@@ -300,7 +300,7 @@ async def crear_cita(
         raise HTTPException(
             status_code=400, 
             detail=f"El profesional ya tiene una cita con {cliente_solape_nombre} en ese horario"
-        )
+        )"""
 
     # === preparar documento y guardar ===
     data = cita.dict()
