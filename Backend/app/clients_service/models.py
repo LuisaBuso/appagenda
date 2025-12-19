@@ -9,7 +9,7 @@ class Cliente(BaseModel):
     telefono: Optional[str] = None
     cedula: Optional[str] = None
     ciudad: Optional[str] = None
-    fecha_de_nacimiento: Optional[str] = "1990-06-01"  # ISO string
+    fecha_de_nacimiento: Optional[str] = None # "1990-06-01"  # ISO string
     sede_id: Optional[str] = None
     notas: Optional[str] = None
     fecha_creacion: Optional[datetime] = None
@@ -18,10 +18,10 @@ class Cliente(BaseModel):
     def validar_fecha(cls, v):
         if v is None:
             return v
-        try:
+        """try:
             datetime.strptime(v, "%Y-%m-%d")
         except:
-            raise ValueError("Formato de fecha inválido. Use YYYY-MM-DD")
+            raise ValueError("Formato de fecha inválido. Use YYYY-MM-DD")"""
         return v
 
 
