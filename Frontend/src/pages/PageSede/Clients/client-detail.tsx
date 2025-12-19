@@ -1,4 +1,5 @@
-import { ArrowLeft } from 'lucide-react'
+import { useState } from 'react'
+import { ArrowLeft, Image as ImageIcon, X, Calendar, MapPin, User, FileText, Tag, ShoppingBag, Scissors } from 'lucide-react'
 import { Button } from "../../../components/ui/button"
 import type { Cliente } from "../../../types/cliente"
 
@@ -8,358 +9,398 @@ interface ClientDetailProps {
 }
 
 export function ClientDetail({ client, onBack }: ClientDetailProps) {
-  // 🔥 FUNCIÓN PARA FORMATEAR FECHA
-  const formatFecha = (fecha: string) => {
-    return new Date(fecha).toLocaleDateString('es-ES', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric'
-    })
+  const [showImagesModal, setShowImagesModal] = useState(false)
+  const [selectedImages, setSelectedImages] = useState<{
+    antes?: string,
+    despues?: string,
+    todas_antes?: string[],
+    todas_despues?: string[]
+  }>({})
+
+  const openImagesModal = (ficha: any) => {
+    let antesUrl = ficha.antes_url;
+    let despuesUrl = ficha.despues_url;
+    let todasAntes: string[] = [];
+    let todasDespues: string[] = [];
+
+    if (ficha.fotos) {
+      if (ficha.fotos.antes && Array.isArray(ficha.fotos.antes) && ficha.fotos.antes.length > 0) {
+        antesUrl = ficha.fotos.antes[0];
+        todasAntes = ficha.fotos.antes;
+      }
+      if (ficha.fotos.despues && Array.isArray(ficha.fotos.despues) && ficha.fotos.despues.length > 0) {
+        despuesUrl = ficha.fotos.despues[0];
+        todasDespues = ficha.fotos.despues;
+      }
+    }
+
+    setSelectedImages({
+      antes: antesUrl,
+      despues: despuesUrl,
+      todas_antes: todasAntes,
+      todas_despues: todasDespues
+    });
+    setShowImagesModal(true);
   }
 
-  // 🔥 FUNCIÓN PARA FORMATEAR MONEDA
-  const formatMoneda = (precio: string) => {
-    return new Intl.NumberFormat('es-CO', {
-      style: 'currency',
-      currency: 'COP'
-    }).format(Number(precio))
+  const closeImagesModal = () => {
+    setShowImagesModal(false)
+    setSelectedImages({})
+  }
+
+  const formatFecha = (fecha: string) => {
+    if (!fecha) return ''
+    try {
+      if (fecha.includes('T')) {
+        const [datePart] = fecha.split('T')
+        const [year, month, day] = datePart.split('-')
+        return new Date(Number(year), Number(month) - 1, Number(day)).toLocaleDateString('es-ES', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric'
+        })
+      } else if (fecha.includes('-')) {
+        const [year, month, day] = fecha.split('-')
+        return new Date(Number(year), Number(month) - 1, Number(day)).toLocaleDateString('es-ES', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric'
+        })
+      }
+      return fecha
+    } catch (error) {
+      return fecha
+    }
   }
 
   return (
     <div className="flex h-full flex-col bg-white">
-      {/* Header */}
-      <div className="border-b px-8 py-6">
-        <Button
-          variant="ghost"
-          onClick={onBack}
-          className="mb-4 -ml-2 gap-2"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Volver
-        </Button>
-
-        <div className="flex items-start gap-6">
-          <div className="h-24 w-24 rounded-full bg-gradient-to-br from-[oklch(0.75_0.15_280)] 
-            to-[oklch(0.55_0.25_280)] flex items-center justify-center text-white text-2xl font-bold">
-            {client.nombre.charAt(0)}
-          </div>
-
-          <div>
-            <h1 className="text-4xl font-bold mb-2">{client.nombre}</h1>
-            <p className="text-lg text-gray-600">{client.email}</p>
-            <p className="text-lg text-gray-600">{client.telefono}</p>
-          </div>
-        </div>
-      </div>
-
-      {/* INFORMACIÓN + FICHAS */}
-      <div className="flex-1 overflow-auto px-8 py-6">
-        <div className="space-y-8">
-          {/* Metrics */}
-          <div className="grid grid-cols-4 gap-4">
-            <div className="rounded-lg border p-6">
-              <p className="text-sm text-gray-600 mb-2">Días sin venir</p>
-              <p className="text-4xl font-bold">{client.diasSinVenir}</p>
-            </div>
-
-            <div className="rounded-lg border p-6">
-              <p className="text-sm text-gray-600 mb-2">Días sin comprar</p>
-              <p className="text-4xl font-bold">{client.diasSinComprar}</p>
-            </div>
-
-            <div className="rounded-lg border p-6">
-              <p className="text-sm text-gray-600 mb-2">LTV</p>
-              <p className="text-4xl font-bold">€ {client.ltv}</p>
-            </div>
-
-            <div className="rounded-lg border p-6">
-              <p className="text-sm text-gray-600 mb-2">Ticket</p>
-              <p className="text-4xl font-bold">€ {client.ticketPromedio}</p>
-            </div>
-          </div>
-
-          {/* 🔥 SECCIÓN DE FICHAS DEL CLIENTE - MEJORADA */}
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-2xl font-bold">Historial de Servicios</h2>
-              <div className="text-sm text-gray-500">
-                {client.fichas ? `${client.fichas.length} servicio(s)` : 'Cargando...'}
+      {/* MODAL DE IMÁGENES - Ultra minimalista */}
+      {showImagesModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/95 backdrop-blur-sm p-2">
+          <div className="relative w-full max-w-xl rounded-lg border border-gray-100 bg-white shadow-sm">
+            {/* Header del modal */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <ImageIcon className="h-4 w-4 text-gray-600" />
+                <h2 className="text-sm font-medium text-gray-900">Imágenes</h2>
               </div>
+              <button
+                onClick={closeImagesModal}
+                className="p-1 hover:bg-gray-50 rounded"
+              >
+                <X className="h-4 w-4 text-gray-500" />
+              </button>
             </div>
 
-            {client.fichas && client.fichas.length > 0 ? (
-              <div className="space-y-6">
-                {client.fichas.map((ficha) => (
-                  <div key={ficha._id} className="rounded-xl border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                    {/* Header de la ficha */}
-                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-4 border-b">
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <h3 className="text-xl font-bold text-gray-900">
-                              {ficha.servicio || ficha.servicio_nombre}
-                            </h3>
-                            <div className="flex gap-2">
-                              <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                                ficha.estado === 'Reservado' 
-                                  ? 'bg-blue-100 text-blue-800 border border-blue-200' 
-                                  : ficha.estado === 'Completado'
-                                  ? 'bg-green-100 text-green-800 border border-green-200'
-                                  : 'bg-gray-100 text-gray-800 border border-gray-200'
-                              }`}>
-                                {ficha.estado}
-                              </span>
-                              <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                                ficha.estado_pago?.includes('Pagada') 
-                                  ? 'bg-green-100 text-green-800 border border-green-200' 
-                                  : 'bg-orange-100 text-orange-800 border border-orange-200'
-                              }`}>
-                                {ficha.estado_pago?.replace('Pagada (pago asociado', 'Pagada') || 'Pendiente'}
-                              </span>
-                            </div>
-                          </div>
-                          
-                          <div className="flex flex-wrap gap-4 text-sm text-gray-600">
-                            <div className="flex items-center gap-1">
-                              <span className="font-medium">Fecha:</span>
-                              <span>{formatFecha(ficha.fecha_ficha)}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span className="font-medium">Sede:</span>
-                              <span>{ficha.sede || ficha.local}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span className="font-medium">Estilista:</span>
-                              <span>{ficha.estilista}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span className="font-medium">Precio:</span>
-                              <span className="font-bold text-green-600">{formatMoneda(ficha.precio)}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+            {/* Contenido del modal */}
+            <div className="p-4">
+              <div className="grid grid-cols-2 gap-3">
+                {/* Imagen ANTES */}
+                <div>
+                  <h3 className="text-xs font-medium text-gray-600 mb-2">Antes</h3>
+                  {selectedImages.antes ? (
+                    <div className="overflow-hidden rounded border border-gray-200">
+                      <img
+                        src={selectedImages.antes}
+                        alt="Antes del servicio"
+                        className="h-36 w-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.src = 'https://via.placeholder.com/400x300/f3f4f6/6b7280?text=Sin+imagen'
+                        }}
+                      />
                     </div>
-
-                    {/* Contenido de la ficha */}
-                    <div className="p-6 bg-white">
-                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                        {/* Columna izquierda - Información del servicio */}
-                        <div className="space-y-6">
-                          {/* Información de contacto */}
-                          <div>
-                            <h4 className="font-semibold text-gray-900 mb-3 text-lg border-b pb-2">
-                              📋 Información del Servicio
-                            </h4> 
-                            <div className="space-y-3">
-                              <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                                <span className="text-gray-600 font-medium">Fecha de reserva:</span>
-                                <span className="font-medium text-gray-900">{formatFecha(ficha.fecha_reserva)}</span>
-                              </div>
-                              <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                                <span className="text-gray-600 font-medium">Sede del servicio:</span>
-                                <span className="font-medium text-gray-900">{ficha.sede || ficha.local}</span>
-                              </div>
-                              <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                                <span className="text-gray-600 font-medium">Estilista asignado:</span>
-                                <span className="font-medium text-gray-900">{ficha.estilista}</span>
-                              </div>
-                              <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                                <span className="text-gray-600 font-medium">Sede del estilista:</span>
-                                <span className="font-medium text-gray-900">{ficha.sede_estilista}</span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Notas para el cliente */}
-                          {ficha.notas_cliente && ficha.notas_cliente.trim() !== '' && (
-                            <div>
-                              <h4 className="font-semibold text-gray-900 mb-3 text-lg border-b pb-2">
-                                💬 Notas para el Cliente
-                              </h4>
-                              <p className="text-sm text-gray-700 bg-yellow-50 p-4 rounded-lg border border-yellow-200">
-                                {ficha.notas_cliente}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Columna derecha - Información adicional */}
-                        <div className="space-y-6">
-                          {/* Comentario interno */}
-                          {ficha.comentario_interno && ficha.comentario_interno.trim() !== '' && (
-                            <div>
-                              <h4 className="font-semibold text-gray-900 mb-3 text-lg border-b pb-2">
-                                🏷️ Comentario Interno
-                              </h4>
-                              <p className="text-sm text-gray-700 bg-blue-50 p-4 rounded-lg border border-blue-200">
-                                {ficha.comentario_interno}
-                              </p>
-                            </div>
-                          )}
-
-                          {/* Imágenes */}
-                          {(ficha.antes_url || ficha.despues_url) && (
-                            <div>
-                              <h4 className="font-semibold text-gray-900 mb-3 text-lg border-b pb-2">
-                                📸 Imágenes del Servicio
-                              </h4>
-                              <div className="flex gap-4">
-                                {ficha.antes_url && (
-                                  <div className="text-center">
-                                    <a 
-                                      href={ficha.antes_url} 
-                                      target="_blank" 
-                                      rel="noopener noreferrer"
-                                      className="inline-flex flex-col items-center gap-2 text-blue-600 hover:text-blue-800 font-medium transition-colors"
-                                    >
-                                      <div className="w-16 h-16 bg-blue-100 rounded-lg flex items-center justify-center border-2 border-blue-300">
-                                        <span className="text-2xl">📷</span>
-                                      </div>
-                                      <span className="text-sm">Antes</span>
-                                    </a>
-                                  </div>
-                                )}
-                                {ficha.despues_url && (
-                                  <div className="text-center">
-                                    <a 
-                                      href={ficha.despues_url} 
-                                      target="_blank" 
-                                      rel="noopener noreferrer"
-                                      className="inline-flex flex-col items-center gap-2 text-green-600 hover:text-green-800 font-medium transition-colors"
-                                    >
-                                      <div className="w-16 h-16 bg-green-100 rounded-lg flex items-center justify-center border-2 border-green-300">
-                                        <span className="text-2xl">📷</span>
-                                      </div>
-                                      <span className="text-sm">Después</span>
-                                    </a>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Respuestas del cuestionario */}
-                          <div>
-                            <h4 className="font-semibold text-gray-900 mb-3 text-lg border-b pb-2">
-                              📝 Cuestionario del Cliente
-                            </h4>
-                            <div className="grid grid-cols-2 gap-3">
-                              {[
-                                { key: 'respuesta_1', label: 'Pregunta 1' },
-                                { key: 'respuesta_2', label: 'Pregunta 2' },
-                                { key: 'respuesta_3', label: 'Pregunta 3' },
-                                { key: 'respuesta_4', label: 'Pregunta 4' },
-                                { key: 'respuesta_5', label: 'Pregunta 5' },
-                                { key: 'respuesta_6', label: 'Pregunta 6' },
-                                { key: 'respuesta_7', label: 'Pregunta 7' },
-                                { key: 'respuesta_8', label: 'Pregunta 8' },
-                                { key: 'respuesta_9', label: 'Pregunta 9' },
-                                { key: 'respuesta_10', label: 'Pregunta 10' },
-                              ].map(({ key, label }) => (
-                                ficha[key as keyof typeof ficha] && ficha[key as keyof typeof ficha] !== '' && (
-                                  <div key={key} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                                    <div className="text-xs text-gray-600 font-medium mb-1 truncate">{label}</div>
-                                    <div className="text-sm font-semibold text-green-700 flex items-center gap-1">
-                                      <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                                      {ficha[key as keyof typeof ficha] as string}
-                                    </div>
-                                  </div>
-                                )
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                  ) : (
+                    <div className="flex h-36 items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50">
+                      <ImageIcon className="h-4 w-4 text-gray-400" />
                     </div>
-                  </div>
-                ))}
+                  )}
+                </div>
+
+                {/* Imagen DESPUÉS */}
+                <div>
+                  <h3 className="text-xs font-medium text-gray-600 mb-2">Después</h3>
+                  {selectedImages.despues ? (
+                    <div className="overflow-hidden rounded border border-gray-200">
+                      <img
+                        src={selectedImages.despues}
+                        alt="Después del servicio"
+                        className="h-36 w-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.src = 'https://via.placeholder.com/400x300/f3f4f6/6b7280?text=Sin+imagen'
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex h-36 items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50">
+                      <ImageIcon className="h-4 w-4 text-gray-400" />
+                    </div>
+                  )}
+                </div>
               </div>
-            ) : (
-              <div className="rounded-lg border-2 border-dashed border-gray-300 p-12 text-center">
-                <div className="text-gray-400 text-6xl mb-4">📋</div>
-                <h3 className="text-xl font-semibold text-gray-500 mb-2">No hay servicios registrados</h3>
-                <p className="text-gray-400">Este cliente no tiene fichas de servicio en el sistema.</p>
-              </div>
-            )}
-          </div>
 
-            {/* Historial de cabello */}
-            <div>
-              <h2 className="text-2xl font-bold mb-4">💇 Historial de Cabello</h2>
-              <div className="space-y-4 rounded-xl border border-gray-200 p-6 bg-white">
-                {client.historialCabello.length > 0 ? (
-                  client.historialCabello.map((item, index) => (
-                    <div key={index} className="flex justify-between items-center py-3 border-b border-gray-100 last:border-b-0">
-                      <span className="text-gray-600 font-medium">{item.tipo}</span>
-                      <span className="font-medium text-gray-900 bg-gray-50 px-3 py-1 rounded-full text-sm">
-                        {item.fecha}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center py-8">
-                    <div className="text-gray-400 text-4xl mb-2">💇</div>
-                    <p className="text-gray-500">No hay historial de cabello registrado</p>
-                  </div>
+              {/* Botones de acción */}
+              <div className="mt-4 flex justify-center gap-2">
+                <Button
+                  onClick={closeImagesModal}
+                  variant="outline"
+                  size="sm"
+                  className="text-xs border-gray-300 text-gray-700 hover:bg-gray-50"
+                >
+                  Cerrar
+                </Button>
+                {(selectedImages.antes || selectedImages.despues) && (
+                  <Button
+                    onClick={() => {
+                      const imageToDownload = selectedImages.despues || selectedImages.antes
+                      if (imageToDownload) {
+                        window.open(imageToDownload, '_blank')
+                      }
+                    }}
+                    className="bg-gray-900 hover:bg-gray-800 text-xs text-white"
+                    size="sm"
+                  >
+                    Abrir imagen
+                  </Button>
                 )}
               </div>
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Historial de citas */}
+      {/* Header ultra minimalista */}
+      <div className="px-4 py-3 border-b border-gray-100">
+        <Button
+          variant="ghost"
+          onClick={onBack}
+          className="mb-3 -ml-1 gap-1 p-1 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+          size="sm"
+        >
+          <ArrowLeft className="h-3 w-3" />
+          Volver
+        </Button>
+
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-700 text-sm font-medium border border-gray-200">
+            {client.nombre.charAt(0)}
+          </div>
+
           <div>
-            <h2 className="text-2xl font-bold mb-4">📅 Historial de Citas</h2>
-            {client.historialCitas.length > 0 ? (
-              <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="bg-gray-50 border-b border-gray-200">
-                        <th className="px-6 py-4 text-left font-semibold text-gray-700">Fecha</th>
-                        <th className="px-6 py-4 text-left font-semibold text-gray-700">Servicio</th>
-                        <th className="px-6 py-4 text-left font-semibold text-gray-700">Estilista</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {client.historialCitas.map((cita, index) => (
-                        <tr key={index} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                          <td className="px-6 py-4 font-medium text-gray-900">{cita.fecha}</td>
-                          <td className="px-6 py-4 text-gray-700">{cita.servicio}</td>
-                          <td className="px-6 py-4 text-gray-700">{cita.estilista}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+            <h1 className="text-base font-medium text-gray-900">{client.nombre}</h1>
+            <div className="flex items-center gap-2 mt-0.5">
+              <p className="text-xs text-gray-500">{client.email}</p>
+              <span className="text-gray-300">•</span>
+              <p className="text-xs text-gray-500">{client.telefono}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* CONTENIDO PRINCIPAL - Ultra minimalista */}
+      <div className="flex-1 overflow-auto px-4 py-3">
+        <div className="space-y-4">
+          {/* SECCIÓN DE FICHAS */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-medium text-gray-900">Fichas</h2>
+              <div className="text-xs text-gray-500 bg-gray-50 px-2 py-1 rounded">
+                {client.fichas ? `${client.fichas.length} servicios` : '...'}
+              </div>
+            </div>
+
+            {client.fichas && client.fichas.length > 0 ? (
+              <div className="space-y-3">
+                {client.fichas.map((ficha) => {
+                  const servicioNombre = ficha.servicio_nombre || ficha.servicio || 'Servicio'
+                  const estilistaNombre = ficha.profesional_nombre || ficha.estilista || 'Sin estilista'
+                  const sedeNombre = ficha.sede_nombre || ficha.sede || ficha.local || 'Sin sede'
+
+                  const tieneImagenes =
+                    (ficha.antes_url && ficha.antes_url !== '') ||
+                    (ficha.despues_url && ficha.despues_url !== '') ||
+                    (ficha.fotos?.antes && Array.isArray(ficha.fotos.antes) && ficha.fotos.antes.length > 0) ||
+                    (ficha.fotos?.despues && Array.isArray(ficha.fotos.despues) && ficha.fotos.despues.length > 0);
+
+                  const primeraAntes = ficha.antes_url || ficha.fotos?.antes?.[0] || '';
+                  const primeraDespues = ficha.despues_url || ficha.fotos?.despues?.[0] || '';
+
+                  return (
+                    <div key={ficha._id} className="rounded-lg border border-gray-100 bg-white p-3 hover:border-gray-200">
+                      {/* Header de la ficha */}
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <h3 className="text-sm font-medium text-gray-900 mb-1">
+                            {servicioNombre}
+                          </h3>
+                          <div className="flex items-center gap-3 text-xs text-gray-500">
+                            <div className="flex items-center gap-1">
+                              <Calendar className="h-3 w-3" />
+                              {formatFecha(ficha.fecha_ficha)}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <MapPin className="h-3 w-3" />
+                              <span className="truncate max-w-[100px]">{sedeNombre}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+
+                          {tieneImagenes && (
+                            <button
+                              onClick={() => openImagesModal(ficha)}
+                              className="p-1 hover:bg-gray-50 rounded"
+                            >
+                              <ImageIcon className="h-3.5 w-3.5 text-gray-500" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Detalles */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 text-xs text-gray-600">
+                            <User className="h-3 w-3" />
+                            {estilistaNombre}
+                          </div>
+                          {ficha.notas_cliente && ficha.notas_cliente.trim() !== '' && (
+                            <div className="flex items-start gap-2 text-xs">
+                              <FileText className="h-3 w-3 text-gray-400 mt-0.5" />
+                              <p className="text-gray-600">
+                                {ficha.notas_cliente.length > 60 ? ficha.notas_cliente.substring(0, 60) + '...' : ficha.notas_cliente}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+                        {tieneImagenes && (
+                          <div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="relative">
+                                <div className="h-16 rounded border border-gray-200 overflow-hidden">
+                                  {primeraAntes ? (
+                                    <img
+                                      src={primeraAntes}
+                                      alt="Antes"
+                                      className="h-full w-full object-cover text-transparent"
+                                      onError={(e) => {
+                                        e.currentTarget.src = 'https://via.placeholder.com/200x150/f3f4f6/9ca3af?text=Antes'
+                                      }}
+                                    />
+                                  ) : (
+                                    <div className="h-full w-full bg-gray-50 flex items-center justify-center">
+                                      <span className="text-xs text-gray-400">Antes</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="relative">
+                                <div className="h-16 rounded border border-gray-200 overflow-hidden">
+                                  {primeraDespues ? (
+                                    <img
+                                      src={primeraDespues}
+                                      alt="Después"
+                                      className="h-full w-full object-cover"
+                                      onError={(e) => {
+                                        e.currentTarget.src = 'https://via.placeholder.com/200x150/f3f4f6/9ca3af?text=Después'
+                                      }}
+                                    />
+                                  ) : (
+                                    <div className="h-full w-full bg-gray-50 flex items-center justify-center">
+                                      <span className="text-xs text-gray-400">Después</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {ficha.comentario_interno && ficha.comentario_interno.trim() !== '' && (
+                        <div className="mt-2 pt-2 border-t border-gray-100">
+                          <div className="flex items-start gap-2 text-xs">
+                            <Tag className="h-3 w-3 text-gray-400 mt-0.5" />
+                            <p className="text-gray-600">
+                              {ficha.comentario_interno.length > 80 ? ficha.comentario_interno.substring(0, 80) + '...' : ficha.comentario_interno}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             ) : (
-              <div className="rounded-xl border-2 border-dashed border-gray-300 p-12 text-center bg-white">
-                <div className="text-gray-400 text-6xl mb-4">📅</div>
-                <h3 className="text-xl font-semibold text-gray-500 mb-2">No hay citas registradas</h3>
-                <p className="text-gray-400">No se encontró historial de citas para este cliente.</p>
+              <div className="rounded-lg border border-dashed border-gray-200 p-8 text-center">
+                <FileText className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+                <p className="text-sm text-gray-500">No hay servicios registrados</p>
               </div>
             )}
           </div>
 
+          {/* Historial de cabello */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-medium text-gray-900 flex items-center gap-2">
+                <Scissors className="h-4 w-4" />
+                Historial de Cabello
+              </h2>
+            </div>
+            <div className="rounded-lg border border-gray-100 p-3">
+              {client.historialCabello.length > 0 ? (
+                <div className="space-y-2">
+                  {client.historialCabello.map((item, index) => (
+                    <div key={index} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-b-0">
+                      <span className="text-sm text-gray-700">{item.tipo}</span>
+                      <span className="text-xs text-gray-500 bg-gray-50 px-2 py-1 rounded">
+                        {item.fecha}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-4">
+                  <Scissors className="h-6 w-6 text-gray-300 mx-auto mb-1" />
+                  <p className="text-sm text-gray-500">Sin historial</p>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Historial de productos */}
           <div>
-            <h2 className="text-2xl font-bold mb-4">🛍️ Historial de Productos</h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-medium text-gray-900 flex items-center gap-2">
+                <ShoppingBag className="h-4 w-4" />
+                Historial de Compras
+              </h2>
+            </div>
             {client.historialProductos.length > 0 ? (
-              <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
+              <div className="rounded-lg border border-gray-100 overflow-hidden">
                 <div className="overflow-x-auto">
-                  <table className="w-full">
+                  <table className="w-full text-sm">
                     <thead>
-                      <tr className="bg-gray-50 border-b border-gray-200">
-                        <th className="px-6 py-4 text-left font-semibold text-gray-700">Producto</th>
-                        <th className="px-6 py-4 text-left font-semibold text-gray-700">Fecha</th>
+                      <tr className="bg-gray-50">
+                        <th className="px-3 py-2 text-left font-medium text-gray-700 text-xs">Producto</th>
+                        <th className="px-3 py-2 text-left font-medium text-gray-700 text-xs">Fecha</th>
+                        <th className="px-3 py-2 text-left font-medium text-gray-700 text-xs">Estado</th>
                       </tr>
                     </thead>
                     <tbody>
                       {client.historialProductos.map((producto, index) => (
-                        <tr key={index} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                          <td className="px-6 py-4 font-medium text-gray-900">{producto.producto}</td>
-                          <td className="px-6 py-4 text-gray-700">{producto.fecha}</td>
+                        <tr key={index} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50/50">
+                          <td className="px-3 py-2 text-gray-700 text-sm">{producto.producto}</td>
+                          <td className="px-3 py-2 text-gray-500 text-sm">{producto.fecha}</td>
+                          <td className="px-3 py-2">
+                            <span className={`px-2 py-0.5 rounded text-xs ${producto.estado_pago === 'pagado'
+                              ? 'bg-green-50 text-green-700'
+                              : 'bg-gray-100 text-gray-600'
+                              }`}>
+                              {producto.estado_pago || 'pendiente'}
+                            </span>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -367,14 +408,14 @@ export function ClientDetail({ client, onBack }: ClientDetailProps) {
                 </div>
               </div>
             ) : (
-              <div className="rounded-xl border-2 border-dashed border-gray-300 p-12 text-center bg-white">
-                <div className="text-gray-400 text-6xl mb-4">🛍️</div>
-                <h3 className="text-xl font-semibold text-gray-500 mb-2">No hay productos registrados</h3>
-                <p className="text-gray-400">No se encontró historial de productos para este cliente.</p>
+              <div className="rounded-lg border border-dashed border-gray-200 p-8 text-center">
+                <ShoppingBag className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+                <p className="text-sm text-gray-500">No hay compras registradas</p>
               </div>
             )}
           </div>
         </div>
       </div>
-    )
+    </div>
+  )
 }

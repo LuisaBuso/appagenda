@@ -1,205 +1,120 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { X, Loader } from 'lucide-react'
+import { useState } from "react"
+import { X } from "lucide-react"
+import { Button } from "../../../components/ui/button"
 import { Input } from "../../../components/ui/input"
 import { Label } from "../../../components/ui/label"
 import { Textarea } from "../../../components/ui/textarea"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../../../components/ui/select"
-import type { Sede } from "../../PageSuperAdmin/Sedes/sedeService"
 
 interface ClientFormModalProps {
   isOpen: boolean
   onClose: () => void
-  onSave: (cliente: any) => void
-  isSaving?: boolean
-  sedes?: Sede[]
-  selectedSede?: string
+  onSave: (clientData: any) => Promise<void>
+  isSaving: boolean
 }
 
-export function ClientFormModal({ 
-  isOpen, 
-  onClose, 
-  onSave, 
-  isSaving = false,
-  sedes = [],
-  selectedSede = "all"
-}: ClientFormModalProps) {
+export function ClientFormModal({ isOpen, onClose, onSave, isSaving }: ClientFormModalProps) {
   const [formData, setFormData] = useState({
     nombre: "",
-    telefono: "",
     email: "",
-    nota: "",
-    sede_id: selectedSede !== "all" ? selectedSede : ""
+    telefono: "",
+    nota: ""
   })
 
-  // Reset form when modal opens/closes
-  useEffect(() => {
-    if (isOpen) {
-      setFormData({
-        nombre: "",
-        telefono: "",
-        email: "",
-        nota: "",
-        sede_id: selectedSede !== "all" ? selectedSede : ""
-      })
-    }
-  }, [isOpen, selectedSede])
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    await onSave(formData)
+    setFormData({ nombre: "", email: "", telefono: "", nota: "" })
+  }
 
   if (!isOpen) return null
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    
-    // Validaciones básicas
-    if (!formData.nombre.trim()) {
-      alert('El nombre es requerido')
-      return
-    }
-
-    if (!formData.telefono.trim() && !formData.email.trim()) {
-      alert('Debe proporcionar al menos un teléfono o email')
-      return
-    }
-
-    onSave(formData)
-  }
-
-  const stopPropagation = (e: React.MouseEvent) => {
-    e.stopPropagation()
-  }
-
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={stopPropagation}>
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold">Nuevo Cliente</h2>
-          <button 
-            onClick={onClose} 
-            className="text-gray-400 hover:text-gray-600 disabled:opacity-50"
-            disabled={isSaving}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/80 backdrop-blur-sm p-4">
+      <div className="w-full max-w-md rounded-lg border border-gray-100 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+          <h2 className="text-sm font-medium text-gray-900">Nuevo Cliente</h2>
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-gray-50 rounded"
           >
-            <X className="h-5 w-5" />
+            <X className="h-4 w-4 text-gray-500" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="p-4 space-y-3">
           <div>
-            <Label htmlFor="nombre" className="block text-sm font-medium mb-2">
-              Nombre completo *
+            <Label htmlFor="nombre" className="text-xs font-medium text-gray-700">
+              Nombre *
             </Label>
             <Input
-              type="text"
               id="nombre"
               value={formData.nombre}
               onChange={(e) => setFormData({ ...formData, nombre: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-[oklch(0.65_0.25_280)] focus:outline-none focus:ring-2 focus:ring-[oklch(0.65_0.25_280)]/20"
               required
-              disabled={isSaving}
-              placeholder="Ingresa el nombre completo"
+              className="h-8 text-sm border-gray-300"
+              placeholder="Nombre completo"
             />
           </div>
 
           <div>
-            <Label htmlFor="telefono" className="block text-sm font-medium mb-2">
-              Teléfono
-            </Label>
-            <Input
-              type="tel"
-              id="telefono"
-              value={formData.telefono}
-              onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-[oklch(0.65_0.25_280)] focus:outline-none focus:ring-2 focus:ring-[oklch(0.65_0.25_280)]/20"
-              disabled={isSaving}
-              placeholder="Ej: 123 456 7890"
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="email" className="block text-sm font-medium mb-2">
+            <Label htmlFor="email" className="text-xs font-medium text-gray-700">
               Email
             </Label>
             <Input
-              type="email"
               id="email"
+              type="email"
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-[oklch(0.65_0.25_280)] focus:outline-none focus:ring-2 focus:ring-[oklch(0.65_0.25_280)]/20"
-              disabled={isSaving}
-              placeholder="ejemplo@correo.com"
+              className="h-8 text-sm border-gray-300"
+              placeholder="ejemplo@email.com"
             />
           </div>
 
-          {/* Selector de Sede */}
-          {sedes.length > 0 && (
-            <div>
-              <Label htmlFor="sede" className="block text-sm font-medium mb-2">
-                Sede
-              </Label>
-              <Select
-                value={formData.sede_id}
-                onValueChange={(value) => setFormData({ ...formData, sede_id: value })}
-                disabled={isSaving}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Seleccionar sede" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">Sin sede específica</SelectItem>
-                  {sedes.map((sede) => (
-                    <SelectItem key={sede.sede_id} value={sede.sede_id}>
-                      {sede.nombre}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          <div>
+            <Label htmlFor="telefono" className="text-xs font-medium text-gray-700">
+              Teléfono
+            </Label>
+            <Input
+              id="telefono"
+              value={formData.telefono}
+              onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
+              className="h-8 text-sm border-gray-300"
+              placeholder="+52 123 456 7890"
+            />
+          </div>
 
           <div>
-            <Label htmlFor="nota" className="block text-sm font-medium mb-2">
-              Nota
+            <Label htmlFor="nota" className="text-xs font-medium text-gray-700">
+              Notas
             </Label>
             <Textarea
               id="nota"
               value={formData.nota}
               onChange={(e) => setFormData({ ...formData, nota: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-[oklch(0.65_0.25_280)] focus:outline-none focus:ring-2 focus:ring-[oklch(0.65_0.25_280)]/20"
-              disabled={isSaving}
-              placeholder="Información adicional del cliente..."
-              rows={3}
+              className="text-sm border-gray-300 min-h-[60px]"
+              placeholder="Notas adicionales..."
             />
           </div>
 
-          <div className="flex gap-3 pt-4">
-            <button
+          <div className="flex justify-end gap-2 pt-3">
+            <Button
               type="button"
+              variant="outline"
               onClick={onClose}
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+              className="text-xs border-gray-300 text-gray-700 hover:bg-gray-50"
               disabled={isSaving}
             >
               Cancelar
-            </button>
-            <button
+            </Button>
+            <Button
               type="submit"
-              className="flex-1 px-4 py-2 bg-[oklch(0.65_0.25_280)] text-white rounded-lg hover:bg-[oklch(0.60_0.25_280)] disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-              disabled={isSaving || !formData.nombre.trim() || (!formData.telefono.trim() && !formData.email.trim())}
+              className="text-xs bg-gray-900 hover:bg-gray-800 text-white"
+              disabled={isSaving}
             >
-              {isSaving ? (
-                <>
-                  <Loader className="h-4 w-4 animate-spin" />
-                  Guardando...
-                </>
-              ) : (
-                "Crear cliente"
-              )}
-            </button>
+              {isSaving ? "Guardando..." : "Crear Cliente"}
+            </Button>
           </div>
         </form>
       </div>

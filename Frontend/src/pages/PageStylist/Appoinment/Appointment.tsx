@@ -1,12 +1,13 @@
-// src/components/EstilistaDashboard.tsx
+// src/components/EstilistaDashboard.tsx - VERSIÓN COMPLETA CON REFRESCO DE BLOQUEOS
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useEstilistaData } from './useEstilistaData';
 import { AppointmentsList } from './appointments-list';
 import { StylistStats } from './stylist-stats';
 import { AttentionProtocol } from './attention-protocol';
 import { Sidebar } from '../../../components/Layout/Sidebar';
+import { getBloqueosProfesional, Bloqueo } from '../../../components/Quotes/bloqueosApi';
 
 export default function VistaEstilistaPage() {
   const { 
@@ -17,91 +18,176 @@ export default function VistaEstilistaPage() {
 
   const [citaSeleccionada, setCitaSeleccionada] = useState<any>(null);
   const [fechaFiltro, setFechaFiltro] = useState<string>("");
+  const [bloqueos, setBloqueos] = useState<Bloqueo[]>([]);
+  const [profesionalId, setProfesionalId] = useState<string>("");
+  const [refrescarBloqueos, setRefrescarBloqueos] = useState(0);
 
-  // Función CORREGIDA para formatear fecha a YYYY-MM-DD sin problemas de zona horaria
-  const formatearFecha = (fecha: string | Date) => {
-    const date = new Date(fecha);
-    // Usar UTC para evitar problemas de zona horaria
-    const year = date.getUTCFullYear();
-    const month = (date.getUTCMonth() + 1).toString().padStart(2, '0');
-    const day = date.getUTCDate().toString().padStart(2, '0');
-    return `${year}-${month}-${day}`;
+  // Función para obtener token de autenticación
+  const getAuthToken = () => {
+    return localStorage.getItem('access_token') || 
+           sessionStorage.getItem('access_token') || 
+           '';
   };
 
-  // Filtrar citas por fecha seleccionada (CORREGIDO)
+  // Obtener ID del profesional desde las citas
+  useEffect(() => {
+    const obtenerProfesionalIdDeCitas = () => {
+      if (citas && citas.length > 0) {
+        // Buscar la primera cita que tenga estilista_id
+        const primeraCitaConId = citas.find(cita => cita.estilista_id);
+        if (primeraCitaConId?.estilista_id) {
+          return primeraCitaConId.estilista_id;
+        }
+      }
+      
+      // Si no hay citas o no tienen estilista_id, buscar en localStorage/sessionStorage
+      try {
+        const userDataLS = localStorage.getItem('user');
+        const userDataSS = sessionStorage.getItem('user');
+        
+        if (userDataLS || userDataSS) {
+          const user = JSON.parse(userDataLS || userDataSS || '{}');
+          if (user.profesional_id) {
+            return user.profesional_id;
+          }
+        }
+        
+        // Fallback: buscar en campos individuales
+        const profesionalIdLS = localStorage.getItem('beaux-profesional_id');
+        const profesionalIdSS = sessionStorage.getItem('beaux-profesional_id');
+        
+        if (profesionalIdLS || profesionalIdSS) {
+          return profesionalIdLS || profesionalIdSS || "";
+        }
+        
+        console.warn("⚠️ No se encontró estilista_id en citas ni en storage");
+        return "";
+      } catch (error) {
+        console.error('Error obteniendo profesional_id:', error);
+        return "";
+      }
+    };
+    
+    const id = obtenerProfesionalIdDeCitas();
+    setProfesionalId(id);
+  }, [citas]);
+
+  // Cargar bloqueos cuando tenemos el profesionalId
+  useEffect(() => {
+    const cargarBloqueos = async () => {
+      if (!profesionalId) {
+        console.log("⏳ Esperando profesionalId para cargar bloqueos...");
+        return;
+      }
+      
+      try {
+        const token = getAuthToken();
+        
+        if (!token) {
+          console.warn("❌ No hay token para cargar bloqueos");
+          setBloqueos([]);
+          return;
+        }
+
+        console.log(`🔍 Cargando bloqueos para profesional: ${profesionalId}`);
+        
+        const bloqueosData = await getBloqueosProfesional(profesionalId, token);
+        
+        if (Array.isArray(bloqueosData)) {
+          setBloqueos(bloqueosData);
+        } else {
+          console.warn("⚠️ La respuesta de bloqueos no es un array:", bloqueosData);
+          setBloqueos([]);
+        }
+      } catch (error) {
+        console.error('❌ Error cargando bloqueos:', error);
+        setBloqueos([]);
+      }
+    };
+    
+    if (profesionalId && profesionalId.trim() !== "") {
+      cargarBloqueos();
+    }
+  }, [profesionalId, refrescarBloqueos]);
+
+  // Función para normalizar estados
+  const estaCompletada = (cita: any): boolean => {
+    if (!cita.estado) return false;
+    
+    const estado = cita.estado.toLowerCase().trim();
+    
+    const estadosCompletados = [
+      'completado', 'completada', 'finalizado', 'finalizada',
+      'terminado', 'terminada', 'realizado', 'realizada',
+      'concluido', 'concluida'
+    ];
+    
+    return estadosCompletados.some(estadoCompletado => 
+      estado.includes(estadoCompletado)
+    );
+  };
+
+  // Filtrar citas por fecha
   const citasFiltradas = fechaFiltro 
     ? citas.filter(cita => {
-        // Convertir la fecha de la cita a formato YYYY-MM-DD
-        const fechaCita = new Date(cita.fecha);
-        const fechaCitaFormateada = formatearFecha(fechaCita);
-        
-        // Formatear la fecha del filtro
-        const fechaFiltroDate = new Date(fechaFiltro + 'T00:00:00'); // Agregar tiempo para evitar zona horaria
-        const fechaFiltroFormateada = formatearFecha(fechaFiltroDate);
-        
-        console.log('🔍 Comparando fechas:', {
-          fechaCitaOriginal: cita.fecha,
-          fechaCitaFormateada,
-          fechaFiltroOriginal: fechaFiltro,
-          fechaFiltroFormateada,
-          coincide: fechaCitaFormateada === fechaFiltroFormateada,
-          cliente: cita.cliente.nombre
-        });
-        
-        return fechaCitaFormateada === fechaFiltroFormateada;
+        if (!cita.fecha) return false;
+        const fechaCita = cita.fecha.split('T')[0];
+        return fechaCita === fechaFiltro;
       })
     : citas.filter(cita => {
-        // Para mostrar citas de hoy por defecto
-        const fechaCita = new Date(cita.fecha);
-        const fechaCitaFormateada = formatearFecha(fechaCita);
-        const hoy = new Date();
-        const hoyFormateado = formatearFecha(hoy);
-        return fechaCitaFormateada === hoyFormateado;
+        if (!cita.fecha) return false;
+        const hoy = new Date().toISOString().split('T')[0];
+        const fechaCita = cita.fecha.split('T')[0];
+        return fechaCita === hoy;
       });
 
-  console.log('📊 Resultado del filtro:', {
-    fechaFiltro,
-    totalCitas: citas.length,
-    citasFiltradas: citasFiltradas.length,
-    citasFiltradasDetalle: citasFiltradas.map(c => ({
-      cliente: c.cliente.nombre,
-      fecha: c.fecha,
-      fechaFormateada: formatearFecha(c.fecha),
-      servicio: c.servicio.nombre
-    }))
-  });
+  // Filtrar bloqueos por fecha
+  const bloqueosFiltrados = fechaFiltro 
+    ? bloqueos.filter(bloqueo => {
+        if (!bloqueo.fecha) return false;
+        const fechaBloqueo = bloqueo.fecha.split('T')[0];
+        return fechaBloqueo === fechaFiltro;
+      })
+    : bloqueos;
 
-  // Calcular estadísticas para las citas filtradas
+  // Calcular estadísticas
   const citasFiltradasCount = citasFiltradas.length;
   const serviciosCompletadosFiltrados = citasFiltradas.filter(cita => 
-    cita.estado === 'Completado'
+    estaCompletada(cita)
   ).length;
+  
   const totalVentasFiltradas = citasFiltradas
-    .filter(cita => cita.estado === 'Completado')
-    .reduce((total, cita) => total + (cita.servicio.precio || 0), 0);
+    .filter(cita => estaCompletada(cita))
+    .reduce((total, cita) => {
+      return total + (cita.servicio?.precio || 0);
+    }, 0);
 
-  // Manejar selección de fecha desde el calendario
+  // Manejar selección de fecha
   const handleFechaSeleccionada = (fecha: string) => {
-    console.log('📅 Fecha recibida en dashboard:', fecha);
-    console.log('📝 Fecha formateada para filtro:', formatearFecha(fecha));
-    setFechaFiltro(fecha);
-    setCitaSeleccionada(null); // Limpiar cita seleccionada al cambiar fecha
+    if (fecha) {
+      setFechaFiltro(fecha);
+      setCitaSeleccionada(null);
+    }
   };
 
-  // Limpiar filtro de fecha (volver a mostrar citas de hoy)
+  // Limpiar filtro
   const limpiarFiltro = () => {
-    console.log('🔄 Limpiando filtro, mostrando citas de hoy');
     setFechaFiltro("");
     setCitaSeleccionada(null);
+  };
+
+  // Función para refrescar bloqueos
+  const refrescarListaBloqueos = () => {
+    setRefrescarBloqueos(prev => prev + 1);
   };
 
   if (loading) return (
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar />
-      <div className="flex-1 p-8 flex items-center justify-center">
+      <div className="flex-1 p-6 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[oklch(0.55_0.25_280)] mx-auto"></div>
-          <p className="mt-4 text-gray-600">Cargando citas...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-800 mx-auto"></div>
+          <p className="mt-3 text-sm text-gray-600">Cargando citas...</p>
         </div>
       </div>
     </div>
@@ -110,13 +196,13 @@ export default function VistaEstilistaPage() {
   if (error) return (
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar />
-      <div className="flex-1 p-8 flex items-center justify-center">
+      <div className="flex-1 p-6 flex items-center justify-center">
         <div className="text-center">
-          <div className="text-red-500 text-lg mb-2">❌ Error</div>
-          <p className="text-gray-700">{error}</p>
+          <div className="text-gray-800 text-base mb-2 font-medium">Error</div>
+          <p className="text-gray-600 text-sm">{error}</p>
           <button 
             onClick={() => window.location.reload()}
-            className="mt-4 px-4 py-2 bg-[oklch(0.55_0.25_280)] text-white rounded hover:bg-[oklch(0.50_0.25_280)]"
+            className="mt-4 px-4 py-2 bg-gray-800 text-white text-sm rounded hover:bg-gray-900 transition-colors"
           >
             Reintentar
           </button>
@@ -129,78 +215,196 @@ export default function VistaEstilistaPage() {
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar />
       
-      <div className="flex-1 p-8">
-        {/* Header */}
-        <div className="mb-8">
+      {/* CONTENIDO PRINCIPAL */}
+      <div className="flex-1 p-4 md:p-5 lg:p-6">
+        
+        {/* VERSIÓN MOBILE */}
+        <div className="block lg:hidden">
+          <div className="mb-4">
+            <h1 className="text-lg font-bold text-gray-900">Dashboard</h1>
+          </div>
+          
+          {/* Stats Cards Compactas */}
+          <div className="mb-5 grid grid-cols-4 gap-2">
+            <div className="rounded border bg-white p-2.5">
+              <p className="mb-1 text-xs text-gray-500">Citas</p>
+              <p className="text-base font-bold text-gray-800">{citasFiltradasCount}</p>
+            </div>
+            <div className="rounded border bg-white p-2.5">
+              <p className="mb-1 text-xs text-gray-500">Completadas</p>
+              <p className="text-base font-bold text-gray-800">{serviciosCompletadosFiltrados}</p>
+            </div>
+            <div className="rounded border bg-white p-2.5">
+              <p className="mb-1 text-xs text-gray-500">Ventas</p>
+              <p className="text-base font-bold text-gray-800">${totalVentasFiltradas.toLocaleString()}</p>
+            </div>
+            <div className="rounded border bg-white p-2.5">
+              <p className="mb-1 text-xs text-gray-500">Bloqueos</p>
+              <p className="text-base font-bold text-gray-800">{bloqueosFiltrados.length}</p>
+            </div>
+          </div>
+
+          {/* Sección de fecha */}
+          <div className="mb-4 bg-white border rounded p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-medium text-gray-900">
+                  {fechaFiltro 
+                    ? `Citas del ${new Date(fechaFiltro + 'T12:00:00').toLocaleDateString('es-ES', { 
+                        day: 'numeric',
+                        month: 'short'
+                      })}`
+                    : "Citas de hoy"
+                  }
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {citasFiltradasCount} citas • {bloqueosFiltrados.length} bloqueos
+                </p>
+              </div>
+              {fechaFiltro && (
+                <button 
+                  onClick={limpiarFiltro}
+                  className="text-xs text-gray-600 hover:text-gray-900 px-2 py-1 border border-gray-300 rounded hover:border-gray-400 transition-colors"
+                >
+                  Hoy
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Contenido */}
+          <div className="space-y-3">
+            
+            {/* LISTA DE CITAS Y BLOQUEOS */}
+            <div className="bg-white border rounded p-3">
+              <h3 className="font-medium text-sm mb-2 text-gray-900">Citas y Bloqueos</h3>
+              <AppointmentsList 
+                appointments={citasFiltradas} 
+                bloqueos={bloqueosFiltrados}
+                onCitaSelect={setCitaSeleccionada}
+                citaSeleccionada={citaSeleccionada}
+                fechaFiltro={fechaFiltro}
+                onBloqueoEliminado={refrescarListaBloqueos}
+              />
+            </div>
+
+            {/* CALENDARIO */}
+            <div className="bg-white border rounded p-3">
+              <h3 className="font-medium text-sm mb-1.5 text-gray-900">Seleccionar fecha</h3>
+              <p className="text-xs text-gray-500 mb-2">Elige un día para ver citas</p>
+              <div className="p-2.5 bg-gray-50 rounded border">
+                <AttentionProtocol 
+                  citaSeleccionada={citaSeleccionada}
+                  onFechaSeleccionada={handleFechaSeleccionada}
+                />
+              </div>
+            </div>
+
+            {/* VENTAS */}
+            <div className="bg-white border rounded p-3">
+              <h3 className="font-medium text-sm mb-2 text-gray-900">Resumen de Ventas</h3>
+              <StylistStats 
+                citasHoy={citasFiltradasCount}
+                serviciosCompletadosHoy={serviciosCompletadosFiltrados}
+                totalVentasHoy={totalVentasFiltradas}
+                bloqueosHoy={bloqueosFiltrados.length}
+              />
+            </div>
+          </div>
         </div>
 
-        {/* Stats Cards */}
-        <div className="mb-8 grid grid-cols-4 gap-6">
-          <div className="rounded-lg border bg-white p-6">
-            <h3 className="text-lg font-semibold mb-2">
+        {/* VERSIÓN DESKTOP */}
+        <div className="hidden lg:block">
+          {/* Header */}
+          <div className="mb-6">
+            <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
+            <p className="text-sm text-gray-600 mt-1">
               {fechaFiltro 
-                ? `Citas del ${new Date(fechaFiltro + 'T00:00:00').toLocaleDateString('es-ES', { 
+                ? `Citas del ${new Date(fechaFiltro + 'T12:00:00').toLocaleDateString('es-ES', { 
                     weekday: 'long', 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric' 
+                    day: 'numeric', 
+                    month: 'long'
                   })}` 
                 : "Citas de hoy"
               }
-            </h3>
-            {fechaFiltro && (
-              <button 
-                onClick={limpiarFiltro}
-                className="text-xs text-[oklch(0.55_0.25_280)] hover:underline mt-2"
-              >
-                ← Ver citas de hoy
-              </button>
-            )}
-          </div>
-          <div className="rounded-lg border bg-white p-6">
-            <p className="mb-2 text-sm text-gray-600">Citas {fechaFiltro ? "del día" : "de hoy"}</p>
-            <p className="text-4xl font-bold text-[oklch(0.55_0.25_280)]">{citasFiltradasCount}</p>
-          </div>
-          <div className="rounded-lg border bg-white p-6">
-            <p className="mb-2 text-sm text-gray-600">Servicios completados</p>
-            <p className="text-4xl font-bold text-green-600">{serviciosCompletadosFiltrados}</p>
-          </div>
-          <div className="rounded-lg border bg-white p-6">
-            <p className="mb-2 text-sm text-gray-600">Ventas {fechaFiltro ? "del día" : "de hoy"}</p>
-            <p className="text-4xl font-bold text-blue-600">${totalVentasFiltradas.toLocaleString()}</p>
-          </div>
-        </div>
-
-        {/* Main Content Grid */}
-        <div className="grid grid-cols-12 gap-6">
-          {/* Left Column - Appointments */}
-          <div className="col-span-3">
-            <AppointmentsList 
-              appointments={citasFiltradas} 
-              onCitaSelect={setCitaSeleccionada}
-              citaSeleccionada={citaSeleccionada}
-              fechaFiltro={fechaFiltro}
-            />
+            </p>
           </div>
 
-          {/* Center Column - Attention Protocol */}
-          <div className="col-span-6">
-            <AttentionProtocol 
-              citaSeleccionada={citaSeleccionada}
-              onFechaSeleccionada={handleFechaSeleccionada}
-            />
+          {/* Stats Cards */}
+          <div className="mb-6 grid grid-cols-5 gap-4">
+            <div className="rounded border bg-white p-4">
+              <h3 className="text-sm font-medium mb-1.5 text-gray-900">
+                {fechaFiltro ? `Citas del día` : "Citas de hoy"}
+              </h3>
+              {fechaFiltro && (
+                <button 
+                  onClick={limpiarFiltro}
+                  className="text-xs text-gray-600 hover:text-gray-900 hover:underline"
+                >
+                  ← Ver citas de hoy
+                </button>
+              )}
+            </div>
+            <div className="rounded border bg-white p-4">
+              <p className="mb-1 text-xs text-gray-500">Citas</p>
+              <p className="text-2xl font-bold text-gray-800">{citasFiltradasCount}</p>
+            </div>
+            <div className="rounded border bg-white p-4">
+              <p className="mb-1 text-xs text-gray-500">Completadas</p>
+              <p className="text-2xl font-bold text-gray-800">{serviciosCompletadosFiltrados}</p>
+            </div>
+            <div className="rounded border bg-white p-4">
+              <p className="mb-1 text-xs text-gray-500">Ventas</p>
+              <p className="text-2xl font-bold text-gray-800">${totalVentasFiltradas.toLocaleString()}</p>
+            </div>
+            <div className="rounded border bg-white p-4">
+              <p className="mb-1 text-xs text-gray-500">Bloqueos</p>
+              <p className="text-2xl font-bold text-gray-800">{bloqueosFiltrados.length}</p>
+            </div>
           </div>
 
-          {/* Right Column - Sales & Commissions */}
-          <div className="col-span-3">
-            <StylistStats 
-              citasHoy={citasFiltradasCount}
-              serviciosCompletadosHoy={serviciosCompletadosFiltrados}
-              totalVentasHoy={totalVentasFiltradas}
-            />
+          {/* Main Grid */}
+          <div className="grid grid-cols-12 gap-4">
+            {/* CITAS Y BLOQUEOS */}
+            <div className="col-span-3">
+              <div className="rounded border bg-white p-3">
+                <h3 className="font-medium text-sm mb-3 text-gray-900">Citas y Bloqueos</h3>
+                <AppointmentsList 
+                  appointments={citasFiltradas} 
+                  bloqueos={bloqueosFiltrados}
+                  onCitaSelect={setCitaSeleccionada}
+                  citaSeleccionada={citaSeleccionada}
+                  fechaFiltro={fechaFiltro}
+                  onBloqueoEliminado={refrescarListaBloqueos}
+                />
+              </div>
+            </div>
+
+            {/* PROTOCOLO */}
+            <div className="col-span-6">
+              <div className="rounded border bg-white p-3">
+                <AttentionProtocol 
+                  citaSeleccionada={citaSeleccionada}
+                  onFechaSeleccionada={handleFechaSeleccionada}
+                />
+              </div>
+            </div>
+
+            {/* VENTAS */}
+            <div className="col-span-3">
+              <div className="rounded border bg-white p-3">
+                <h3 className="font-medium text-sm mb-3 text-gray-900">Ventas</h3>
+                <StylistStats 
+                  citasHoy={citasFiltradasCount}
+                  serviciosCompletadosHoy={serviciosCompletadosFiltrados}
+                  totalVentasHoy={totalVentasFiltradas}
+                  bloqueosHoy={bloqueosFiltrados.length}
+                />
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
-  )
+  );
 }

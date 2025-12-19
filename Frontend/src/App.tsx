@@ -22,7 +22,10 @@ import SedeAppointment from "./pages/PageSede/Appoinment/Appointment";
 import SedeProducts from "./pages/PageSede/Products/Products";
 import SedeClients from "./pages/PageSede/Clients/Clients";
 import SedeBilling from "./pages/PageSede/Billing/Billing";
-import SedePay from "./pages/PageSede/Appoinment/PaymentMethods/PaymentMethods"
+import SedeServices from './pages/PageSede/Services/Services';
+import SedeStylists from './pages/PageSede/Styslit/Sytlist';
+import SedeCommissions from './pages/PageSede/Comisiones/Comisiones'
+
 /* --- Stylist Pages --- */
 import StylistAppointment from "./pages/PageStylist/Appoinment/Appointment";
 import StylistCommissions from "./pages/PageStylist/Comisiones/Comisiones";
@@ -159,10 +162,10 @@ function App() {
               }
             />
             <Route
-              path="/sede/paymethods"
+              path="/sede/commissions"
               element={
                 <PrivateRoute allowedRoles={["admin_sede"]}>
-                  <SedePay />
+                  <SedeCommissions />
                 </PrivateRoute>
               }
             />
@@ -205,7 +208,23 @@ function App() {
                   <SedeClients />
                 </PrivateRoute>
               }
-            />s
+            />
+            <Route
+              path="/sede/services"
+              element={
+                <PrivateRoute allowedRoles={["admin_sede"]}>
+                  <SedeServices />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/sede/stylists"
+              element={
+                <PrivateRoute allowedRoles={["admin_sede"]}>
+                  <SedeStylists />
+                </PrivateRoute>
+              }
+            />
 
             {/* --- ESTILISTA --- */}
             <Route

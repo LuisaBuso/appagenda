@@ -22,14 +22,12 @@ export function ClientDetail({ client, onBack }: ClientDetailProps) {
   }
 
 
-  // 🔥 FUNCIÓN PARA FORMATEAR MONEDA
-  const formatMoneda = (precio: string) => {
+  const formatMoneda = (precio: string | number) => {
     return new Intl.NumberFormat('es-CO', {
       style: 'currency',
       currency: 'COP'
     }).format(Number(precio))
   }
-
   return (
     <div className="flex h-full flex-col bg-white">
       {/* Header */}
@@ -71,12 +69,6 @@ export function ClientDetail({ client, onBack }: ClientDetailProps) {
               <p className="text-sm text-gray-600 mb-2">Días sin comprar</p>
               <p className="text-4xl font-bold">{client.diasSinComprar}</p>
             </div>
-
-            <div className="rounded-lg border p-6">
-              <p className="text-sm text-gray-600 mb-2">LTV</p>
-              <p className="text-4xl font-bold">€ {client.ltv}</p>
-            </div>
-
             <div className="rounded-lg border p-6">
               <p className="text-sm text-gray-600 mb-2">Ticket</p>
               <p className="text-4xl font-bold">€ {client.ticketPromedio}</p>
@@ -106,16 +98,16 @@ export function ClientDetail({ client, onBack }: ClientDetailProps) {
                             </h3>
                             <div className="flex gap-2">
                               <span className={`px-3 py-1 rounded-full text-xs font-medium ${ficha.estado === 'Reservado'
-                                  ? 'bg-blue-100 text-blue-800 border border-blue-200'
-                                  : ficha.estado === 'Completado'
-                                    ? 'bg-green-100 text-green-800 border border-green-200'
-                                    : 'bg-gray-100 text-gray-800 border border-gray-200'
+                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                : ficha.estado === 'Completado'
+                                  ? 'bg-green-100 text-green-800 border border-green-200'
+                                  : 'bg-gray-100 text-gray-800 border border-gray-200'
                                 }`}>
                                 {ficha.estado}
                               </span>
                               <span className={`px-3 py-1 rounded-full text-xs font-medium ${ficha.estado_pago?.includes('Pagada')
-                                  ? 'bg-green-100 text-green-800 border border-green-200'
-                                  : 'bg-orange-100 text-orange-800 border border-orange-200'
+                                ? 'bg-green-100 text-green-800 border border-green-200'
+                                : 'bg-orange-100 text-orange-800 border border-orange-200'
                                 }`}>
                                 {ficha.estado_pago?.replace('Pagada (pago asociado', 'Pagada') || 'Pendiente'}
                               </span>

@@ -6,9 +6,9 @@ interface ApiEstilista {
   _id: string;
   nombre: string;
   email: string;
-  especialidades: boolean; // 🔥 CAMBIADO: Ahora es boolean
+  especialidades: boolean;
   servicios_no_presta: string[];
-  servicios_presta?: Array<{ // 🔥 NUEVO: Servicios que SÍ presta
+  servicios_presta?: Array<{
     id: string;
     nombre: string;
   }>;
@@ -17,7 +17,7 @@ interface ApiEstilista {
   profesional_id: string;
   rol: string;
   sede_id: string;
-  sede_nombre?: string; // 🔥 NUEVO: Nombre de la sede
+  sede_nombre?: string;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -29,6 +29,32 @@ interface ApiEstilista {
 interface UpdateEstilistaResponse {
   msg: string;
   profesional: ApiEstilista;
+}
+
+// Interface para disponibilidad
+interface Disponibilidad {
+  dia_semana: number;
+  hora_inicio: string;
+  hora_fin: string;
+  activo: boolean;
+}
+
+// Interface para datos del horario
+interface HorarioData {
+  profesional_id: string;
+  sede_id: string;
+  disponibilidad: Disponibilidad[];
+}
+
+// Interface para respuesta de horario
+interface HorarioResponse {
+  _id: string;
+  sede_id: string;
+  disponibilidad: Disponibilidad[];
+  creado_por: string;
+  fecha_creacion: string;
+  unique_id: string;
+  profesional_id: string;
 }
 
 export const estilistaService = {
@@ -51,12 +77,10 @@ export const estilistaService = {
     
     // Transformar la respuesta de la API al formato del frontend
     return data.map(estilista => {
-      // 🔥 CORREGIDO: Convertir especialidades boolean a array
       const especialidadesArray = estilista.especialidades ? 
         (estilista.servicios_presta?.map(servicio => servicio.nombre) || []) : 
         [];
       
-      // 🔥 CORREGIDO: Obtener especialidades_detalle de servicios_presta
       const especialidadesDetalle = estilista.servicios_presta?.map(servicio => ({
         id: servicio.id,
         nombre: servicio.nombre
@@ -66,20 +90,20 @@ export const estilistaService = {
         _id: estilista._id,
         nombre: estilista.nombre,
         email: estilista.email,
-        especialidades: especialidadesArray, // 🔥 CONVERTIDO: boolean → array
+        especialidades: especialidadesArray,
         servicios_no_presta: estilista.servicios_no_presta || [],
-        servicios_presta: estilista.servicios_presta || [], // 🔥 NUEVO
+        servicios_presta: estilista.servicios_presta || [],
         activo: estilista.activo,
         rol: estilista.rol,
         profesional_id: estilista.profesional_id,
         sede_id: estilista.sede_id,
-        sede_nombre: estilista.sede_nombre, // 🔥 NUEVO
-        franquicia_id: null, // No viene en la respuesta
+        sede_nombre: estilista.sede_nombre,
+        franquicia_id: null,
         created_by: estilista.created_by,
         comision: estilista.comision,
         created_at: estilista.created_at,
         updated_at: estilista.updated_at,
-        especialidades_detalle: especialidadesDetalle, // 🔥 CORREGIDO
+        especialidades_detalle: especialidadesDetalle,
         updated_by: estilista.updated_by,
         deleted_at: estilista.deleted_at,
         deleted_by: estilista.deleted_by
@@ -138,11 +162,9 @@ export const estilistaService = {
     const result = await response.json();
     console.log('✅ Respuesta del backend al crear estilista:', result);
 
-    // ✅ MANEJO DE LA RESPUESTA ACTUAL DEL BACKEND
     if (result.profesional_id) {
       console.log('🔄 Obteniendo datos completos del profesional recién creado...');
       
-      // Hacer una solicitud adicional para obtener los datos completos del profesional
       try {
         const profesionalCompleto = await this.getEstilistaById(token, result.profesional_id);
         console.log('✅ Datos completos del profesional:', profesionalCompleto);
@@ -151,7 +173,6 @@ export const estilistaService = {
       } catch (error) {
         console.warn('⚠️ No se pudieron obtener los datos completos, construyendo objeto básico...');
         
-        // Construir objeto básico si falla la segunda llamada
         const estilistaBasico: Estilista = {
           _id: result.estilista_mongo_id || `temp-${Date.now()}`,
           nombre: requestData.nombre,
@@ -178,6 +199,87 @@ export const estilistaService = {
       console.error('❌ Estructura de respuesta inesperada:', result);
       throw new Error('No se pudo obtener el ID del profesional creado');
     }
+  },
+
+  // Función para crear horario
+  async createHorario(token: string, horarioData: HorarioData): Promise<HorarioResponse> {
+    console.log('📤 Creando horario con datos:', horarioData);
+
+    const response = await fetch(`${API_BASE_URL}scheduling/schedule/`, {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(horarioData)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      console.error('❌ Error al crear horario:', errorData);
+      throw new Error(errorData?.detail || `Error al crear horario: ${response.statusText}`);
+    }
+
+    const result: HorarioResponse = await response.json();
+    console.log('✅ Horario creado exitosamente:', result);
+    return result;
+  },
+
+  // Función para obtener horario por profesional_id
+  async getHorarioByProfesional(token: string, profesionalId: string): Promise<HorarioResponse | null> {
+    try {
+      console.log('🔍 Buscando horario para profesional:', profesionalId);
+      
+      const response = await fetch(`${API_BASE_URL}scheduling/schedule/profesional/${profesionalId}`, {
+        method: 'GET',
+        headers: {
+          'accept': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        // Si el horario no existe (404), retornar null
+        if (response.status === 404) {
+          console.log('ℹ️ No se encontró horario para el profesional:', profesionalId);
+          return null;
+        }
+        throw new Error(`Error al obtener horario: ${response.statusText}`);
+      }
+
+      const result: HorarioResponse = await response.json();
+      console.log('✅ Horario encontrado:', result);
+      return result;
+    } catch (error) {
+      console.error('❌ Error obteniendo horario:', error);
+      return null;
+    }
+  },
+
+  // Función para actualizar horario
+  async updateHorario(token: string, horarioId: string, horarioData: HorarioData): Promise<HorarioResponse> {
+    console.log('📤 Actualizando horario ID:', horarioId, 'con datos:', horarioData);
+
+    const response = await fetch(`${API_BASE_URL}scheduling/schedule/${horarioId}`, {
+      method: 'PUT',
+      headers: {
+        'accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(horarioData)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      console.error('❌ Error al actualizar horario:', errorData);
+      throw new Error(errorData?.detail || `Error al actualizar horario: ${response.statusText}`);
+    }
+
+    const result: HorarioResponse = await response.json();
+    console.log('✅ Horario actualizado exitosamente:', result);
+    return result;
   },
 
   async updateEstilista(token: string, profesionalId: string, estilistaData: Partial<Estilista>): Promise<Estilista> {
@@ -214,7 +316,6 @@ export const estilistaService = {
     const result: UpdateEstilistaResponse = await response.json();
     console.log('✅ Respuesta del backend al actualizar:', result);
     
-    // Transformar la respuesta al formato del frontend
     const especialidadesArray = result.profesional.especialidades ? 
       (result.profesional.servicios_presta?.map(servicio => servicio.nombre) || []) : 
       [];
@@ -275,7 +376,6 @@ export const estilistaService = {
 
     const data: ApiEstilista = await response.json();
     
-    // 🔥 CORREGIDO: Convertir especialidades boolean a array
     const especialidadesArray = data.especialidades ? 
       (data.servicios_presta?.map(servicio => servicio.nombre) || []) : 
       [];
