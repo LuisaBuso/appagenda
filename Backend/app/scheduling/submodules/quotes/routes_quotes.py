@@ -237,8 +237,23 @@ async def crear_cita(
         estado_pago = "pendiente"
 
     saldo_pendiente = round(valor_total - abono, 2)
+    
+    # ⭐ NUEVO: Manejar compatibilidad de métodos de pago
+    metodo_pago_inicial = getattr(cita, "metodo_pago_inicial", None) or getattr(cita, "metodo_pago", "efectivo")
+    
+    # ⭐ NUEVO: Inicializar historial de pagos
+    historial_pagos = []
+    if abono > 0:
+        historial_pagos.append({
+            "fecha": datetime.now(),
+            "monto": float(abono),
+            "metodo": metodo_pago_inicial,
+            "tipo": "abono_inicial",
+            "registrado_por": current_user.get("email"),
+            "saldo_despues": float(saldo_pendiente)
+        })
 
-    # === validar horario del profesional ===
+    """# === validar horario del profesional ===
     dia_semana = cita.fecha.isoweekday()
     horario = await collection_horarios.find_one({
         "profesional_id": cita.profesional_id,
@@ -259,9 +274,15 @@ async def crear_cita(
     hora_fin_cita = time.fromisoformat(cita.hora_fin)
 
     if not (hora_inicio_hor <= hora_inicio_cita < hora_fin_hor and hora_inicio_hor < hora_fin_cita <= hora_fin_hor):
-        raise HTTPException(status_code=400, detail="La cita está fuera del horario laboral del profesional")
+        raise HTTPException(status_code=400, detail="La cita está fuera del horario laboral del profesional")"""
 
-    # === validar bloqueos ===
+    # === horario fijo para mostrar en email ===
+    dia_info = {
+        "hora_inicio": "09:00",
+        "hora_fin": "18:00"
+    }
+
+    """# === validar bloqueos ===
     bloqueo = await collection_block.find_one({
         "profesional_id": cita.profesional_id,
         "fecha": fecha_str,
@@ -289,7 +310,7 @@ async def crear_cita(
         raise HTTPException(
             status_code=400, 
             detail=f"El profesional ya tiene una cita con {cliente_solape_nombre} en ese horario"
-        )
+        )"""
 
     # === preparar documento y guardar ===
     data = cita.dict()
@@ -318,6 +339,7 @@ async def crear_cita(
     data["creada_por_rol"] = current_user.get("rol")
     data["fecha_creacion"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     data["ultima_actualizacion"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    data["historial_pagos"] = historial_pagos  # ⭐ NUEVO
 
     result = await collection_citas.insert_one(data)
     cita_id = str(result.inserted_id)
@@ -913,7 +935,6 @@ async def registrar_pago(
         estado_pago = "pendiente"
 
     saldo_pendiente = round(valor_total - nuevo_abono, 2)
-
     await collection_citas.update_one(
         {"_id": ObjectId(cita_id)},
         {
@@ -1006,14 +1027,32 @@ async def no_asistio(cita_id: str, current_user: dict = Depends(get_current_user
 
 
 # =============================================================
-# 🔹 OBTENER FICHAS POR CLIENTE (todas las fichas técnicas)
+# 🔹 OBTENER FICHAS POR CLIENTE (con filtros inteligentes)
 # =============================================================
 @router.get("/fichas", response_model=dict)
 async def obtener_fichas_por_cliente(
     cliente_id: str = Query(...),
+    cita_id: str = Query(None, description="Filtrar por cita específica (para facturación)"),
+    fecha: str = Query(None, description="Filtrar por fecha (YYYY-MM-DD)"),
+    solo_hoy: bool = Query(False, description="Solo fichas de hoy"),
+    limit: int = Query(10, description="Límite de resultados"),
     current_user: dict = Depends(get_current_user)
 ):
-
+    """
+    Obtiene fichas técnicas de un cliente con filtros opcionales.
+    
+    Ejemplos de uso:
+    - Facturación: ?cliente_id=CL-90411&cita_id=6941c18a...
+    - Historial: ?cliente_id=CL-90411
+    - Fichas de hoy: ?cliente_id=CL-90411&solo_hoy=true
+    
+    ⭐ PRIORIDAD DE FILTROS:
+    1. cita_id (ignora fecha y solo_hoy)
+    2. fecha específica
+    3. solo_hoy
+    4. cliente_id solo
+    """
+    
     # -----------------------------------------
     # 1. Validación de acceso
     # -----------------------------------------
@@ -1022,16 +1061,45 @@ async def obtener_fichas_por_cliente(
         raise HTTPException(status_code=403, detail="No autorizado")
 
     # -----------------------------------------
-    # 2. Buscar fichas reales (collection_card)
+    # 2. Construir filtro dinámico
     # -----------------------------------------
     filtro = {"cliente_id": cliente_id}
 
+    # 🔹 PRIORIDAD 1: Si pasan cita_id, buscar en datos_especificos.cita_id
+    if cita_id:
+        filtro["datos_especificos.cita_id"] = cita_id
+        limit = 1  # Solo necesitamos una
+        print(f"🔍 Buscando ficha con cita_id: {cita_id}")
+    
+    # 🔹 PRIORIDAD 2: Filtrar por fecha específica
+    elif fecha:
+        filtro["fecha_reserva"] = fecha
+        print(f"🔍 Buscando fichas con fecha: {fecha}")
+    
+    # 🔹 PRIORIDAD 3: Filtrar por hoy
+    elif solo_hoy:
+        from datetime import datetime
+        hoy = datetime.utcnow().strftime("%Y-%m-%d")
+        filtro["fecha_reserva"] = hoy
+        print(f"🔍 Buscando fichas de hoy: {hoy}")
+    
+    else:
+        print(f"🔍 Buscando todas las fichas del cliente: {cliente_id}")
+
+    # -----------------------------------------
+    # 3. Buscar fichas
+    # -----------------------------------------
+    print(f"📋 Filtro aplicado: {filtro}")
+    
     fichas = (
         await collection_card
         .find(filtro)
-        .sort("fecha_ficha", -1)  # <-- CAMBIO CORRECTO
+        .sort("fecha_ficha", -1)
+        .limit(limit)
         .to_list(None)
     )
+
+    print(f"✅ Fichas encontradas: {len(fichas)}")
 
     if not fichas:
         return {"success": True, "total": 0, "fichas": []}
@@ -1039,45 +1107,40 @@ async def obtener_fichas_por_cliente(
     resultado = []
 
     # -----------------------------------------
-    # 3. Enriquecer ficha por ficha
+    # 4. Enriquecer cada ficha
     # -----------------------------------------
     for ficha in fichas:
-
+        # Extraer cita_id desde datos_especificos si existe
+        datos_especificos = ficha.get("datos_especificos", {})
+        cita_id_ficha = datos_especificos.get("cita_id") if isinstance(datos_especificos, dict) else None
+        
         ficha_norm = {
             "id": str(ficha.get("_id")),
+            "cita_id": cita_id_ficha,  # Ahora desde datos_especificos
             "cliente_id": ficha.get("cliente_id"),
             "nombre": ficha.get("nombre"),
             "apellido": ficha.get("apellido"),
             "telefono": ficha.get("telefono"),
             "cedula": ficha.get("cedula"),
-
             "servicio_id": ficha.get("servicio_id"),
             "profesional_id": ficha.get("profesional_id"),
             "sede_id": ficha.get("sede_id"),
-
             "fecha_ficha": ficha.get("fecha_ficha"),
             "fecha_reserva": ficha.get("fecha_reserva"),
-
             "tipo_ficha": ficha.get("tipo_ficha"),
             "precio": ficha.get("precio"),
             "estado": ficha.get("estado"),
             "estado_pago": ficha.get("estado_pago"),
-
-            "contenido": ficha.get("datos_especificos"),
+            "contenido": datos_especificos,  # Todo el objeto datos_especificos
         }
 
-        # -----------------------------------------
         # Enriquecimiento
-        # -----------------------------------------
-
         servicio = await collection_servicios.find_one(
             {"servicio_id": ficha.get("servicio_id")}
         )
-
         profesional = await collection_estilista.find_one(
             {"profesional_id": ficha.get("profesional_id")}
         )
-
         sede = await collection_locales.find_one(
             {"sede_id": ficha.get("sede_id")}
         )
@@ -1089,7 +1152,7 @@ async def obtener_fichas_por_cliente(
         resultado.append(ficha_norm)
 
     # -----------------------------------------
-    # 4. Respuesta final
+    # 5. Respuesta final
     # -----------------------------------------
     return {
         "success": True,
@@ -1362,7 +1425,7 @@ async def get_citas_sede(current_user: dict = Depends(get_current_user)):
     }
 
 # ============================================================
-# 📦 Agregar productos a una cita - CON MÚLTIPLES MONEDAS Y COMISIONES
+# 📦 Agregar productos a una cita - CON COMISIÓN SEGÚN ROL
 # ============================================================
 @router.post("/cita/{cita_id}/agregar-productos", response_model=dict)
 async def agregar_productos_a_cita(
@@ -1499,8 +1562,11 @@ async def eliminar_producto_de_cita(
 ):
     """
     Elimina un producto específico de una cita y recalcula totales.
+<<<<<<< HEAD
     ⭐ Recalcula el total RESTANDO solo el producto eliminado.
     ⭐ Aplica redondeo para corregir errores de punto flotante.
+=======
+>>>>>>> 17dbef0d21fddeb90c3a7076937afa1d09b909ec
     """
     # Solo admin sede, admin o estilista
     if current_user["rol"] not in ["admin_sede", "admin", "estilista"]:
@@ -1522,7 +1588,7 @@ async def eliminar_producto_de_cita(
             detail="Esta cita no tiene productos agregados"
         )
 
-    # Buscar el producto a eliminar
+    # Buscar y filtrar el producto a eliminar
     producto_encontrado = None
     productos_filtrados = []
     
@@ -1548,7 +1614,7 @@ async def eliminar_producto_de_cita(
     abono_actual = cita.get("abono", 0)
     nuevo_saldo = round(nuevo_total - abono_actual, 2)
 
-    # ⭐ RECALCULAR ESTADO DE PAGO
+    # Recalcular estado de pago
     if nuevo_saldo <= 0:
         nuevo_estado_pago = "pagado"
     elif abono_actual > 0:
@@ -1580,15 +1646,7 @@ async def eliminar_producto_de_cita(
     return {
         "success": True,
         "message": "Producto eliminado correctamente",
-        "producto_eliminado": {
-            "producto_id": producto_encontrado.get("producto_id"),
-            "nombre": producto_encontrado.get("nombre"),
-            "subtotal": producto_encontrado.get("subtotal"),
-            "comision_valor": producto_encontrado.get("comision_valor", 0)
-        },
         "productos_restantes": len(productos_filtrados),
-        "total_productos_restante": total_productos_restante,
-        "total_comision_restante": total_comision_restante,
         "nuevo_total_cita": nuevo_total,
         "nuevo_saldo": nuevo_saldo,
         "moneda": cita.get("moneda"),
@@ -1639,7 +1697,7 @@ async def eliminar_todos_productos_de_cita(
     abono_actual = cita.get("abono", 0)
     nuevo_saldo = round(nuevo_total - abono_actual, 2)
 
-    # ⭐ RECALCULAR ESTADO DE PAGO
+    # Recalcular estado de pago
     if nuevo_saldo <= 0:
         nuevo_estado_pago = "pagado"
     elif abono_actual > 0:
@@ -1668,8 +1726,6 @@ async def eliminar_todos_productos_de_cita(
         "success": True,
         "message": f"Se eliminaron {cantidad_productos} productos correctamente",
         "productos_eliminados": cantidad_productos,
-        "total_eliminado": total_productos_eliminados,
-        "comision_eliminada": total_comision_eliminada,
         "nuevo_total_cita": nuevo_total,
         "nuevo_saldo": nuevo_saldo,
         "moneda": cita.get("moneda"),

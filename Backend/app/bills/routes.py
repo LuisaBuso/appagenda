@@ -205,7 +205,7 @@ async def facturar_cita(
         "local": sede.get("nombre"),
         "sede_id": cita["sede_id"],
         "moneda": moneda_sede,
-        "tipo_comision": tipo_comision,  # ⭐ NUEVO
+        "tipo_comision": tipo_comision,
         "cliente_id": cita["cliente_id"],
         "nombre_cliente": cliente.get("nombre", "") + " " + cliente.get("apellido", ""),
         "cedula_cliente": cliente.get("cedula", ""),
@@ -216,8 +216,6 @@ async def facturar_cita(
         "numero_comprobante": numero_comprobante,
         "fecha_comprobante": fecha_actual,
         "monto": total_final,
-        
-        # Campos adicionales útiles
         "profesional_id": cita["profesional_id"],
         "profesional_nombre": cita.get("profesional_nombre", ""),
         "metodo_pago": cita.get("metodo_pago", "efectivo"),
@@ -228,10 +226,25 @@ async def facturar_cita(
     # ====================================
     # 🔟 CREAR DOCUMENTO DE VENTA (SALES)
     # ====================================
-    desglose_pagos = {
-        cita.get("metodo_pago", "efectivo"): total_final,
-        "total": total_final
-    }
+    desglose_pagos = {}
+    historial_pagos = cita.get("historial_pagos", [])
+
+    if historial_pagos:
+        for pago in historial_pagos:
+            metodo = pago.get("metodo", "efectivo")
+            monto = pago.get("monto", 0)
+            if metodo in desglose_pagos:
+                desglose_pagos[metodo] += monto
+            else:
+                desglose_pagos[metodo] = monto
+        
+        for metodo in desglose_pagos:
+            desglose_pagos[metodo] = round(desglose_pagos[metodo], 2)
+    else:
+        metodo_pago = cita.get("metodo_pago_actual") or cita.get("metodo_pago") or "efectivo"
+        desglose_pagos[metodo_pago] = round(total_final, 2)
+    
+    desglose_pagos["total"] = round(total_final, 2)
 
     venta = {
         "identificador": identificador,
@@ -239,16 +252,15 @@ async def facturar_cita(
         "local": sede.get("nombre"),
         "sede_id": cita["sede_id"],
         "moneda": moneda_sede,
-        "tipo_comision": tipo_comision,  # ⭐ NUEVO
+        "tipo_comision": tipo_comision,
         "cliente_id": cita["cliente_id"],
         "nombre_cliente": cliente.get("nombre", "") + " " + cliente.get("apellido", ""),
         "cedula_cliente": cliente.get("cedula", ""),
         "email_cliente": cliente.get("correo", ""),
         "telefono_cliente": cliente.get("telefono", ""),
         "items": items,
+        "historial_pagos": historial_pagos,
         "desglose_pagos": desglose_pagos,
-        
-        # Campos adicionales útiles
         "profesional_id": cita["profesional_id"],
         "profesional_nombre": cita.get("profesional_nombre", ""),
         "numero_comprobante": numero_comprobante,
@@ -265,7 +277,7 @@ async def facturar_cita(
                 "estado": "completada",
                 "estado_pago": "pagado",
                 "saldo_pendiente": 0,
-                "abono": cita["valor_total"],  # Actualizar al total
+                "abono": cita["valor_total"],
                 "fecha_facturacion": fecha_actual,
                 "numero_comprobante": numero_comprobante,
                 "facturado_por": current_user.get("email"),
@@ -294,23 +306,29 @@ async def facturar_cita(
     # 1️⃣3️⃣ ACUMULAR COMISIONES DEL ESTILISTA (SI APLICA)
     # ====================================
     comision_msg = "No aplica comisión para esta sede"
-    
-    # ⭐ SOLO GUARDAR COMISIONES SI HAY ALGO QUE COMISIONAR
+
     if valor_comision_total > 0:
         profesional_id = cita["profesional_id"]
         print(f"👤 Profesional ID: {profesional_id}")
 
+        # 🔍 Buscar documento de comisión PENDIENTE
         comision_document = await collection_commissions.find_one({
             "profesional_id": profesional_id,
-            "sede_id": cita["sede_id"]
+            "sede_id": cita["sede_id"],
+            "estado": "pendiente"
         })
         print(f"📂 Documento de comisión encontrado: {comision_document}")
+
+        # ⭐ REDONDEAR COMISIONES A 2 DECIMALES
+        valor_comision_servicio = round(valor_comision_servicio, 2)
+        total_comision_productos = round(total_comision_productos, 2)
+        valor_comision_total = round(valor_comision_total, 2)
 
         # Preparar detalle de comisión
         servicio_comision = {
             "servicio_id": cita["servicio_id"],
             "servicio_nombre": cita["servicio_nombre"],
-            "valor_servicio": valor_servicio,
+            "valor_servicio": round(valor_servicio, 2),
             "porcentaje": comision_porcentaje,
             "valor_comision_servicio": valor_comision_servicio,
             "valor_comision_productos": total_comision_productos,
@@ -320,45 +338,153 @@ async def facturar_cita(
             "tipo_comision_sede": tipo_comision
         }
 
+        # ⭐ INICIALIZAR VARIABLES
+        crear_nuevo_documento = False
+        fecha_cita_actual = datetime.strptime(cita["fecha"], "%Y-%m-%d")
+
+        # ⭐ VALIDAR SI SE DEBE CREAR NUEVO DOCUMENTO (15 DÍAS)
         if comision_document:
-            # Ya existe → incrementar
+            servicios_existentes = comision_document.get("servicios_detalle", [])
+            
+            # ⭐ MIGRAR DOCUMENTOS ANTIGUOS SIN periodo_inicio
+            if servicios_existentes and "periodo_inicio" not in comision_document:
+                print("⚠️ Documento sin periodo_inicio detectado. Migrando...")
+                fechas_migracion = []
+                for s in servicios_existentes:
+                    try:
+                        fecha = datetime.strptime(s["fecha"], "%Y-%m-%d")
+                        fechas_migracion.append(fecha)
+                    except:
+                        continue
+                
+                if fechas_migracion:
+                    fecha_inicio_migracion = min(fechas_migracion).strftime("%Y-%m-%d")
+                    fecha_fin_migracion = max(fechas_migracion).strftime("%Y-%m-%d")
+                    
+                    await collection_commissions.update_one(
+                        {"_id": comision_document["_id"]},
+                        {"$set": {
+                            "periodo_inicio": fecha_inicio_migracion,
+                            "periodo_fin": fecha_fin_migracion
+                        }}
+                    )
+                    print(f"✅ Documento migrado: {fecha_inicio_migracion} a {fecha_fin_migracion}")
+                    
+                    # Actualizar variable local
+                    comision_document["periodo_inicio"] = fecha_inicio_migracion
+                    comision_document["periodo_fin"] = fecha_fin_migracion
+            
+            # ⭐ VALIDAR RANGO DE 15 DÍAS
+            if servicios_existentes:
+                fechas = []
+                for s in servicios_existentes:
+                    try:
+                        fecha = datetime.strptime(s["fecha"], "%Y-%m-%d")
+                        fechas.append(fecha)
+                    except Exception as e:
+                        print(f"⚠️ Error parseando fecha: {e}")
+                        continue
+                
+                if fechas:
+                    fecha_mas_antigua = min(fechas)
+                    fecha_mas_reciente = max(fechas)
+                    
+                    # Calcular cuántos días abarcaría si agregamos esta cita
+                    fecha_inicio_rango = min(fecha_mas_antigua, fecha_cita_actual)
+                    fecha_fin_rango = max(fecha_mas_reciente, fecha_cita_actual)
+                    dias_totales = (fecha_fin_rango - fecha_inicio_rango).days + 1
+                    
+                    print(f"📅 Rango actual: {dias_totales} días ({fecha_inicio_rango.strftime('%Y-%m-%d')} a {fecha_fin_rango.strftime('%Y-%m-%d')})")
+                    
+                    # ⭐ Si supera 15 días, cerrar el actual y crear nuevo
+                    if dias_totales > 15:
+                        print(f"⚠️ El rango superaría los 15 días ({dias_totales}). Cerrando documento actual.")
+                        crear_nuevo_documento = True
+                        
+                        # Actualizar períodos en el documento que se va a cerrar
+                        await collection_commissions.update_one(
+                            {"_id": comision_document["_id"]},
+                            {"$set": {
+                                "periodo_inicio": fecha_mas_antigua.strftime("%Y-%m-%d"),
+                                "periodo_fin": fecha_mas_reciente.strftime("%Y-%m-%d")
+                            }}
+                        )
+                        print(f"✅ Documento cerrado. Período: {fecha_mas_antigua.strftime('%Y-%m-%d')} a {fecha_mas_reciente.strftime('%Y-%m-%d')}")
+                else:
+                    print("⚠️ No se pudieron parsear fechas, se actualizará el documento existente")
+            else:
+                print("⚠️ Documento sin servicios previos, se actualizará")
+
+        # ⭐ Decidir: Actualizar o Crear
+        if comision_document and not crear_nuevo_documento:
+            # Ya existe y NO supera 15 días → incrementar
+            print("🔄 Actualizando documento de comisión existente...")
+            
+            update_operations = {
+                "$inc": {
+                    "total_servicios": 1,
+                    "total_comisiones": valor_comision_total
+                },
+                "$set": {
+                    "estado": "pendiente",
+                    "periodo_fin": cita["fecha"]
+                },
+                "$push": {
+                    "servicios_detalle": servicio_comision
+                }
+            }
+            
+            # ⭐ Si no tiene periodo_inicio, agregarlo
+            if "periodo_inicio" not in comision_document:
+                update_operations["$set"]["periodo_inicio"] = cita["fecha"]
+            
             await collection_commissions.update_one(
                 {
                     "profesional_id": profesional_id,
-                    "sede_id": cita["sede_id"]
+                    "sede_id": cita["sede_id"],
+                    "estado": "pendiente"
                 },
-                {
-                    "$inc": {
-                        "total_servicios": 1,
-                        "total_comisiones": valor_comision_total
-                    },
-                    "$set": {
-                        "estado": "pendiente"
-                    },
-                    "$push": {
-                        "servicios_detalle": servicio_comision
-                    }
-                }
+                update_operations
             )
+            
+            # ⭐ REDONDEAR total_comisiones del documento
+            doc_actualizado = await collection_commissions.find_one({
+                "profesional_id": profesional_id,
+                "sede_id": cita["sede_id"],
+                "estado": "pendiente"
+            })
+            
+            if doc_actualizado:
+                total_redondeado = round(doc_actualizado.get("total_comisiones", 0), 2)
+                await collection_commissions.update_one(
+                    {"_id": doc_actualizado["_id"]},
+                    {"$set": {"total_comisiones": total_redondeado}}
+                )
+            
             comision_msg = f"Comisión actualizada (+{valor_comision_total} {moneda_sede})"
-            print("🔄 Comisión actualizada en el documento existente")
+            print(f"✅ Comisión actualizada: +{valor_comision_total} {moneda_sede}")
         else:
-            # No existe → crear registro nuevo
+            # No existe O superó 15 días → crear registro nuevo
+            print("🆕 Creando nuevo documento de comisión...")
             nuevo_doc = {
                 "profesional_id": profesional_id,
                 "profesional_nombre": cita["profesional_nombre"],
                 "sede_id": cita["sede_id"],
                 "moneda": moneda_sede,
-                "tipo_comision": tipo_comision,  # ⭐ NUEVO
+                "tipo_comision": tipo_comision,
                 "total_servicios": 1,
-                "total_comisiones": valor_comision_total,
+                "total_comisiones": round(valor_comision_total, 2),
                 "servicios_detalle": [servicio_comision],
+                "periodo_inicio": cita["fecha"],
+                "periodo_fin": cita["fecha"],
                 "estado": "pendiente",
                 "creado_en": datetime.now()
             }
             await collection_commissions.insert_one(nuevo_doc)
             comision_msg = f"Comisión creada ({valor_comision_total} {moneda_sede})"
-            print("🆕 Nuevo documento de comisión creado")
+            print(f"✅ Nuevo documento creado: {valor_comision_total} {moneda_sede}")
+    else:
+        print("⚠️ No se generó comisión (valor_comision_total = 0)")
 
     # ====================================
     # RESPUESTA FINAL
@@ -370,7 +496,7 @@ async def facturar_cita(
         "identificador": identificador,
         "total": total_final,
         "moneda": moneda_sede,
-        "tipo_comision_sede": tipo_comision,  # ⭐ NUEVO
+        "tipo_comision_sede": tipo_comision,
         "comision": comision_msg,
         "valor_comision_generada": valor_comision_total,
         "items_facturados": len(items),
@@ -387,21 +513,17 @@ async def facturar_cita(
 
 
 # ============================================================
-# 📄 Obtener facturas (opcional - para consultar)
+# 📄 Obtener facturas
 # ============================================================
 @router.get("/invoices/{cliente_id}")
 async def obtener_facturas_cliente(
     cliente_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Obtiene todas las facturas de un cliente
-    """
     facturas = await collection_invoices.find({
         "cliente_id": cliente_id
     }).sort("fecha_pago", -1).to_list(None)
 
-    # Convertir ObjectId a string
     for factura in facturas:
         factura["_id"] = str(factura["_id"])
 
@@ -413,16 +535,13 @@ async def obtener_facturas_cliente(
 
 
 # ============================================================
-# 📊 Obtener ventas (opcional - para reportes)
+# 📊 Obtener ventas
 # ============================================================
 @router.get("/sales/{sede_id}")
 async def obtener_ventas_sede(
     sede_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Obtiene todas las ventas de una sede
-    """
     if current_user["rol"] not in ["admin_sede", "superadmin"]:
         raise HTTPException(status_code=403, detail="No autorizado")
 
@@ -430,7 +549,6 @@ async def obtener_ventas_sede(
         "sede_id": sede_id
     }).sort("fecha_pago", -1).to_list(None)
 
-    # Convertir ObjectId a string
     for venta in ventas:
         venta["_id"] = str(venta["_id"])
 
