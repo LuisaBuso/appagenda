@@ -48,7 +48,7 @@ export const ClientSearch: React.FC<ClientSearchProps> = ({
     notas: ''
   });
 
-  // 🔥 CARGAR CLIENTES DE LA SEDE AL INICIAR
+  // Cargar clientes de la sede
   useEffect(() => {
     const cargarClientesIniciales = async () => {
       if (!user?.access_token || !sedeId) {
@@ -58,12 +58,10 @@ export const ClientSearch: React.FC<ClientSearchProps> = ({
       
       setLoadingClientes(true);
       try {
-        console.log('🔄 Cargando clientes iniciales para sede:', sedeId);
         const clientesData = await getClientesPorSede(user.access_token, sedeId);
-        console.log('📋 Clientes cargados:', clientesData.length);
         setClientes(clientesData);
       } catch (error) {
-        console.error('❌ Error cargando clientes iniciales:', error);
+        console.error('Error cargando clientes:', error);
         setClientes([]);
       } finally {
         setLoadingClientes(false);
@@ -73,7 +71,7 @@ export const ClientSearch: React.FC<ClientSearchProps> = ({
     cargarClientesIniciales();
   }, [sedeId, user?.access_token]);
 
-  // 🔥 BUSCAR CLIENTES CUANDO ESCRIBE
+  // Buscar clientes cuando escribe
   useEffect(() => {
     const buscarClientesEnTiempoReal = async () => {
       if (!user?.access_token || !sedeId) {
@@ -83,18 +81,14 @@ export const ClientSearch: React.FC<ClientSearchProps> = ({
       
       try {
         if (!clientSearch.trim()) {
-          // Cuando no hay búsqueda, cargamos todos los clientes de la sede
-          console.log('🔄 Cargando todos los clientes de la sede');
           const clientesSede = await getClientesPorSede(user.access_token, sedeId);
           setClientes(clientesSede);
         } else {
-          // Cuando hay búsqueda, usamos la función corregida
-          console.log('🔍 Buscando clientes:', clientSearch);
           const clientesEncontrados = await buscarClientesPorSede(user.access_token, sedeId, clientSearch);
           setClientes(clientesEncontrados);
         }
       } catch (error) {
-        console.error('❌ Error buscando clientes:', error);
+        console.error('Error buscando clientes:', error);
         setClientes([]);
       }
     };
@@ -103,7 +97,7 @@ export const ClientSearch: React.FC<ClientSearchProps> = ({
     return () => clearTimeout(timeoutId);
   }, [clientSearch, user?.access_token, sedeId]);
 
-  // 🔥 FUNCIÓN PARA CREAR NUEVO CLIENTE
+  // Función para crear nuevo cliente
   const handleCreateClient = async () => {
     if (!newClient.nombre.trim()) {
       setError('El nombre del cliente es requerido');
@@ -119,16 +113,12 @@ export const ClientSearch: React.FC<ClientSearchProps> = ({
     setError(null);
     
     try {
-      console.log('🔄 Creando nuevo cliente:', newClient);
       const result = await crearCliente(user.access_token, {
         ...newClient,
         sede_id: sedeId
       });
       
       if (result.success) {
-        console.log('✅ Cliente creado:', result.cliente);
-        
-        // 🔥 ACTUALIZAMOS LA LISTA DE CLIENTES
         const clientesActualizados = await getClientesPorSede(user.access_token, sedeId);
         setClientes(clientesActualizados);
         
@@ -147,26 +137,23 @@ export const ClientSearch: React.FC<ClientSearchProps> = ({
         });
       }
     } catch (error: any) {
-      console.error('❌ Error creando cliente:', error);
+      console.error('Error creando cliente:', error);
       setError(error.message || "Error al crear cliente");
     } finally {
       setCreatingClient(false);
     }
   };
 
-  // 🔥 FUNCIÓN PARA SELECCIONAR CLIENTE
   const handleSelectClient = (cliente: Cliente) => {
     onClientSelect(cliente);
     setClientSearch(cliente.nombre);
   };
 
-  // 🔥 FUNCIÓN PARA LIMPIAR CLIENTE SELECCIONADO
   const handleClearClient = () => {
     onClientClear();
     setClientSearch('');
   };
 
-  // 🔥 FORMATEAR FECHA PARA INPUT DATE
   const formatDateForInput = (dateString?: string) => {
     if (!dateString) return '';
     return dateString.split('T')[0];
@@ -174,70 +161,67 @@ export const ClientSearch: React.FC<ClientSearchProps> = ({
 
   return (
     <>
-      <div>
-        <label className="block text-sm font-semibold text-gray-800 mb-3">
+      <div className="space-y-1">
+        <label className="block text-xs font-semibold text-gray-700">
           Cliente {required && '*'}
         </label>
         
-        {/* CLIENTE SELECCIONADO */}
+        {/* Cliente seleccionado */}
         {selectedClient ? (
-          <div className="flex items-center justify-between p-4 bg-green-50 border border-green-200 rounded-xl">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                <User className="w-5 h-5 text-green-600" />
+          <div className="flex items-center justify-between p-2 bg-gray-50 border border-gray-300 rounded">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center">
+                <User className="w-3 h-3 text-gray-700" />
               </div>
               <div>
-                <div className="font-semibold text-green-900">{selectedClient.nombre}</div>
-                <div className="text-sm text-green-700">
+                <div className="text-xs font-medium text-gray-900">{selectedClient.nombre}</div>
+                <div className="text-[10px] text-gray-600">
                   {selectedClient.telefono && `📞 ${selectedClient.telefono}`}
                   {selectedClient.correo && ` • 📧 ${selectedClient.correo}`}
-                  {selectedClient.cedula && ` • 🆔 ${selectedClient.cedula}`}
                 </div>
               </div>
             </div>
             <button 
               onClick={handleClearClient}
-              className="text-green-600 hover:text-green-800 transition-colors"
+              className="text-gray-500 hover:text-gray-700"
             >
-              <X className="w-5 h-5" />
+              <X className="w-3 h-3" />
             </button>
           </div>
         ) : (
-          /* BÚSQUEDA DE CLIENTE */
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400" />
             <input 
               type="text" 
-              placeholder="Buscar cliente por nombre, teléfono, cédula o email..." 
+              placeholder="Buscar cliente..." 
               value={clientSearch} 
               onChange={(e) => setClientSearch(e.target.value)}
-              className="w-full border border-gray-300 rounded-xl px-12 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+              className="w-full border border-gray-300 rounded px-8 py-1.5 text-xs focus:ring-1 focus:ring-gray-900 focus:border-gray-900 outline-none"
             />
             <button 
               onClick={() => setShowClientModal(true)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-blue-600 transition-colors"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"
             >
-              <Plus className="w-5 h-5" />
+              <Plus className="w-3 h-3" />
             </button>
             
-            {/* LISTA DE CLIENTES SUGERIDOS */}
+            {/* Lista de clientes sugeridos */}
             {clientSearch && clientes.length > 0 && (
-              <div className="absolute z-20 w-full mt-2 bg-white border border-gray-200 rounded-2xl shadow-2xl max-h-64 overflow-y-auto">
+              <div className="absolute z-20 w-full mt-1 bg-white border border-gray-300 rounded shadow max-h-40 overflow-y-auto">
                 {clientes.map(cliente => (
                   <button 
                     key={cliente.cliente_id}
                     onClick={() => handleSelectClient(cliente)}
-                    className="w-full text-left px-4 py-3 hover:bg-blue-50 transition-all border-b border-gray-100 last:border-b-0 flex items-center gap-3"
+                    className="w-full text-left px-2 py-1.5 hover:bg-gray-100 border-b border-gray-200 last:border-b-0 flex items-center gap-2 text-xs"
                   >
-                    <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                      <User className="w-4 h-4 text-blue-600" />
+                    <div className="w-5 h-5 bg-gray-100 rounded-full flex items-center justify-center">
+                      <User className="w-2.5 h-2.5 text-gray-600" />
                     </div>
                     <div className="flex-1">
                       <div className="font-medium text-gray-900">{cliente.nombre}</div>
-                      <div className="text-sm text-gray-600">
+                      <div className="text-[10px] text-gray-600">
                         {cliente.telefono && `📞 ${cliente.telefono}`}
                         {cliente.correo && ` • 📧 ${cliente.correo}`}
-                        {cliente.cedula && ` • 🆔 ${cliente.cedula}`}
                       </div>
                     </div>
                   </button>
@@ -245,147 +229,153 @@ export const ClientSearch: React.FC<ClientSearchProps> = ({
               </div>
             )}
             
-            {/* MENSAJES DE ESTADO */}
+            {/* Mensajes de estado */}
             {loadingClientes && (
-              <div className="mt-2 text-xs text-blue-600">
-                🔄 Buscando clientes...
+              <div className="mt-1 text-[10px] text-gray-600">
+                🔄 Buscando...
               </div>
             )}
             {clientSearch && clientes.length === 0 && !loadingClientes && (
-              <div className="mt-2 text-xs text-gray-600">
-                No se encontraron clientes. Haz clic en el botón "+" para agregar uno nuevo.
+              <div className="mt-1 text-[10px] text-gray-600">
+                No encontrado. Haz clic en "+" para agregar.
               </div>
             )}
           </div>
         )}
       </div>
 
-      {/* MODAL PARA CREAR NUEVO CLIENTE */}
       {showClientModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">Nuevo Cliente</h3>
-              <p className="text-sm text-gray-600 mt-1">Completa los datos del nuevo cliente</p>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4">
+          <div className="bg-white rounded border border-gray-300 w-full max-w-sm max-h-[80vh] overflow-y-auto">
+            <div className="p-3 border-b border-gray-300">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-900">Nuevo Cliente</h3>
+                <button
+                  onClick={() => setShowClientModal(false)}
+                  className="p-1 hover:bg-gray-100 rounded"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
             </div>
             
-            <div className="p-6 space-y-4">
+            <div className="p-3 space-y-3">
               {error && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                <div className="p-2 bg-gray-100 border border-gray-300 rounded text-xs text-gray-700">
                   {error}
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Nombre completo *
-                  </label>
-                  <input
-                    type="text"
-                    value={newClient.nombre}
-                    onChange={(e) => setNewClient({...newClient, nombre: e.target.value})}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                    placeholder="Ej: María González"
-                    required
-                  />
-                </div>
+              <div className="space-y-2">
+                <label className="block text-xs font-medium text-gray-700">
+                  Nombre completo *
+                </label>
+                <input
+                  type="text"
+                  value={newClient.nombre}
+                  onChange={(e) => setNewClient({...newClient, nombre: e.target.value})}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-gray-900 focus:border-gray-900 outline-none"
+                  placeholder="Ej: María González"
+                  required
+                />
+              </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-gray-700">
                     Cédula
                   </label>
                   <input
                     type="text"
                     value={newClient.cedula}
                     onChange={(e) => setNewClient({...newClient, cedula: e.target.value})}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                    placeholder="Ej: 123456789"
+                    className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-gray-900 focus:border-gray-900 outline-none"
+                    placeholder="123456789"
                   />
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-gray-700">
                     Teléfono
                   </label>
                   <input
                     type="tel"
                     value={newClient.telefono}
                     onChange={(e) => setNewClient({...newClient, telefono: e.target.value})}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                    placeholder="Ej: 3001234567"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Email
-                  </label>
-                  <input
-                    type="email"
-                    value={newClient.correo}
-                    onChange={(e) => setNewClient({...newClient, correo: e.target.value})}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                    placeholder="Ej: cliente@email.com"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Ciudad
-                  </label>
-                  <input
-                    type="text"
-                    value={newClient.ciudad}
-                    onChange={(e) => setNewClient({...newClient, ciudad: e.target.value})}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                    placeholder="Ej: Bogotá"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Fecha de nacimiento
-                  </label>
-                  <input
-                    type="date"
-                    value={formatDateForInput(newClient.fecha_de_nacimiento)}
-                    onChange={(e) => setNewClient({...newClient, fecha_de_nacimiento: e.target.value})}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-gray-900 focus:border-gray-900 outline-none"
+                    placeholder="3001234567"
                   />
                 </div>
               </div>
+
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-gray-700">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={newClient.correo}
+                  onChange={(e) => setNewClient({...newClient, correo: e.target.value})}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-gray-900 focus:border-gray-900 outline-none"
+                  placeholder="cliente@email.com"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-gray-700">
+                  Ciudad
+                </label>
+                <input
+                  type="text"
+                  value={newClient.ciudad}
+                  onChange={(e) => setNewClient({...newClient, ciudad: e.target.value})}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-gray-900 focus:border-gray-900 outline-none"
+                  placeholder="Bogotá"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-gray-700">
+                  Fecha de nacimiento
+                </label>
+                <input
+                  type="date"
+                  value={formatDateForInput(newClient.fecha_de_nacimiento)}
+                  onChange={(e) => setNewClient({...newClient, fecha_de_nacimiento: e.target.value})}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-gray-900 focus:border-gray-900 outline-none"
+                />
+              </div>
               
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Notas (opcional)
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-gray-700">
+                  Notas
                 </label>
                 <textarea
                   value={newClient.notas}
                   onChange={(e) => setNewClient({...newClient, notas: e.target.value})}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none"
-                  rows={3}
-                  placeholder="Información adicional del cliente..."
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-gray-900 focus:border-gray-900 outline-none resize-none"
+                  rows={2}
+                  placeholder="Información adicional..."
                 />
               </div>
             </div>
             
-            <div className="p-6 border-t border-gray-200 flex gap-3">
+            <div className="p-3 border-t border-gray-300 flex gap-2">
               <button
                 onClick={() => setShowClientModal(false)}
                 disabled={creatingClient}
-                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                className="flex-1 px-3 py-1.5 border border-gray-300 text-gray-700 rounded text-xs hover:bg-gray-50 disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleCreateClient}
                 disabled={!newClient.nombre.trim() || creatingClient}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="flex-1 px-3 py-1.5 bg-gray-900 text-white rounded text-xs hover:bg-gray-800 disabled:opacity-50 flex items-center justify-center gap-1"
               >
                 {creatingClient ? (
                   <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <div className="animate-spin rounded-full h-2.5 w-2.5 border-b-2 border-white"></div>
                     Creando...
                   </>
                 ) : (
@@ -400,7 +390,7 @@ export const ClientSearch: React.FC<ClientSearchProps> = ({
       {/* Overlay para cerrar modal */}
       {showClientModal && (
         <div 
-          className="fixed inset-0 z-40" 
+          className="fixed inset-0 z-[9998]" 
           onClick={() => {
             if (!creatingClient) setShowClientModal(false);
           }} 

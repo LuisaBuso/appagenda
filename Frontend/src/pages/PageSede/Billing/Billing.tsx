@@ -6,7 +6,6 @@ import { Sidebar } from "../../../components/Layout/Sidebar"
 import { SalesMetrics } from "./sales-metrics"
 import { TodayAppointments } from "./today-appointments"
 import { ServiceProtocol } from "./service-protocol"
-import { ProductsForSale } from "./products-for-sale"
 // Asegúrate de que esta interfaz coincida con la de TodayAppointments
 interface Appointment {
   _id: string
@@ -60,7 +59,6 @@ export default function Billing() {
                 onSelectAppointment={handleSelectAppointment}
                 selectedAppointmentId={selectedAppointment?._id}
               />
-              <ProductsForSale />
             </div>
 
             {/* Right Column - Muestra el protocolo de la cita seleccionada */}

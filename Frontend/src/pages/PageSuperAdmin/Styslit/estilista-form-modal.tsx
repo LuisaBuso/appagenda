@@ -1,13 +1,14 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { X, Loader, ChevronDown, ChevronUp } from 'lucide-react'
+import { X, Loader, ChevronDown, ChevronUp, Clock } from 'lucide-react'
 import type { Estilista } from "../../../types/estilista"
 import { sedeService, type Sede } from "../Sedes/sedeService"
 import { serviciosService } from "../Services/serviciosService"
+import { estilistaService } from "./estilistaService"
 import { useAuth } from "../../../components/Auth/AuthContext"
 
-// Definir el tipo Servicio que coincide con la respuesta del servicio
+// Definir el tipo Servicio
 interface Servicio {
   id: string;
   servicio_id: string;
@@ -16,20 +17,55 @@ interface Servicio {
   precio: number;
   categoria: string;
   activo: boolean;
-  // Campos opcionales para compatibilidad
   descripcion?: string;
   comision_porcentaje?: number;
   imagen?: string;
   requiere_producto?: boolean;
 }
 
+// Tipo para disponibilidad de horario
+interface Disponibilidad {
+  dia_semana: number;
+  hora_inicio: string;
+  hora_fin: string;
+  activo: boolean;
+}
+
+// Tipo para datos del horario
+interface HorarioData {
+  profesional_id: string;
+  sede_id: string;
+  disponibilidad: Disponibilidad[];
+}
+
+// Tipo extendido para el modal
 interface EstilistaFormModalProps {
   isOpen: boolean
   onClose: () => void
-  onSave: (estilista: Partial<Estilista> & { password?: string }) => void
+  onSave: (estilista: Partial<Estilista> & { password?: string; horario?: HorarioData }) => void
   estilista: Estilista | null
   isSaving?: boolean
 }
+
+// Días de la semana
+const DIAS_SEMANA = [
+  { id: 1, nombre: "Lunes" },
+  { id: 2, nombre: "Martes" },
+  { id: 3, nombre: "Miércoles" },
+  { id: 4, nombre: "Jueves" },
+  { id: 5, nombre: "Viernes" },
+  { id: 6, nombre: "Sábado" },
+  { id: 7, nombre: "Domingo" }
+]
+
+// Horarios predefinidos
+const HORARIOS_PREDEFINIDOS = [
+  { label: "Turno Mañana (8:00 - 12:00)", inicio: "08:00", fin: "12:00" },
+  { label: "Turno Tarde (13:00 - 17:00)", inicio: "13:00", fin: "17:00" },
+  { label: "Turno Completo (8:00 - 17:00)", inicio: "08:00", fin: "17:00" },
+  { label: "Medio Turno (8:00 - 14:00)", inicio: "08:00", fin: "14:00" },
+  { label: "Horario Extendido (7:00 - 19:00)", inicio: "07:00", fin: "19:00" }
+]
 
 export function EstilistaFormModal({ isOpen, onClose, onSave, estilista, isSaving = false }: EstilistaFormModalProps) {
   const [formData, setFormData] = useState({
@@ -42,12 +78,28 @@ export function EstilistaFormModal({ isOpen, onClose, onSave, estilista, isSavin
     activo: true
   })
 
+  // Estado para el horario
+  const [horario, setHorario] = useState<HorarioData>({
+    profesional_id: "",
+    sede_id: "",
+    disponibilidad: DIAS_SEMANA.map(dia => ({
+      dia_semana: dia.id,
+      hora_inicio: "08:00",
+      hora_fin: "17:00",
+      activo: true
+    }))
+  })
+
   const [sedes, setSedes] = useState<Sede[]>([])
   const [servicios, setServicios] = useState<Servicio[]>([])
   const [isLoadingSedes, setIsLoadingSedes] = useState(false)
   const [isLoadingServicios, setIsLoadingServicios] = useState(false)
   const [isSedeDropdownOpen, setIsSedeDropdownOpen] = useState(false)
   const [isServiciosDropdownOpen, setIsServiciosDropdownOpen] = useState(false)
+  const [showHorarioConfig, setShowHorarioConfig] = useState(false)
+  const [horarioPredefinido, setHorarioPredefinido] = useState<string>("")
+  const [horarioId, setHorarioId] = useState<string>("") // Para guardar el ID del horario cuando se edita
+  const [isLoadingHorario, setIsLoadingHorario] = useState(false)
   const { user } = useAuth()
 
   // Cargar sedes y servicios disponibles
@@ -67,9 +119,7 @@ export function EstilistaFormModal({ isOpen, onClose, onSave, estilista, isSavin
         console.log('📥 Servicios cargados:', serviciosData)
         setSedes(sedesData)
         
-        // Transformar los servicios al tipo esperado
         const serviciosTransformados: Servicio[] = serviciosData.map(servicio => {
-          // Validar que el servicio tenga un ID válido
           const servicioId = servicio.servicio_id || servicio.id;
           if (!servicioId) {
             console.warn('⚠️ Servicio sin ID válido:', servicio);
@@ -89,7 +139,7 @@ export function EstilistaFormModal({ isOpen, onClose, onSave, estilista, isSavin
             imagen: servicio.imagen,
             requiere_producto: servicio.requiere_producto
           }
-        }).filter(Boolean) as Servicio[]; // Filtrar servicios nulos
+        }).filter(Boolean) as Servicio[];
         
         console.log('🔍 === SERVICIOS CARGADOS ===');
         serviciosTransformados.forEach((servicio, index) => {
@@ -116,31 +166,135 @@ export function EstilistaFormModal({ isOpen, onClose, onSave, estilista, isSavin
     }
   }, [isOpen, user?.access_token])
 
-  // Inicializar formData cuando se abre el modal
+  // Cargar datos del estilista y su horario cuando se edita
   useEffect(() => {
-    if (estilista) {
-      console.log('📝 Estilista para editar:', estilista)
-      setFormData({
-        nombre: estilista.nombre || "",
-        email: estilista.email || "",
-        sede_id: estilista.sede_id || "",
-        comision: estilista.comision !== null && estilista.comision !== undefined ? estilista.comision.toString() : "",
-        especialidades: estilista.especialidades || [],
-        password: "", // No mostrar password en edición
-        activo: estilista.activo !== undefined ? estilista.activo : true
-      })
-    } else {
-      setFormData({
-        nombre: "",
-        email: "",
-        sede_id: "",
-        comision: "",
-        especialidades: [],
-        password: "",
-        activo: true
-      })
+    const loadEstilistaData = async () => {
+      if (estilista && user?.access_token) {
+        console.log('📝 Cargando datos del estilista para editar:', estilista)
+        
+        // Cargar datos básicos del estilista
+        setFormData({
+          nombre: estilista.nombre || "",
+          email: estilista.email || "",
+          sede_id: estilista.sede_id || "",
+          comision: estilista.comision !== null && estilista.comision !== undefined ? estilista.comision.toString() : "",
+          especialidades: estilista.especialidades || [],
+          password: "",
+          activo: estilista.activo !== undefined ? estilista.activo : true
+        })
+
+        // Cargar horario del estilista
+        setIsLoadingHorario(true)
+        try {
+          const horarioExistente = await estilistaService.getHorarioByProfesional(
+            user.access_token, 
+            estilista.profesional_id
+          )
+          
+          if (horarioExistente) {
+            console.log('📅 Horario existente encontrado:', horarioExistente)
+            setHorarioId(horarioExistente._id)
+            setHorario({
+              profesional_id: estilista.profesional_id,
+              sede_id: estilista.sede_id,
+              disponibilidad: horarioExistente.disponibilidad || DIAS_SEMANA.map(dia => ({
+                dia_semana: dia.id,
+                hora_inicio: "08:00",
+                hora_fin: "17:00",
+                activo: true
+              }))
+            })
+            setShowHorarioConfig(true)
+          } else {
+            console.log('ℹ️ No se encontró horario para este estilista')
+            // Inicializar horario vacío
+            setHorario({
+              profesional_id: estilista.profesional_id,
+              sede_id: estilista.sede_id,
+              disponibilidad: DIAS_SEMANA.map(dia => ({
+                dia_semana: dia.id,
+                hora_inicio: "08:00",
+                hora_fin: "17:00",
+                activo: true
+              }))
+            })
+          }
+        } catch (error) {
+          console.error('❌ Error cargando horario:', error)
+        } finally {
+          setIsLoadingHorario(false)
+        }
+      } else if (!estilista) {
+        // Nuevo estilista
+        setFormData({
+          nombre: "",
+          email: "",
+          sede_id: "",
+          comision: "",
+          especialidades: [],
+          password: "",
+          activo: true
+        })
+        setHorario({
+          profesional_id: "",
+          sede_id: "",
+          disponibilidad: DIAS_SEMANA.map(dia => ({
+            dia_semana: dia.id,
+            hora_inicio: "08:00",
+            hora_fin: "17:00",
+            activo: true
+          }))
+        })
+        setHorarioId("")
+        setShowHorarioConfig(true)
+      }
     }
-  }, [estilista, isOpen])
+
+    if (isOpen) {
+      loadEstilistaData()
+    }
+  }, [estilista, isOpen, user?.access_token])
+
+  // Actualizar sede_id en horario cuando se selecciona una sede
+  useEffect(() => {
+    if (formData.sede_id) {
+      setHorario(prev => ({
+        ...prev,
+        sede_id: formData.sede_id
+      }))
+    }
+  }, [formData.sede_id])
+
+  // Aplicar horario predefinido
+  const aplicarHorarioPredefinido = (horarioSeleccionado: string) => {
+    if (!horarioSeleccionado) return
+    
+    const horarioEncontrado = HORARIOS_PREDEFINIDOS.find(h => h.label === horarioSeleccionado)
+    if (horarioEncontrado) {
+      const nuevaDisponibilidad = horario.disponibilidad.map(dia => ({
+        ...dia,
+        hora_inicio: horarioEncontrado.inicio,
+        hora_fin: horarioEncontrado.fin
+      }))
+      
+      setHorario(prev => ({
+        ...prev,
+        disponibilidad: nuevaDisponibilidad
+      }))
+    }
+  }
+
+  // Actualizar horario de un día específico
+  const actualizarHorarioDia = (diaSemana: number, campo: 'hora_inicio' | 'hora_fin' | 'activo', valor: string | boolean) => {
+    const nuevaDisponibilidad = horario.disponibilidad.map(dia => 
+      dia.dia_semana === diaSemana ? { ...dia, [campo]: valor } : dia
+    )
+    
+    setHorario(prev => ({
+      ...prev,
+      disponibilidad: nuevaDisponibilidad
+    }))
+  }
 
   // Cerrar dropdowns cuando se hace clic fuera
   useEffect(() => {
@@ -164,7 +318,6 @@ export function EstilistaFormModal({ isOpen, onClose, onSave, estilista, isSavin
     e.preventDefault()
     e.stopPropagation()
     
-    // ✅ Asegurar que especialidades siempre tenga un valor
     const especialidadesValidas = (formData.especialidades || [])
       .filter(esp => {
         const isValid = esp !== null && esp !== undefined && esp !== "" && typeof esp === 'string';
@@ -177,16 +330,19 @@ export function EstilistaFormModal({ isOpen, onClose, onSave, estilista, isSavin
 
     console.log('🎯 Especialidades válidas a guardar:', especialidadesValidas);
 
-    // ✅ PREPARAR DATOS CON VALIDACIÓN EXTRA - Asegurar que especialidades siempre esté definido
-    const saveData: Partial<Estilista> & { password?: string } = {
+    const saveData: Partial<Estilista> & { 
+      password?: string; 
+      horario?: HorarioData;
+      horarioId?: string; // Incluir ID del horario para actualización
+    } = {
       nombre: formData.nombre.trim(),
       email: formData.email.trim(),
       sede_id: formData.sede_id,
-      especialidades: especialidadesValidas, // Esto siempre será un array (puede estar vacío)
+      especialidades: especialidadesValidas,
       activo: formData.activo
     }
 
-    // ✅ MANEJO SEGURO DE COMISION - SOLO ENVIAR SI ES VÁLIDO
+    // Manejo de comisión
     if (formData.comision.trim() !== "") {
       const comisionNum = Number(formData.comision);
       if (!isNaN(comisionNum) && comisionNum > 0) {
@@ -200,16 +356,29 @@ export function EstilistaFormModal({ isOpen, onClose, onSave, estilista, isSavin
 
     console.log('🔍 === DATOS PARA GUARDAR ===');
     console.log('📤 saveData:', saveData);
-    console.log('🎯 Especialidades:', saveData.especialidades);
-    console.log('📋 Tipo de especialidades:', typeof saveData.especialidades);
-    console.log('🔢 Cantidad de especialidades:', (saveData.especialidades || []).length); // ✅ Ahora es seguro porque siempre está definido
 
     // Solo incluir password si es un nuevo estilista y tiene valor
     if (!estilista && formData.password.trim()) {
       saveData.password = formData.password;
     }
 
-    // Validaciones finales antes de enviar
+    // Incluir datos del horario si está configurado
+    if (showHorarioConfig && formData.sede_id) {
+      const horarioCompleto = {
+        ...horario,
+        profesional_id: estilista ? estilista.profesional_id : "", // Se completará después para nuevos
+        sede_id: formData.sede_id
+      };
+      
+      saveData.horario = horarioCompleto;
+      
+      // Si estamos editando y ya existe un horario, incluir el ID
+      if (estilista && horarioId) {
+        saveData.horarioId = horarioId;
+      }
+    }
+
+    // Validaciones
     if (!saveData.sede_id) {
       alert('Por favor selecciona una sede');
       return;
@@ -230,6 +399,23 @@ export function EstilistaFormModal({ isOpen, onClose, onSave, estilista, isSavin
       return;
     }
 
+    // Validar horarios si está activo
+    if (showHorarioConfig) {
+      const horariosInvalidos = horario.disponibilidad.filter(dia => 
+        dia.activo && (dia.hora_inicio >= dia.hora_fin)
+      );
+      
+      if (horariosInvalidos.length > 0) {
+        const diaInvalidos = horariosInvalidos.map(dia => {
+          const diaInfo = DIAS_SEMANA.find(d => d.id === dia.dia_semana);
+          return diaInfo?.nombre || `Día ${dia.dia_semana}`;
+        }).join(', ');
+        
+        alert(`Los siguientes días tienen horarios inválidos (hora inicio >= hora fin): ${diaInvalidos}`);
+        return;
+      }
+    }
+
     onSave(saveData)
   }
 
@@ -241,7 +427,6 @@ export function EstilistaFormModal({ isOpen, onClose, onSave, estilista, isSavin
   const handleToggleServicio = (servicioId: string) => {
     console.log('🔄 Toggle servicio ID:', servicioId);
     
-    // Validar que el servicioId sea válido
     if (!servicioId || servicioId === 'undefined') {
       console.error('❌ ID de servicio inválido:', servicioId);
       return;
@@ -256,16 +441,13 @@ export function EstilistaFormModal({ isOpen, onClose, onSave, estilista, isSavin
   }
 
   const handleComisionChange = (value: string) => {
-    // ✅ Permitir solo números y punto decimal
     const cleanedValue = value.replace(/[^\d.]/g, '');
-    
-    // ✅ Validar que solo tenga un punto decimal
     const parts = cleanedValue.split('.');
+    
     if (parts.length > 2) {
-      return; // No permitir múltiples puntos
+      return;
     }
     
-    // ✅ Limitar a 2 decimales
     if (parts[1] && parts[1].length > 2) {
       return;
     }
@@ -283,8 +465,8 @@ export function EstilistaFormModal({ isOpen, onClose, onSave, estilista, isSavin
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={stopPropagation}>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overflow-y-auto py-4">
+      <div className="bg-white rounded-lg w-full max-w-md p-6 max-h-[90vh] overflow-y-auto my-auto" onClick={stopPropagation}>
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold">{estilista ? "Editar estilista" : "Añadir estilista"}</h2>
           <button 
@@ -475,6 +657,121 @@ export function EstilistaFormModal({ isOpen, onClose, onSave, estilista, isSavin
             </div>
           )}
 
+          {/* Configuración de Horario */}
+          <div className="border border-gray-300 rounded-lg p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Clock className="h-5 w-5 text-gray-600" />
+                <h3 className="text-sm font-medium">
+                  Configuración de Horario {estilista ? '(Edición)' : '(Nuevo)'}
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                {isLoadingHorario && (
+                  <Loader className="h-4 w-4 animate-spin text-gray-400" />
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowHorarioConfig(!showHorarioConfig)}
+                  className="text-sm text-blue-600 hover:text-blue-800"
+                >
+                  {showHorarioConfig ? "Ocultar" : "Mostrar"}
+                </button>
+              </div>
+            </div>
+            
+            {showHorarioConfig && (
+              <>
+                {estilista && horarioId && (
+                  <div className="text-xs text-green-600 bg-green-50 p-2 rounded">
+                    <p>✅ Este estilista ya tiene un horario configurado (ID: {horarioId})</p>
+                  </div>
+                )}
+                
+                <div>
+                  <label className="block text-sm font-medium mb-2">Horario Predefinido</label>
+                  <select
+                    value={horarioPredefinido}
+                    onChange={(e) => {
+                      setHorarioPredefinido(e.target.value);
+                      aplicarHorarioPredefinido(e.target.value);
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-[oklch(0.65_0.25_280)] focus:outline-none focus:ring-2 focus:ring-[oklch(0.65_0.25_280)]/20"
+                    disabled={isSaving || isLoadingHorario}
+                  >
+                    <option value="">Seleccionar horario predefinido</option>
+                    {HORARIOS_PREDEFINIDOS.map((horario) => (
+                      <option key={horario.label} value={horario.label}>
+                        {horario.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Selecciona un horario predefinido o configura manualmente abajo
+                  </p>
+                </div>
+
+                <div className="space-y-3 max-h-60 overflow-y-auto p-2 border border-gray-200 rounded-lg">
+                  <p className="text-sm font-medium">Configuración por día:</p>
+                  {horario.disponibilidad.map((dia) => {
+                    const diaInfo = DIAS_SEMANA.find(d => d.id === dia.dia_semana);
+                    return (
+                      <div key={dia.dia_semana} className="border-b pb-3 last:border-0">
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={dia.activo}
+                              onChange={(e) => actualizarHorarioDia(dia.dia_semana, 'activo', e.target.checked)}
+                              className="h-4 w-4 text-[oklch(0.65_0.25_280)] focus:ring-[oklch(0.65_0.25_280)] rounded border-gray-300"
+                              disabled={isSaving || isLoadingHorario}
+                            />
+                            <span className="font-medium">{diaInfo?.nombre || `Día ${dia.dia_semana}`}</span>
+                          </label>
+                          <span className={`text-xs px-2 py-1 rounded ${dia.activo ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                            {dia.activo ? 'Activo' : 'Inactivo'}
+                          </span>
+                        </div>
+                        
+                        {dia.activo && (
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs text-gray-600 mb-1">Hora Inicio</label>
+                              <input
+                                type="time"
+                                value={dia.hora_inicio}
+                                onChange={(e) => actualizarHorarioDia(dia.dia_semana, 'hora_inicio', e.target.value)}
+                                className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:border-[oklch(0.65_0.25_280)] focus:outline-none focus:ring-1 focus:ring-[oklch(0.65_0.25_280)]/20"
+                                disabled={isSaving || isLoadingHorario}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-600 mb-1">Hora Fin</label>
+                              <input
+                                type="time"
+                                value={dia.hora_fin}
+                                onChange={(e) => actualizarHorarioDia(dia.dia_semana, 'hora_fin', e.target.value)}
+                                className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:border-[oklch(0.65_0.25_280)] focus:outline-none focus:ring-1 focus:ring-[oklch(0.65_0.25_280)]/20"
+                                disabled={isSaving || isLoadingHorario}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="text-xs text-gray-500 bg-blue-50 p-2 rounded">
+                  <p>💡 {estilista ? 
+                    'Los cambios en el horario se aplicarán al guardar.' : 
+                    'El horario se creará automáticamente para el estilista con la configuración establecida.'}
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+
           {/* Campo de contraseña solo para nuevos estilistas */}
           {!estilista && (
             <div>
@@ -529,7 +826,7 @@ export function EstilistaFormModal({ isOpen, onClose, onSave, estilista, isSavin
                   Guardando...
                 </>
               ) : (
-                estilista ? "Guardar cambios" : "Crear estilista"
+                estilista ? "Guardar cambios" : "Crear estilista con horario"
               )}
             </button>
           </div>
