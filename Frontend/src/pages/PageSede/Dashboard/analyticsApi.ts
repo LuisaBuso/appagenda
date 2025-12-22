@@ -19,32 +19,20 @@ export interface VentasMetricas {
 
 export interface VentasDashboardResponse {
   success: boolean;
-  tipo_dashboard: string;
   descripcion: string;
-  fuentes: {
-    ventas: string;
-  };
-  usuario: {
-    username: string | null;
-    rol: string;
-    sede_asignada: string;
-  };
-  period: string;
-  range: {
+  range?: {
     start: string;
     end: string;
     dias: number;
   };
-  sede_id: string;
+  usuario?: {
+    sede_asignada: string;
+    nombre_sede: string;
+  };
   metricas_por_moneda: {
-    USD: VentasMetricas;
-    // Puedes agregar otras monedas si es necesario
-    // COP?: VentasMetricas;
+    [key: string]: VentasMetricas; // Esto permite cualquier moneda (USD, COP, etc.)
   };
-  debug_info: {
-    ventas_registradas: number;
-  };
-  calidad_datos: string;
+  debug_info?: any;
 }
 
 // Interfaces para el dashboard de clientes (existente)

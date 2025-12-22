@@ -78,6 +78,7 @@ const getSedeIdFromEmail = (email: string): string | undefined => {
     'rizosfelicesguayaquil@gmail.com': 'SD-28080',
     'rizosfelicessabaneta@gmail.com': 'SD-89958',
     'rizosfelicespereira@gmail.com': 'SD-28919',
+    'rfbcedritos@gmail.com': 'SD-30525',
     'info@rizosfelices.co': 'SD-40203',
     'rizosfelicesniquia@gmail.com': 'SD-26470',
     // Agrega más según sea necesario
