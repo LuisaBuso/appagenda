@@ -1165,11 +1165,11 @@ async def obtener_fichas_por_cliente(
 
 
 # ============================================================
-# 📅 Obtener todas las citas del estilista autenticado
+# 📅 Obtener todas las citas del estilista autenticado new
 # ============================================================
 @router.get("/citas/estilista", response_model=list)
 async def get_citas_estilista(
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user) 
 ):
     if current_user["rol"] != "estilista":
         raise HTTPException(
