@@ -9,8 +9,7 @@ import boto3
 import json
 
 from app.scheduling.models import FichaCreate
-from app.scheduling.models import PagoRequest
-from app.scheduling.models import Cita, ProductoItem
+from app.scheduling.models import Cita, ProductoItem, PagoRequest
 from app.database.mongo import (
     collection_citas,
     collection_horarios,
@@ -20,6 +19,7 @@ from app.database.mongo import (
     collection_locales,
     collection_block,
     collection_card,
+    collection_commissions,
     collection_products
 )
 from app.auth.routes import get_current_user
@@ -40,36 +40,26 @@ s3_client = boto3.client(
 
 def upload_to_s3(file: UploadFile, folder_path: str) -> str:
     try:
-        # Extensión real
-        file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
+        file_extension = file.filename.split('.')[-1]
         unique_filename = f"{uuid.uuid4()}.{file_extension}"
         s3_key = f"{folder_path}/{unique_filename}"
 
-        # Leer bytes del archivo
-        file_bytes = file.file.read()
-
-        # Obtener Content-Type correcto para que NO descargue
-        content_type = file.content_type or "image/jpeg"
-
-        # Subir correctamente al bucket con ContentType
         s3_client.put_object(
             Bucket=os.getenv("AWS_BUCKET_NAME"),
             Key=s3_key,
-            Body=file_bytes,
-            ContentType=content_type,
+            Body=file.file.read(),
+            ContentType=file.content_type or "image/webp"
         )
 
-        # Generar URL pública
-        bucket_name = os.getenv("AWS_BUCKET_NAME")
-        region = os.getenv("AWS_REGION", "us-west-2")
+        base_url = os.getenv("AWS_PUBLIC_BASE_URL")
+        if not base_url:
+            raise RuntimeError("AWS_PUBLIC_BASE_URL no está configurado")
 
-        url = f"https://{bucket_name}.s3.{region}.amazonaws.com/{s3_key}"
-
-        return url
+        return f"{base_url}/{s3_key}"
 
     except Exception as e:
-        print(f"Error subiendo archivo a S3: {e}")
-        raise HTTPException(status_code=500, detail=f"Error subiendo archivo: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 # -----------------------
@@ -319,7 +309,8 @@ async def crear_cita(
     data["abono"] = float(abono)
     data["saldo_pendiente"] = float(saldo_pendiente)
     data["estado_pago"] = estado_pago
-    data["metodo_pago"] = cita.metodo_pago
+    data["metodo_pago_inicial"] = metodo_pago_inicial  # ⭐ NUEVO
+    data["metodo_pago_actual"] = metodo_pago_inicial   # ⭐ NUEVO
     data["moneda"] = moneda_sede
     data["estado"] = "confirmada"  # Estado por defecto
 
@@ -822,7 +813,8 @@ async def crear_cita(
             "horario": f"{cita.hora_inicio} - {cita.hora_fin}",
             "valor_total": valor_total,
             "estado_pago": estado_pago,
-            "metodo_pago": cita.metodo_pago,
+            "metodo_pago_inicial": metodo_pago_inicial,  # ⭐ NUEVO
+            "metodo_pago_actual": metodo_pago_inicial,   # ⭐ NUEVO (mismo al inicio)
             "saldo_pendiente": saldo_pendiente,
             "emails_enviados": {
                 "cliente": bool(cliente_email),
@@ -869,7 +861,7 @@ async def cancelar_cita(cita_id: str, current_user: dict = Depends(get_current_u
 
     if current_user.get("rol") == "usuario":
         if cita.get("cliente_id") != current_user.get("user_id") and cita.get("cliente_id") != current_user.get("cliente_id"):
-            raise HTTPException(status_code=403, detail="Solo puedes cancelar tus p ropias citas")
+            raise HTTPException(status_code=403, detail="Solo puedes cancelar tus propias citas")
 
     await collection_citas.update_one({"_id": ObjectId(cita["_id"])}, {"$set": {
         "estado": "cancelada",
@@ -935,6 +927,19 @@ async def registrar_pago(
         estado_pago = "pendiente"
 
     saldo_pendiente = round(valor_total - nuevo_abono, 2)
+    
+    # ⭐ NUEVO: Crear registro en historial
+    nuevo_pago = {
+        "fecha": datetime.now(),
+        "monto": float(monto),
+        "metodo": data.metodo_pago,
+        "tipo": "pago_adicional",
+        "registrado_por": current_user.get("email"),
+        "saldo_despues": float(saldo_pendiente),
+        "notas": data.notas if hasattr(data, 'notas') else None
+    }
+
+    # ⭐ ACTUALIZAR: Con historial y métodos de pago
     await collection_citas.update_one(
         {"_id": ObjectId(cita_id)},
         {
@@ -942,8 +947,11 @@ async def registrar_pago(
                 "abono": nuevo_abono,
                 "saldo_pendiente": saldo_pendiente,
                 "estado_pago": estado_pago,
-                "metodo_pago": data.metodo_pago,
+                "metodo_pago_actual": data.metodo_pago,  # ⭐ NUEVO: Último método usado
                 "ultima_actualizacion": datetime.now()
+            },
+            "$push": {
+                "historial_pagos": nuevo_pago  # ⭐ NUEVO: Agregar al historial
             }
         }
     )
@@ -952,7 +960,9 @@ async def registrar_pago(
         "success": True,
         "abono": nuevo_abono,
         "saldo_pendiente": saldo_pendiente,
-        "estado_pago": estado_pago
+        "estado_pago": estado_pago,
+        "metodo_pago_usado": data.metodo_pago,
+        "mensaje": f"Pago de {monto} registrado exitosamente vía {data.metodo_pago}"
     }
 
 # =============================================================
@@ -1160,16 +1170,12 @@ async def obtener_fichas_por_cliente(
         "fichas": resultado
     }
 
-
-
-
-
 # ============================================================
-# 📅 Obtener todas las citas del estilista autenticado
+# 📅 Obtener todas las citas del estilista autenticado new
 # ============================================================
 @router.get("/citas/estilista", response_model=list)
 async def get_citas_estilista(
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user) 
 ):
     if current_user["rol"] != "estilista":
         raise HTTPException(
@@ -1424,6 +1430,7 @@ async def get_citas_sede(current_user: dict = Depends(get_current_user)):
         "citas": citas
     }
 
+
 # ============================================================
 # 📦 Agregar productos a una cita - CON COMISIÓN SEGÚN ROL
 # ============================================================
@@ -1433,126 +1440,166 @@ async def agregar_productos_a_cita(
     productos: List[ProductoItem],
     current_user: dict = Depends(get_current_user)
 ):
+    """
+    Agrega productos a una cita usando el precio según la moneda de la sede.
+    ⭐ Solo comisiona si lo agrega un ESTILISTA, no si es admin_sede.
+    """
+    # Solo admin sede, admin o estilista
     if current_user["rol"] not in ["admin_sede", "admin", "estilista"]:
-        raise HTTPException(403, "No tienes permisos")
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para agregar productos"
+        )
 
+    # Información del usuario que agrega
+    rol_usuario = current_user["rol"]
+    email_usuario = current_user.get("email")
+    profesional_id = current_user.get("profesional_id")
+
+    # Buscar cita
     cita = await collection_citas.find_one({"_id": ObjectId(cita_id)})
     if not cita:
-        raise HTTPException(404, "Cita no encontrada")
+        raise HTTPException(status_code=404, detail="Cita no encontrada")
 
+    # Obtener moneda de la cita
     moneda_cita = cita.get("moneda")
     if not moneda_cita:
-        raise HTTPException(400, "La cita no tiene moneda")
+        raise HTTPException(
+            status_code=400,
+            detail="Esta cita no tiene moneda asignada. Contacta soporte."
+        )
 
+    # Obtener reglas de comisión de la sede
     sede = await collection_locales.find_one({"sede_id": cita["sede_id"]})
     if not sede:
-        raise HTTPException(404, "Sede no encontrada")
-
+        raise HTTPException(status_code=404, detail="Sede no encontrada")
+    
     reglas_comision = sede.get("reglas_comision", {"tipo": "servicios"})
     tipo_comision = reglas_comision.get("tipo", "servicios")
+    
+    # Verificar si la sede permite comisión de productos
     permite_comision_productos = tipo_comision in ["productos", "mixto"]
+    
+    # ⭐ REGLA: Solo comisiona si es ESTILISTA
+    aplica_comision = permite_comision_productos and rol_usuario == "estilista"
 
-    # ==============================
-    # 🔑 INDEXAR PRODUCTOS EXISTENTES
-    # ==============================
-    productos_map = {
-        p["producto_id"]: p
-        for p in cita.get("productos", [])
-    }
+    # Productos actuales
+    productos_actuales = cita.get("productos", [])
 
-    total_productos_agregados = 0
+    # Procesar nuevos productos
+    nuevos_productos = []
+    total_productos = 0
     total_comision_productos = 0
 
     for p in productos:
+        # Buscar producto en BD
         producto_db = await collection_products.find_one({"id": p.producto_id})
+        
         if not producto_db:
-            raise HTTPException(404, f"Producto {p.producto_id} no encontrado")
-
-        precios = producto_db.get("precios", {})
-        if moneda_cita not in precios:
             raise HTTPException(
-                400,
-                f"Producto {producto_db.get('nombre')} sin precio en {moneda_cita}"
+                status_code=404,
+                detail=f"Producto con ID '{p.producto_id}' no encontrado"
             )
+        
+        # Obtener precio en la moneda correcta
+        precios_producto = producto_db.get("precios", {})
+        
+        if moneda_cita not in precios_producto:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El producto '{producto_db.get('nombre')}' no tiene precio configurado en {moneda_cita}"
+            )
+        
+        precio_unitario = round(precios_producto[moneda_cita], 2)
+        subtotal = round(p.cantidad * precio_unitario, 2)
+        
+        # Calcular comisión (solo si es estilista)
+        comision_porcentaje = 0
+        comision_producto = 0
+        
+        if aplica_comision:
+            comision_porcentaje = producto_db.get("comision", 0)
+            comision_producto = round((subtotal * comision_porcentaje) / 100, 2)
+            total_comision_productos += comision_producto
+        
+        # Construir objeto producto
+        nuevo_producto = {
+            "producto_id": p.producto_id,
+            "nombre": producto_db.get("nombre"),
+            "cantidad": p.cantidad,
+            "precio_unitario": precio_unitario,
+            "subtotal": subtotal,
+            "moneda": moneda_cita,
+            "comision_porcentaje": comision_porcentaje,
+            "comision_valor": comision_producto,
+            "agregado_por_email": email_usuario,
+            "agregado_por_rol": rol_usuario,
+            "fecha_agregado": datetime.utcnow(),
+        }
+        
+        # Si es estilista, guardar su profesional_id para comisiones
+        if rol_usuario == "estilista" and profesional_id:
+            nuevo_producto["profesional_id"] = profesional_id
+        
+        nuevos_productos.append(nuevo_producto)
+        total_productos += subtotal
 
-        precio_unitario = precios[moneda_cita]
-        subtotal = round(p.cantidad * precio_unitario, 2)  # ⭐ REDONDEO
+    # Redondear totales
+    total_productos = round(total_productos, 2)
+    total_comision_productos = round(total_comision_productos, 2)
 
-        # Comisión
-        comision_porcentaje = producto_db.get("comision", 0) if permite_comision_productos else 0
-        comision_valor = round((subtotal * comision_porcentaje) / 100, 2) if permite_comision_productos else 0  # ⭐ REDONDEO
+    # Agregar productos a la cita
+    productos_final = productos_actuales + nuevos_productos
 
-        total_productos_agregados += subtotal
-        total_comision_productos += comision_valor
+    # Recalcular totales
+    nuevo_total = round(cita.get("valor_total", 0) + total_productos, 2)
+    abono_actual = round(cita.get("abono", 0), 2)
+    nuevo_saldo = round(nuevo_total - abono_actual, 2)
 
-        # ==============================
-        # 🔥 CONSOLIDAR PRODUCTO
-        # ==============================
-        if p.producto_id in productos_map:
-            existente = productos_map[p.producto_id]
-            existente["cantidad"] += p.cantidad
-            existente["subtotal"] = round(existente["subtotal"] + subtotal, 2)  # ⭐ REDONDEO
-            existente["comision_valor"] = round(existente["comision_valor"] + comision_valor, 2)  # ⭐ REDONDEO
-        else:
-            productos_map[p.producto_id] = {
-                "producto_id": p.producto_id,
-                "nombre": producto_db.get("nombre"),
-                "cantidad": p.cantidad,
-                "precio_unitario": precio_unitario,
-                "subtotal": subtotal,  # Ya está redondeado
-                "moneda": moneda_cita,
-                "comision_porcentaje": comision_porcentaje,
-                "comision_valor": comision_valor  # Ya está redondeado
-            }
-
-    productos_final = list(productos_map.values())
-
-    # ==============================
-    # 🔢 RECALCULAR TOTALES CON REDONDEO
-    # ==============================
-    valor_servicios = cita.get("valor_total", 0) - sum(
-        p.get("subtotal", 0) for p in cita.get("productos", [])
-    )
-
-    nuevo_total = round(valor_servicios + sum(p["subtotal"] for p in productos_final), 2)  # ⭐ REDONDEO
-    abono = cita.get("abono", 0)
-    nuevo_saldo = round(nuevo_total - abono, 2)  # ⭐ REDONDEO
-
+    # Recalcular estado de pago
     if nuevo_saldo <= 0:
-        estado_pago = "pagado"
-    elif abono > 0:
-        estado_pago = "abonado"
+        nuevo_estado_pago = "pagado"
+    elif abono_actual > 0:
+        nuevo_estado_pago = "abonado"
     else:
-        estado_pago = "pendiente"
+        nuevo_estado_pago = "pendiente"
 
+    # Actualizar cita
     await collection_citas.update_one(
         {"_id": ObjectId(cita_id)},
         {
             "$set": {
                 "productos": productos_final,
-                "valor_total": nuevo_total,  # ⭐ REDONDEADO
-                "saldo_pendiente": nuevo_saldo,  # ⭐ REDONDEADO
-                "estado_pago": estado_pago
+                "valor_total": nuevo_total,
+                "saldo_pendiente": nuevo_saldo,
+                "estado_pago": nuevo_estado_pago,
+                "ultima_actualizacion": datetime.utcnow()
             }
         }
     )
 
+    # Obtener cita actualizada
     cita_actualizada = await collection_citas.find_one({"_id": ObjectId(cita_id)})
     cita_actualizada["_id"] = str(cita_actualizada["_id"])
 
     return {
         "success": True,
         "message": "Productos agregados correctamente",
-        "total_productos_agregados": round(total_productos_agregados, 2),  # ⭐ REDONDEO
-        "total_comision_productos": round(total_comision_productos, 2),  # ⭐ REDONDEO
-        "tipo_comision_sede": tipo_comision,
+        "productos_agregados": len(nuevos_productos),
+        "total_productos": total_productos,
+        "total_comision_productos": total_comision_productos,
+        "aplica_comision": aplica_comision,
+        "agregado_por": {
+            "email": email_usuario,
+            "rol": rol_usuario
+        },
         "moneda": moneda_cita,
         "cita": cita_actualizada
     }
 
 
 # ============================================================
-# 🗑️ Eliminar producto de una cita - CON REDONDEO
+# 🗑️ Eliminar producto de una cita
 # ============================================================
 @router.delete("/cita/{cita_id}/productos/{producto_id}", response_model=dict)
 async def eliminar_producto_de_cita(
@@ -1562,11 +1609,6 @@ async def eliminar_producto_de_cita(
 ):
     """
     Elimina un producto específico de una cita y recalcula totales.
-<<<<<<< HEAD
-    ⭐ Recalcula el total RESTANDO solo el producto eliminado.
-    ⭐ Aplica redondeo para corregir errores de punto flotante.
-=======
->>>>>>> 17dbef0d21fddeb90c3a7076937afa1d09b909ec
     """
     # Solo admin sede, admin o estilista
     if current_user["rol"] not in ["admin_sede", "admin", "estilista"]:
@@ -1605,13 +1647,13 @@ async def eliminar_producto_de_cita(
             detail=f"Producto con ID '{producto_id}' no encontrado en esta cita"
         )
 
-    # ⭐ RESTAR SOLO EL PRODUCTO ELIMINADO + REDONDEO
-    subtotal_eliminado = producto_encontrado.get("subtotal", 0)
-    comision_eliminada = producto_encontrado.get("comision_valor", 0)
+    # Calcular totales después de eliminar
+    total_productos_restante = round(sum(p.get("subtotal", 0) for p in productos_filtrados), 2)
     
-    # Nuevo total = Total actual - Producto eliminado
-    nuevo_total = round(cita.get("valor_total", 0) - subtotal_eliminado, 2)
-    abono_actual = cita.get("abono", 0)
+    # Recalcular totales de la cita
+    valor_servicios = round(cita.get("valor_total", 0) - sum(p.get("subtotal", 0) for p in productos_actuales), 2)
+    nuevo_total = round(valor_servicios + total_productos_restante, 2)
+    abono_actual = round(cita.get("abono", 0), 2)
     nuevo_saldo = round(nuevo_total - abono_actual, 2)
 
     # Recalcular estado de pago
@@ -1622,19 +1664,16 @@ async def eliminar_producto_de_cita(
     else:
         nuevo_estado_pago = "pendiente"
 
-    # ⭐ CALCULAR TOTALES PARA LA RESPUESTA (informativo)
-    total_productos_restante = round(sum(p.get("subtotal", 0) for p in productos_filtrados), 2)
-    total_comision_restante = round(sum(p.get("comision_valor", 0) for p in productos_filtrados), 2)
-
-    # Actualizar cita
+    # Actualizar cita (sin historial)
     await collection_citas.update_one(
         {"_id": ObjectId(cita_id)},
         {
             "$set": {
                 "productos": productos_filtrados,
-                "valor_total": nuevo_total,  # ⭐ REDONDEADO
-                "saldo_pendiente": nuevo_saldo,  # ⭐ REDONDEADO
-                "estado_pago": nuevo_estado_pago
+                "valor_total": nuevo_total,
+                "saldo_pendiente": nuevo_saldo,
+                "estado_pago": nuevo_estado_pago,
+                "ultima_actualizacion": datetime.utcnow()
             }
         }
     )
@@ -1655,7 +1694,7 @@ async def eliminar_producto_de_cita(
 
 
 # ============================================================
-# 🗑️ Eliminar TODOS los productos de una cita - CON REDONDEO
+# 🗑️ Eliminar TODOS los productos de una cita
 # ============================================================
 @router.delete("/cita/{cita_id}/productos", response_model=dict)
 async def eliminar_todos_productos_de_cita(
@@ -1664,8 +1703,6 @@ async def eliminar_todos_productos_de_cita(
 ):
     """
     Elimina TODOS los productos de una cita y recalcula totales.
-    ⭐ Resta la suma de todos los productos del total actual.
-    ⭐ Aplica redondeo para corregir errores de punto flotante.
     """
     # Solo admin sede, admin o estilista
     if current_user["rol"] not in ["admin_sede", "admin", "estilista"]:
@@ -1687,14 +1724,14 @@ async def eliminar_todos_productos_de_cita(
             detail="Esta cita no tiene productos agregados"
         )
 
-    # ⭐ CALCULAR TOTALES A ELIMINAR + REDONDEO
+    # Calcular totales eliminados
     total_productos_eliminados = round(sum(p.get("subtotal", 0) for p in productos_actuales), 2)
-    total_comision_eliminada = round(sum(p.get("comision_valor", 0) for p in productos_actuales), 2)
     cantidad_productos = len(productos_actuales)
 
-    # ⭐ RESTAR TODOS LOS PRODUCTOS DEL TOTAL + REDONDEO
-    nuevo_total = round(cita.get("valor_total", 0) - total_productos_eliminados, 2)
-    abono_actual = cita.get("abono", 0)
+    # Recalcular totales de la cita (solo servicios)
+    valor_servicios = round(cita.get("valor_total", 0) - total_productos_eliminados, 2)
+    nuevo_total = valor_servicios
+    abono_actual = round(cita.get("abono", 0), 2)
     nuevo_saldo = round(nuevo_total - abono_actual, 2)
 
     # Recalcular estado de pago
@@ -1711,9 +1748,10 @@ async def eliminar_todos_productos_de_cita(
         {
             "$set": {
                 "productos": [],
-                "valor_total": nuevo_total,  # ⭐ REDONDEADO
-                "saldo_pendiente": nuevo_saldo,  # ⭐ REDONDEADO
-                "estado_pago": nuevo_estado_pago
+                "valor_total": nuevo_total,
+                "saldo_pendiente": nuevo_saldo,
+                "estado_pago": nuevo_estado_pago,
+                "ultima_actualizacion": datetime.utcnow()
             }
         }
     )
@@ -1731,8 +1769,6 @@ async def eliminar_todos_productos_de_cita(
         "moneda": cita.get("moneda"),
         "cita": cita_actualizada
     }
-
-
 # ============================================
 # ✅ Finalizar servicio
 # ============================================
