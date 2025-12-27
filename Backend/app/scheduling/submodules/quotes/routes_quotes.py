@@ -309,8 +309,8 @@ async def crear_cita(
     data["abono"] = float(abono)
     data["saldo_pendiente"] = float(saldo_pendiente)
     data["estado_pago"] = estado_pago
-    data["metodo_pago_inicial"] = metodo_pago_inicial  # ⭐ NUEVO
-    data["metodo_pago_actual"] = metodo_pago_inicial   # ⭐ NUEVO
+    data["metodo_pago_inicial"] = metodo_pago_inicial  # ⭐ NUEVO x
+    data["metodo_pago_actual"] = metodo_pago_inicial   # ⭐ NUEVO x
     data["moneda"] = moneda_sede
     data["estado"] = "confirmada"  # Estado por defecto
 
@@ -814,7 +814,7 @@ async def crear_cita(
             "valor_total": valor_total,
             "estado_pago": estado_pago,
             "metodo_pago_inicial": metodo_pago_inicial,  # ⭐ NUEVO
-            "metodo_pago_actual": metodo_pago_inicial,   # ⭐ NUEVO (mismo al inicio)
+            "metodo_pago_actual": metodo_pago_inicial,   # ⭐ NUEVO (mismo al inicio) aqui
             "saldo_pendiente": saldo_pendiente,
             "emails_enviados": {
                 "cliente": bool(cliente_email),
