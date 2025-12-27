@@ -5,74 +5,53 @@ import { Sidebar } from "../../../components/Layout/Sidebar";
 import { ComisionesFilters } from "./comisiones-filters";
 import { ComisionesResumen } from "./comisiones-resumen";
 import { ComisionesDetalle } from "./comisiones-detalle";
-import { Button } from "../../../components/ui/button";
 
 type Tab = "resumen" | "detalle";
 
 export default function ComisionesPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("resumen");
+  const [activeTab, ] = useState<Tab>("resumen");
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
       <Sidebar />
 
       <div className="flex-1 overflow-auto">
-        <div className="mx-auto max-w-7xl p-8">
-          {/* Header */}
-          <div className="mb-8 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[oklch(0.65_0.25_280)]">
-                <div className="h-6 w-6 rounded-full bg-white" />
+        <div className="mx-auto max-w-7xl p-4 md:p-5 lg:p-6">
+          {/* Header Compacto */}
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded border border-gray-300 bg-white">
+                  <div className="h-4 w-4 rounded-full bg-gray-800" />
+                </div>
               </div>
-              <h1 className="text-2xl font-bold">Beaux</h1>
+              
+              <div className="flex gap-2">
+                {/* Espacio para botones futuros */}
+              </div>
             </div>
 
-            <div className="flex gap-3">
-              <Button variant="outline" className="border-gray-300">
-                Exportar PDF/CSV
-              </Button>
-              <Button variant="outline" className="border-gray-300">
-                Guardar borrador
-              </Button>
-              <Button className="bg-[oklch(0.65_0.25_280)] hover:bg-[oklch(0.60_0.25_280)]">
-                Aprobar liquidación
-              </Button>
+            {/* Título Principal */}
+            <h2 className="text-xl font-bold text-gray-900">Liquidación de Comisiones</h2>
+            <p className="text-sm text-gray-600 mt-1">Gestión y consulta de comisiones por ventas</p>
+          </div>
+
+          {/* Filtros */}
+          <div className="mb-5">
+            <ComisionesFilters />
+          </div>
+
+          {/* Tabs Minimalistas */}
+          <div className="mb-5 border-b border-gray-200">
+            <div className="flex gap-6">
+
             </div>
           </div>
 
-          {/* Title */}
-          <h2 className="mb-6 text-3xl font-bold">Liquidación de comisiones</h2>
-
-          {/* Filters */}
-          <ComisionesFilters />
-
-          {/* Tabs */}
-          <div className="mb-6 flex gap-8 border-b">
-            <button
-              onClick={() => setActiveTab("resumen")}
-              className={`pb-3 text-base font-medium transition-colors ${
-                activeTab === "resumen"
-                  ? "border-b-2 border-[oklch(0.65_0.25_280)] text-[oklch(0.65_0.25_280)]"
-                  : "text-gray-600 hover:text-gray-900"
-              }`}
-            >
-              Resumen
-            </button>
-
-            <button
-              onClick={() => setActiveTab("detalle")}
-              className={`pb-3 text-base font-medium transition-colors ${
-                activeTab === "detalle"
-                  ? "border-b-2 border-[oklch(0.65_0.25_280)] text-[oklch(0.65_0.25_280)]"
-                  : "text-gray-600 hover:text-gray-900"
-              }`}
-            >
-              Detalle
-            </button>
+          {/* Contenido */}
+          <div className="bg-white rounded border border-gray-200">
+            {activeTab === "resumen" ? <ComisionesResumen /> : <ComisionesDetalle />}
           </div>
-
-          {/* Content */}
-          {activeTab === "resumen" ? <ComisionesResumen /> : <ComisionesDetalle />}
         </div>
       </div>
     </div>

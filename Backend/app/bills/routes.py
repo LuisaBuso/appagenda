@@ -218,7 +218,7 @@ async def facturar_cita(
         "monto": total_final,
         "profesional_id": cita["profesional_id"],
         "profesional_nombre": cita.get("profesional_nombre", ""),
-        "metodo_pago": cita.get("metodo_pago_actual", "efectivo"),
+        "metodo_pago": cita.get("metodo_pago", "efectivo"),
         "facturado_por": current_user.get("email"),
         "estado": "pagado"
     }
@@ -227,26 +227,24 @@ async def facturar_cita(
     # 🔟 CREAR DOCUMENTO DE VENTA (SALES)
     # ====================================
     desglose_pagos = {}
-    metodo_pago = (
-    cita.get("metodo_pago_actual")
-    or cita.get("metodo_pago")
-    or "efectivo"
-)
+    historial_pagos = cita.get("historial_pagos", [])
 
-    historial_pagos = [{
-    "fecha": fecha_actual,
-    "monto": round(total_final, 2),
-    "metodo": metodo_pago,
-    "tipo": "pago_total",
-    "registrado_por": current_user.get("email"),
-    "saldo_despues": 0,
-    "notas": "Pago total al facturar"
-}]
-
-    desglose_pagos = {
-    metodo_pago: round(total_final, 2),
-    "total": round(total_final, 2)
-}
+    if historial_pagos:
+        for pago in historial_pagos:
+            metodo = pago.get("metodo", "efectivo")
+            monto = pago.get("monto", 0)
+            if metodo in desglose_pagos:
+                desglose_pagos[metodo] += monto
+            else:
+                desglose_pagos[metodo] = monto
+        
+        for metodo in desglose_pagos:
+            desglose_pagos[metodo] = round(desglose_pagos[metodo], 2)
+    else:
+        metodo_pago = cita.get("metodo_pago_actual") or cita.get("metodo_pago") or "efectivo"
+        desglose_pagos[metodo_pago] = round(total_final, 2)
+    
+    desglose_pagos["total"] = round(total_final, 2)
 
     venta = {
         "identificador": identificador,

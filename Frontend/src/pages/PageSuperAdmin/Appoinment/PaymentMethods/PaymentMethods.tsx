@@ -303,10 +303,6 @@ export default function PagosPage() {
                 <div className="border-b bg-white px-8 py-4">
                     <div className="flex items-center justify-between">
                         <div className="text-2xl font-bold">Beaux</div>
-                        <div className="flex items-center gap-4 text-sm">
-                            <span>Glow Beauty Studio</span>
-                            <button className="text-gray-600">Recepción ▼</button>
-                        </div>
                     </div>
                 </div>
 

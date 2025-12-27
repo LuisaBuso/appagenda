@@ -1,22 +1,50 @@
+// src/pages/Dashboard/sales-chart.tsx
 "use client"
 
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card"
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, XAxis, YAxis } from "recharts"
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "../../../components/ui/chart"
+import { ChartContainer, ChartTooltip } from "../../../components/ui/chart"
+import { formatMoney } from "./formatMoney"
 
-const salesData = [
-  { month: "Jan", value: 0 },
-  { month: "Feb", value: 0 },
-  { month: "Mar", value: 0 },
-  { month: "Apr", value: 0 },
-  { month: "May", value: 0 },
-]
+interface SalesChartProps {
+  salesData: Array<{ month: string; value: number }>;
+  formatCurrency?: (value: number) => string;
+}
 
-export function SalesChart() {
+export function SalesChart({ salesData, formatCurrency }: SalesChartProps) {
+  
+  // Función por defecto para formatear valores del eje Y
+  const defaultFormatYAxis = (value: number) => {
+    if (value >= 1000000) {
+      return `$${(value / 1000000).toFixed(1)}M`;
+    } else if (value >= 1000) {
+      return `$${(value / 1000).toFixed(1)}K`;
+    }
+    return `$${value}`;
+  };
+
+  // Función para tooltip personalizado
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      const value = payload[0].value;
+      const formattedValue = formatCurrency 
+        ? formatCurrency(value)
+        : formatMoney(value, 'USD', 'es-CO');
+      
+      return (
+        <div className="bg-white p-3 border rounded-lg shadow-lg">
+          <p className="font-semibold text-gray-900">{label}</p>
+          <p className="text-blue-600 font-bold">{formattedValue}</p>
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base font-semibold">Ventas</CardTitle>
+        <CardTitle className="text-base font-semibold">Tendencia de Ventas (USD)</CardTitle>
       </CardHeader>
       <CardContent>
         <ChartContainer
@@ -37,14 +65,19 @@ export function SalesChart() {
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-              <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: "#6b7280", fontSize: 12 }} />
+              <XAxis 
+                dataKey="month" 
+                axisLine={false} 
+                tickLine={false} 
+                tick={{ fill: "#6b7280", fontSize: 12 }} 
+              />
               <YAxis
                 axisLine={false}
                 tickLine={false}
                 tick={{ fill: "#6b7280", fontSize: 12 }}
-                tickFormatter={(value) => `${value / 1000}k`}
+                tickFormatter={defaultFormatYAxis}
               />
-              <ChartTooltip content={<ChartTooltipContent />} />
+              <ChartTooltip content={<CustomTooltip />} />
               <Area
                 type="monotone"
                 dataKey="value"
