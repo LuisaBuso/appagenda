@@ -47,12 +47,6 @@ def upload_to_s3(file: UploadFile, folder_path: str) -> str:
         s3_key = f"{folder_path}/{unique_filename}"
 
 
-
-
-
-
-
-
         s3_client.put_object(
             Bucket=os.getenv("AWS_BUCKET_NAME"),
             Key=s3_key,
