@@ -21,7 +21,7 @@ export default function ClientsPage() {
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
-  
+
   const { user, isLoading: authLoading } = useAuth()
 
   const loadSedes = async () => {
@@ -150,12 +150,12 @@ export default function ClientsPage() {
       <Sidebar />
       <div className="flex-1 overflow-auto">
         {selectedClient ? (
-          <ClientDetail 
-            client={selectedClient} 
-            onBack={handleBack} 
+          <ClientDetail
+            client={selectedClient}
+            onBack={handleBack}
           />
         ) : (
-          <ClientsList 
+          <ClientsList
             onSelectClient={handleSelectClient}
             onAddClient={handleAddClient}
             clientes={clientes}
@@ -171,8 +171,9 @@ export default function ClientsPage() {
       <ClientFormModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        onSave={handleSaveClient}
+        onSuccess={handleSaveClient}
         isSaving={isSaving}
+        sedeId={selectedSede !== "all" ? selectedSede : ""}
       />
     </div>
   )

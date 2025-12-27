@@ -58,6 +58,7 @@ export default function DashboardPage() {
   const [showChurnList, setShowChurnList] = useState(false);
   const [churnData, setChurnData] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [monedaUsuario, setMonedaUsuario] = useState<string>("COP"); // Default a COP
   
   // Estados para el rango de fechas personalizado
   const [showDateModal, setShowDateModal] = useState(false);
@@ -83,6 +84,38 @@ export default function DashboardPage() {
     { id: "month", label: "Mes actual" },
     { id: "custom", label: "Rango personalizado" },
   ];
+
+  // Obtener moneda del usuario desde session storage
+  useEffect(() => {
+    const getMonedaUsuario = () => {
+      // Buscar en sessionStorage primero
+      const monedaSession = sessionStorage.getItem('beaux-moneda');
+      if (monedaSession) {
+        console.log('Moneda obtenida de sessionStorage:', monedaSession);
+        return monedaSession;
+      }
+      
+      // Buscar en localStorage si no está en sessionStorage
+      const monedaLocal = localStorage.getItem('beaux-moneda');
+      if (monedaLocal) {
+        console.log('Moneda obtenida de localStorage:', monedaLocal);
+        return monedaLocal;
+      }
+      
+      // Valor por defecto basado en el país
+      const pais = sessionStorage.getItem('beaux-pais') || localStorage.getItem('beaux-pais');
+      if (pais === 'Colombia') {
+        return 'COP';
+      }
+      
+      // Default a COP si no hay información
+      return 'COP';
+    };
+
+    const moneda = getMonedaUsuario();
+    console.log('Moneda configurada para el usuario:', moneda);
+    setMonedaUsuario(moneda);
+  }, []);
 
   // Inicializar fechas por defecto
   useEffect(() => {
@@ -184,8 +217,8 @@ export default function DashboardPage() {
         throw new Error('La API no devolvió datos válidos');
       }
 
-      if (!data.metricas_por_moneda || !data.metricas_por_moneda.USD) {
-        console.warn('La respuesta no tiene metricas_por_moneda.USD:', data);
+      if (!data.metricas_por_moneda) {
+        console.warn('La respuesta no tiene metricas_por_moneda:', data);
         // Puede que la estructura sea diferente, intentar con una estructura por defecto
         setDashboardData(data);
         processChartDataWithFallback(data);
@@ -260,13 +293,28 @@ export default function DashboardPage() {
   const processChartData = (data: VentasDashboardResponse) => {
     try {
       // Verificar que los datos existan
-      if (!data?.metricas_por_moneda?.USD) {
+      if (!data?.metricas_por_moneda) {
         console.error('Datos incompletos para procesar gráficos:', data);
         processChartDataWithFallback(data);
         return;
       }
 
-      const metricas = data.metricas_por_moneda.USD;
+      // Determinar qué moneda usar (usar la moneda del usuario si está disponible en los datos)
+      let metricas = data.metricas_por_moneda[monedaUsuario];
+      if (!metricas && data.metricas_por_moneda.COP) {
+        metricas = data.metricas_por_moneda.COP;
+        console.log(`Usando COP como fallback para moneda ${monedaUsuario}`);
+      }
+      if (!metricas && data.metricas_por_moneda.USD) {
+        metricas = data.metricas_por_moneda.USD;
+        console.log(`Usando USD como fallback para moneda ${monedaUsuario}`);
+      }
+
+      if (!metricas) {
+        console.error('No hay métricas disponibles para ninguna moneda:', data.metricas_por_moneda);
+        processChartDataWithFallback(data);
+        return;
+      }
 
       // Generar datos para gráfico de línea (tendencia semanal)
       const days = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
@@ -416,6 +464,46 @@ export default function DashboardPage() {
     setTempDateRange(newRange);
   };
 
+  const formatCurrency = (value: number | string): string => {
+    try {
+      if (typeof value === 'string') {
+        const numericValue = extractNumericValue(value);
+        return formatMoney(numericValue, monedaUsuario, 'es-CO');
+      }
+      return formatMoney(value, monedaUsuario, 'es-CO');
+    } catch (error) {
+      console.error("Error formateando moneda:", error);
+      return monedaUsuario === 'COP' ? '$0' : 'US$ 0';
+    }
+  };
+
+  const formatCurrencyShort = (value: number | string): string => {
+    try {
+      const numericValue = typeof value === 'string' ? extractNumericValue(value) : value;
+
+      if (monedaUsuario === 'COP') {
+        // Formato especial para COP
+        if (numericValue >= 1000000) {
+          return `$${(numericValue / 1000000).toFixed(1)}M`;
+        } else if (numericValue >= 1000) {
+          return `$${(numericValue / 1000).toFixed(0)}K`;
+        }
+        return formatMoney(numericValue, 'COP', 'es-CO');
+      } else {
+        // Formato para USD
+        if (numericValue >= 1000000) {
+          return `US$ ${(numericValue / 1000000).toFixed(1)}M`;
+        } else if (numericValue >= 1000) {
+          return `US$ ${(numericValue / 1000).toFixed(0)}K`;
+        }
+        return formatMoney(numericValue, 'USD', 'es-CO');
+      }
+    } catch (error) {
+      console.error("Error formateando moneda corta:", error);
+      return monedaUsuario === 'COP' ? '$0' : 'US$ 0';
+    }
+  };
+
   // Modal de selección de fechas
   const DateRangeModal = () => {
     if (!showDateModal) return null;
@@ -552,42 +640,13 @@ export default function DashboardPage() {
     );
   };
 
-  const formatCurrency = (value: number | string): string => {
-    try {
-      if (typeof value === 'string') {
-        const numericValue = extractNumericValue(value);
-        return formatMoney(numericValue, 'USD', 'es-CO');
-      }
-      return formatMoney(value, 'USD', 'es-CO');
-    } catch (error) {
-      console.error("Error formateando moneda:", error);
-      return '$0';
-    }
-  };
-
-  const formatCurrencyShort = (value: number | string): string => {
-    try {
-      const numericValue = typeof value === 'string' ? extractNumericValue(value) : value;
-
-      if (numericValue >= 1000000) {
-        return `$${(numericValue / 1000000).toFixed(1)}M`;
-      } else if (numericValue >= 1000) {
-        return `$${(numericValue / 1000).toFixed(1)}K`;
-      }
-      return formatMoney(numericValue, 'USD', 'es-CO');
-    } catch (error) {
-      console.error("Error formateando moneda corta:", error);
-      return '$0';
-    }
-  };
-
   const getSedeInfo = (sedeId: string): Sede | undefined => {
     return sedes.find(sede => sede.sede_id === sedeId);
   };
 
   // Función para obtener métricas de forma segura
   const getMetricas = () => {
-    if (!dashboardData?.metricas_por_moneda?.USD) {
+    if (!dashboardData?.metricas_por_moneda) {
       return {
         ventas_totales: 0,
         cantidad_ventas: 0,
@@ -600,10 +659,49 @@ export default function DashboardPage() {
           transferencia: 0,
           tarjeta: 0,
           sin_pago: 0
-        }
+        },
+        moneda: monedaUsuario
       };
     }
-    return dashboardData.metricas_por_moneda.USD;
+    
+    // Buscar métricas para la moneda del usuario
+    let metricas = dashboardData.metricas_por_moneda[monedaUsuario];
+    
+    // Si no hay para la moneda del usuario, usar COP como fallback
+    if (!metricas && monedaUsuario !== 'COP' && dashboardData.metricas_por_moneda.COP) {
+      metricas = dashboardData.metricas_por_moneda.COP;
+      console.log(`Usando COP como fallback para moneda ${monedaUsuario}`);
+    }
+    
+    // Si aún no hay, usar USD como último recurso
+    if (!metricas && monedaUsuario !== 'USD' && dashboardData.metricas_por_moneda.USD) {
+      metricas = dashboardData.metricas_por_moneda.USD;
+      console.log(`Usando USD como fallback para moneda ${monedaUsuario}`);
+    }
+    
+    // Si no hay ninguna métrica, crear una vacía
+    if (!metricas) {
+      return {
+        ventas_totales: 0,
+        cantidad_ventas: 0,
+        ventas_servicios: 0,
+        ventas_productos: 0,
+        ticket_promedio: 0,
+        crecimiento_ventas: "0%",
+        metodos_pago: {
+          efectivo: 0,
+          transferencia: 0,
+          tarjeta: 0,
+          sin_pago: 0
+        },
+        moneda: monedaUsuario
+      };
+    }
+    
+    return {
+      ...metricas,
+      moneda: monedaUsuario
+    };
   };
 
   const currentSede = getSedeInfo(selectedSede);
@@ -678,6 +776,9 @@ export default function DashboardPage() {
                 <h1 className="text-2xl font-bold">Dashboard Financiero</h1>
                 <p className="text-sm text-gray-600">
                   {dashboardData?.descripcion || "Métricas basadas en ventas pagadas"}
+                  <span className="ml-2 text-xs font-medium text-gray-500">
+                    (Moneda: {metricas.moneda})
+                  </span>
                 </p>
               </div>
             </div>
@@ -720,7 +821,7 @@ export default function DashboardPage() {
                 <div className="w-12 h-12 border-4 border-gray-200 border-t-gray-800 rounded-full animate-spin mx-auto mb-4"></div>
                 <p className="text-gray-600">Cargando datos financieros...</p>
                 <p className="text-sm text-gray-500 mt-2">
-                  Sede: {selectedSede} • Período: {getPeriodDisplay()}
+                  Sede: {selectedSede} • Período: {getPeriodDisplay()} • Moneda: {metricas.moneda}
                 </p>
               </div>
             </div>
@@ -732,6 +833,7 @@ export default function DashboardPage() {
               <div className="space-y-2 mb-6 text-sm text-gray-600">
                 <p>Sede ID: {selectedSede}</p>
                 <p>Período: {getPeriodDisplay()}</p>
+                <p>Moneda: {metricas.moneda}</p>
               </div>
               <Button
                 onClick={handleRefresh}
@@ -762,6 +864,8 @@ export default function DashboardPage() {
                           </div>
                         )}
                       </div>
+                    </div>
+                    <div className="flex items-center gap-2">
                     </div>
                   </div>
                 </CardContent>
@@ -1074,6 +1178,7 @@ export default function DashboardPage() {
               <div className="space-y-2 mb-6 text-sm text-gray-600">
                 <p>Sede ID: {selectedSede}</p>
                 <p>Período: {getPeriodDisplay()}</p>
+                <p>Moneda: {metricas.moneda}</p>
                 <p className="text-xs text-gray-500">Verifica que la API de ventas esté funcionando correctamente</p>
               </div>
               <Button

@@ -6,7 +6,8 @@ import {
   CreditCard,
   CreditCard as CardIcon, Wallet, CalendarDays,
   Tag, Users, X, Bug, Landmark,
-  Phone, Mail, DollarSign, AlertCircle
+  Phone, Mail, DollarSign, AlertCircle,
+  ShoppingBag
 } from 'lucide-react';
 import Modal from '../../../components/ui/modal';
 import { useAuth } from '../../../components/Auth/AuthContext';
@@ -26,6 +27,21 @@ interface PagoModalData {
   metodoPago: 'efectivo' | 'tarjeta' | 'transferencia';
 }
 
+interface Producto {
+  producto_id: string;
+  nombre: string;
+  cantidad: number;
+  precio_unitario: number;
+  subtotal: number;
+  moneda: string;
+  comision_porcentaje: number;
+  comision_valor: number;
+  agregado_por_email: string;
+  agregado_por_rol: string;
+  fecha_agregado: string;
+  profesional_id: string;
+}
+
 const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
   open,
   onClose,
@@ -43,10 +59,19 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
     metodoPago: 'efectivo'
   });
   const [registrandoPago, setRegistrandoPago] = useState(false);
+  const [productos, setProductos] = useState<Producto[]>([]);
 
   useEffect(() => {
     if (open && appointment) {
       setAppointmentDetails(appointment);
+      // Extraer productos de la cita
+      if (appointment.rawData?.productos) {
+        setProductos(appointment.rawData.productos);
+      } else if (appointment.productos) {
+        setProductos(appointment.productos);
+      } else {
+        setProductos([]);
+      }
     }
   }, [open, appointment]);
 
@@ -306,6 +331,32 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
     return precio;
   };
 
+  const getTotalProductos = () => {
+    if (productos.length === 0) return 0;
+    return productos.reduce((total, producto) => total + producto.subtotal, 0);
+  };
+
+  const getTotalComision = () => {
+    if (productos.length === 0) return 0;
+    return productos.reduce((total, producto) => total + producto.comision_valor, 0);
+  };
+
+  const formatFechaHora = (fechaString: string) => {
+    if (!fechaString) return 'Fecha no disponible';
+    try {
+      const fecha = new Date(fechaString);
+      return fecha.toLocaleDateString('es-ES', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (error) {
+      return fechaString;
+    }
+  };
+
   const renderPagoModal = () => {
     if (!pagoModal.show) return null;
 
@@ -438,6 +489,87 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
     );
   };
 
+  const renderProductos = () => {
+    if (productos.length === 0) {
+      return (
+        <div className="text-center py-2 text-gray-400 text-xs">
+          <Package className="w-5 h-5 mx-auto mb-1 text-gray-300" />
+          <p>No hay productos registrados</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-1.5">
+        {/* Resumen de productos */}
+        <div className="bg-gray-50 p-1.5 rounded grid grid-cols-3 gap-1 text-xs">
+          <div className="text-center">
+            <div className="text-gray-600 font-medium">Total Productos</div>
+            <div className="text-sm font-bold text-gray-900">${getTotalProductos()}</div>
+          </div>
+          <div className="text-center">
+            <div className="text-gray-600 font-medium">Comisión Total</div>
+            <div className="text-sm font-bold text-gray-900">${getTotalComision()}</div>
+          </div>
+          <div className="text-center">
+            <div className="text-gray-600 font-medium">Cantidad</div>
+            <div className="text-sm font-bold text-gray-900">{productos.length}</div>
+          </div>
+        </div>
+
+        {/* Lista de productos */}
+        <div className="space-y-1">
+          {productos.map((producto, index) => (
+            <div key={index} className="p-1.5 border border-gray-200 rounded hover:bg-gray-50">
+              <div className="flex justify-between items-start">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <ShoppingBag className="w-3 h-3 text-gray-700 flex-shrink-0" />
+                    <h4 className="text-xs font-bold text-gray-900 truncate">
+                      {producto.nombre}
+                    </h4>
+                    <span className="text-[10px] px-1 py-0.5 bg-gray-100 text-gray-700 rounded">
+                      {producto.producto_id}
+                    </span>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-1 text-[10px] mb-1">
+                    <div className="text-gray-600">
+                      Cantidad: <span className="font-bold text-gray-900">{producto.cantidad}</span>
+                    </div>
+                    <div className="text-gray-600">
+                      Precio: <span className="font-bold text-gray-900">${producto.precio_unitario}</span>
+                    </div>
+                    <div className="text-gray-600">
+                      Subtotal: <span className="font-bold text-green-700">${producto.subtotal}</span>
+                    </div>
+                    <div className="text-gray-600">
+                      Comisión: <span className="font-bold text-blue-700">${producto.comision_valor}</span>
+                      <span className="text-gray-500 ml-0.5">({producto.comision_porcentaje}%)</span>
+                    </div>
+                  </div>
+                  
+                  <div className="text-[9px] text-gray-500 flex items-center gap-1">
+                    <User className="w-2 h-2" />
+                    <span className="truncate">
+                      Agregado por: {producto.agregado_por_email} ({producto.agregado_por_rol})
+                    </span>
+                  </div>
+                  <div className="text-[9px] text-gray-500 flex items-center gap-1 mt-0.5">
+                    <CalendarDays className="w-2 h-2" />
+                    <span className="truncate">
+                      {formatFechaHora(producto.fecha_agregado)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   if (!appointmentDetails) return null;
 
   const pagosData = getPagosData();
@@ -482,6 +614,8 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                         <div><span className="text-gray-400">Abonado:</span> <span className="text-white">${pagosData.abonado}</span></div>
                         <div><span className="text-gray-400">Saldo Pendiente:</span> <span className="text-white">${pagosData.saldoPendiente}</span></div>
                         <div><span className="text-gray-400">Estado Pago:</span> <span className="text-white">{pagosData.estadoPago}</span></div>
+                        <div><span className="text-gray-400">Total Productos:</span> <span className="text-white">${getTotalProductos()}</span></div>
+                        <div><span className="text-gray-400">Comisión Total:</span> <span className="text-white">${getTotalComision()}</span></div>
                       </div>
                     </div>
                   </div>
@@ -498,7 +632,7 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                 </button>
               </div>
 
-              {/* Header Principal - Sin botones de pago aquí */}
+              {/* Header Principal */}
               <div className="border-b border-gray-200 pb-2">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-1">
                   <div className="flex-1 min-w-0">
@@ -542,7 +676,7 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                 </div>
               </div>
 
-              {/* Contenido Principal - UNA SOLA COLUMNA VERTICAL */}
+              {/* Contenido Principal */}
               <div className="space-y-2">
                 {/* Información del Cliente */}
                 <div className="bg-white border border-gray-200 rounded p-2">
@@ -625,7 +759,19 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                   </div>
                 </div>
 
-                {/* Pagos y Abonos - CON BOTONES ADENTRO */}
+                {/* Productos y Extras - MODIFICADO */}
+                <div className="bg-white border border-gray-200 rounded p-2">
+                  <div className="flex items-center gap-1.5 mb-2 pb-1.5 border-b border-gray-200">
+                    <Package className="w-3 h-3 text-gray-700 flex-shrink-0" />
+                    <h3 className="text-sm font-bold text-gray-900 truncate">
+                      Productos y extras {productos.length > 0 && `(${productos.length})`}
+                    </h3>
+                  </div>
+
+                  {renderProductos()}
+                </div>
+
+                {/* Pagos y Abonos */}
                 <div className="bg-white border border-gray-200 rounded p-2">
                   <div className="flex items-center justify-between gap-1.5 mb-2 pb-1.5 border-b border-gray-200">
                     <div className="flex items-center gap-1.5">
@@ -633,7 +779,6 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                       <h3 className="text-sm font-bold text-gray-900 truncate">Pagos y Abonos</h3>
                     </div>
                     
-                    {/* Botones dentro de la sección */}
                     <div className="flex gap-1 flex-shrink-0">
                       <button
                         onClick={() => setPagoModal({
@@ -740,19 +885,6 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                         </div>
                       )}
                     </div>
-                  </div>
-                </div>
-
-                {/* Productos y Extras */}
-                <div className="bg-white border border-gray-200 rounded p-2">
-                  <div className="flex items-center gap-1.5 mb-2 pb-1.5 border-b border-gray-200">
-                    <Package className="w-3 h-3 text-gray-700 flex-shrink-0" />
-                    <h3 className="text-sm font-bold text-gray-900 truncate">Productos y extras</h3>
-                  </div>
-
-                  <div className="text-center py-2 text-gray-400 text-xs">
-                    <Package className="w-5 h-5 mx-auto mb-1 text-gray-300" />
-                    <p>No hay productos registrados</p>
                   </div>
                 </div>
 
