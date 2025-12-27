@@ -319,7 +319,8 @@ async def crear_cita(
     data["abono"] = float(abono)
     data["saldo_pendiente"] = float(saldo_pendiente)
     data["estado_pago"] = estado_pago
-    data["metodo_pago"] = cita.metodo_pago
+    data["metodo_pago_inicial"] = metodo_pago_inicial  # ⭐ NUEVO x
+    data["metodo_pago_actual"] = metodo_pago_inicial   # ⭐ NUEVO x
     data["moneda"] = moneda_sede
     data["estado"] = "confirmada"  # Estado por defecto
 
@@ -822,7 +823,8 @@ async def crear_cita(
             "horario": f"{cita.hora_inicio} - {cita.hora_fin}",
             "valor_total": valor_total,
             "estado_pago": estado_pago,
-            "metodo_pago": cita.metodo_pago,
+            "metodo_pago_inicial": metodo_pago_inicial,  # ⭐ NUEVO
+            "metodo_pago_actual": metodo_pago_inicial,   # ⭐ NUEVO (mismo al inicio) aqui
             "saldo_pendiente": saldo_pendiente,
             "emails_enviados": {
                 "cliente": bool(cliente_email),
@@ -1165,11 +1167,11 @@ async def obtener_fichas_por_cliente(
 
 
 # ============================================================
-# 📅 Obtener todas las citas del estilista autenticado
+# 📅 Obtener todas las citas del estilista autenticado new
 # ============================================================
 @router.get("/citas/estilista", response_model=list)
 async def get_citas_estilista(
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user) 
 ):
     if current_user["rol"] != "estilista":
         raise HTTPException(
@@ -1562,11 +1564,8 @@ async def eliminar_producto_de_cita(
 ):
     """
     Elimina un producto específico de una cita y recalcula totales.
-<<<<<<< HEAD
     ⭐ Recalcula el total RESTANDO solo el producto eliminado.
     ⭐ Aplica redondeo para corregir errores de punto flotante.
-=======
->>>>>>> 17dbef0d21fddeb90c3a7076937afa1d09b909ec
     """
     # Solo admin sede, admin o estilista
     if current_user["rol"] not in ["admin_sede", "admin", "estilista"]:
