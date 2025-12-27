@@ -100,11 +100,27 @@ async def listar_locales(
     
     Permisos:
     - super_admin: Ve todas las sedes
-    - admin_sede: Ve todas las sedes (sin filtro por franquicia)
+    - admin_sede: Ve solo su sede asignada
     """
     try:
         # ========= CONSTRUIR QUERY =========
         query = {}
+        
+        # ✅ Filtro por rol: admin_sede solo ve su sede
+        if current_user.get("rol") == "admin_sede":
+            sede_id = current_user.get("sede_id")
+            if not sede_id:
+                logger.warning(
+                    f"⚠️ admin_sede {current_user.get('email')} sin sede_id asignada"
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail="Usuario sin sede asignada"
+                )
+            query["sede_id"] = sede_id
+            logger.info(
+                f"🔐 Filtrando por sede_id: {sede_id} para {current_user.get('email')}"
+            )
         
         # Filtro de estado
         if activa is not None:
@@ -114,11 +130,13 @@ async def listar_locales(
         sedes = await collection_locales.find(query).to_list(None)
         
         logger.info(
-            f"📋 Listado de {len(sedes)} locales por {current_user.get('email')}"
+            f"📋 Listado de {len(sedes)} locales por {current_user.get('email')} (rol: {current_user.get('rol')})"
         )
         
         return [local_to_dict(s) for s in sedes]
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Error al listar locales: {e}", exc_info=True)
         raise HTTPException(

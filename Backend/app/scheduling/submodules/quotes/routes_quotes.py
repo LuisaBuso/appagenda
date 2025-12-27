@@ -229,7 +229,7 @@ async def crear_cita(
     saldo_pendiente = round(valor_total - abono, 2)
     
     # ⭐ NUEVO: Manejar compatibilidad de métodos de pago
-    metodo_pago_inicial = getattr(cita, "metodo_pago_inicial", None) or getattr(cita, "metodo_pago", "efectivo")
+    metodo_pago_inicial = getattr(cita, "metodo_pago_inicial", None) or getattr(cita, "metodo_pago", "sin_pago")
     
     # ⭐ NUEVO: Inicializar historial de pagos
     historial_pagos = []
