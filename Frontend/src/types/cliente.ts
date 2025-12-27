@@ -1,6 +1,7 @@
-// En cliente.ts, actualiza la interfaz:
+// types/cliente.ts - Interfaz Cliente actualizada
 export interface Cliente {
   id: string;
+  cliente_id?: string; // Agregar para compatibilidad
   nombre: string;
   telefono: string;
   email: string;
@@ -11,6 +12,11 @@ export interface Cliente {
   rizotipo: string;
   nota: string;
   sede_id: string;
+  cedula?: string;
+  ciudad?: string;
+  fecha_de_nacimiento?: string;
+  fecha_creacion?: string;
+  fecha_registro?: string; // <-- AÑADIR ESTA PROPIEDAD
   
   // Historiales
   historialCitas: Array<{
@@ -59,7 +65,6 @@ export interface Cliente {
     cedula: string;
     telefono: string;
     
-    // 🔥 Estructura de fotos
     fotos?: {
       antes?: string[];
       despues?: string[];
@@ -74,10 +79,9 @@ export interface Cliente {
     estado_pago: string;
     local: string;
     sede_nombre?: string;
-    notas_cliente?: string; // 🔥 Cambiado a opcional
+    notas_cliente?: string;
     comentario_interno: string;
     
-    // 🔥 Respuestas del cuestionario
     respuestas?: Array<{
       pregunta: string;
       respuesta: boolean;
