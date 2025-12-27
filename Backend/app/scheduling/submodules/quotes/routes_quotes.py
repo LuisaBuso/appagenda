@@ -38,39 +38,38 @@ s3_client = boto3.client(
     region_name=os.getenv("AWS_REGION", "us-west-2")
 )
 
+
 def upload_to_s3(file: UploadFile, folder_path: str) -> str:
     try:
-        # Extensión real
-        file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
+        file_extension = file.filename.split('.')[-1]
+
         unique_filename = f"{uuid.uuid4()}.{file_extension}"
         s3_key = f"{folder_path}/{unique_filename}"
 
-        # Leer bytes del archivo
-        file_bytes = file.file.read()
 
-        # Obtener Content-Type correcto para que NO descargue
-        content_type = file.content_type or "image/jpeg"
 
-        # Subir correctamente al bucket con ContentType
+
+
+
+
+
         s3_client.put_object(
             Bucket=os.getenv("AWS_BUCKET_NAME"),
             Key=s3_key,
-            Body=file_bytes,
-            ContentType=content_type,
+            Body=file.file.read(),
+            ContentType=file.content_type or "image/webp"
         )
 
-        # Generar URL pública
-        bucket_name = os.getenv("AWS_BUCKET_NAME")
-        region = os.getenv("AWS_REGION", "us-west-2")
+        base_url = os.getenv("AWS_PUBLIC_BASE_URL")
+        if not base_url:
+            raise RuntimeError("AWS_PUBLIC_BASE_URL no está configurado")
 
-        url = f"https://{bucket_name}.s3.{region}.amazonaws.com/{s3_key}"
+        return f"{base_url}/{s3_key}"
 
-        return url
+
 
     except Exception as e:
-        print(f"Error subiendo archivo a S3: {e}")
-        raise HTTPException(status_code=500, detail=f"Error subiendo archivo: {str(e)}")
-
+        raise HTTPException(status_code=500, detail=str(e))
 
 # -----------------------
 # EMAIL (config desde env)
