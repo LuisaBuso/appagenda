@@ -51,7 +51,6 @@ async def verificar_duplicado_cliente(
 # ============================================================
 # CREAR CLIENTE
 # ============================================================
-
 @router.post("/", response_model=dict)
 async def crear_cliente(
     cliente: Cliente,
@@ -62,18 +61,19 @@ async def crear_cliente(
         if rol not in ["admin_sede", "admin_franquicia", "super_admin"]:
             raise HTTPException(403, "No autorizado")
 
-        existing = await verificar_duplicado_cliente(
-            correo=cliente.correo,
-            telefono=cliente.telefono
-        )
-
-        if existing:
-            campo = (
-                "correo"
-                if cliente.correo == existing.get("correo")
-                else "teléfono"
-            )
-            raise HTTPException(400, f"Ya existe un cliente con este {campo}")
+        # 🚫 ELIMINADO: verificación de correo / teléfono duplicado
+        # existing = await verificar_duplicado_cliente(
+        #     correo=cliente.correo,
+        #     telefono=cliente.telefono
+        # )
+        #
+        # if existing:
+        #     campo = (
+        #         "correo"
+        #         if cliente.correo == existing.get("correo")
+        #         else "teléfono"
+        #     )
+        #     raise HTTPException(400, f"Ya existe un cliente con este {campo}")
 
         sede = current_user.get("sede_id", "000")
         cliente_id = await generar_id("cliente", sede)
