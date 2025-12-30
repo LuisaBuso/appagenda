@@ -11,7 +11,9 @@ from app.database.mongo import (
     collection_clients,
     collection_locales,
     collection_invoices,
-    collection_sales
+    collection_sales,
+    collection_inventarios,           # 🆕
+    collection_inventory_motions
 )
 from app.auth.routes import get_current_user
 
@@ -218,7 +220,7 @@ async def facturar_cita(
         "monto": total_final,
         "profesional_id": cita["profesional_id"],
         "profesional_nombre": cita.get("profesional_nombre", ""),
-        "metodo_pago": cita.get("metodo_pago", "efectivo"),
+        "metodo_pago": cita.get("metodo_pago_actual", "efectivo"),
         "facturado_por": current_user.get("email"),
         "estado": "pagado"
     }
@@ -227,24 +229,26 @@ async def facturar_cita(
     # 🔟 CREAR DOCUMENTO DE VENTA (SALES)
     # ====================================
     desglose_pagos = {}
-    historial_pagos = cita.get("historial_pagos", [])
+    metodo_pago = (
+    cita.get("metodo_pago_actual")
+    or cita.get("metodo_pago")
+    or "efectivo"
+)
 
-    if historial_pagos:
-        for pago in historial_pagos:
-            metodo = pago.get("metodo", "efectivo")
-            monto = pago.get("monto", 0)
-            if metodo in desglose_pagos:
-                desglose_pagos[metodo] += monto
-            else:
-                desglose_pagos[metodo] = monto
-        
-        for metodo in desglose_pagos:
-            desglose_pagos[metodo] = round(desglose_pagos[metodo], 2)
-    else:
-        metodo_pago = cita.get("metodo_pago_actual") or cita.get("metodo_pago") or "efectivo"
-        desglose_pagos[metodo_pago] = round(total_final, 2)
-    
-    desglose_pagos["total"] = round(total_final, 2)
+    historial_pagos = [{
+    "fecha": fecha_actual,
+    "monto": round(total_final, 2),
+    "metodo": metodo_pago,
+    "tipo": "pago_total",
+    "registrado_por": current_user.get("email"),
+    "saldo_despues": 0,
+    "notas": "Pago total al facturar"
+}]
+
+    desglose_pagos = {
+    metodo_pago: round(total_final, 2),
+    "total": round(total_final, 2)
+}
 
     venta = {
         "identificador": identificador,
@@ -297,10 +301,86 @@ async def facturar_cita(
         print(f"⚠️ Error guardando factura: {e}")
 
     try:
-        await collection_sales.insert_one(venta)
-        print("✅ Venta guardada en collection_sales")
+        result_sale = await collection_sales.insert_one(venta)
+        venta_id = str(result_sale.inserted_id)
+        print(f"✅ Venta guardada en collection_sales con ID: {venta_id}")
     except Exception as e:
         print(f"⚠️ Error guardando venta: {e}")
+        raise HTTPException(status_code=500, detail="Error al guardar la venta")
+
+    # ====================================
+    # 🆕 REGISTRAR MOVIMIENTOS DE INVENTARIO
+    # ====================================
+    movimientos_inventario = []
+
+    for item in items:
+        # Solo procesar productos (no servicios)
+        if item["tipo"] == "producto":
+            producto_id = item["producto_id"]
+            cantidad = item["cantidad"]
+        
+            # Buscar inventario de la sede
+            inventario = await collection_inventarios.find_one({
+                "producto_id": producto_id,
+                "sede_id": cita["sede_id"]
+            })
+        
+            if not inventario:
+                print(f"⚠️ No existe inventario para producto {item['nombre']} en sede {cita['sede_id']}")
+                continue
+        
+            stock_anterior = inventario["stock_actual"]
+            nuevo_stock = stock_anterior - cantidad
+        
+            if nuevo_stock < 0:
+                print(f"⚠️ ALERTA: Stock negativo para {item['nombre']} (disponible: {stock_anterior}, vendido: {cantidad})")
+                # Podrías decidir si bloquear aquí o solo alertar
+        
+            # Actualizar inventario
+            await collection_inventarios.update_one(
+                {"_id": inventario["_id"]},
+                {
+                    "$set": {
+                        "stock_actual": nuevo_stock,
+                        "fecha_ultima_actualizacion": fecha_actual
+                    }
+                }
+            )
+        
+            # Preparar movimiento
+            movimientos_inventario.append({
+                "producto_id": producto_id,
+                "nombre_producto": item["nombre"],
+                "cantidad": -cantidad,  # Negativo para salidas
+                "tipo_movimiento": "venta",
+                "stock_anterior": stock_anterior,
+                "stock_nuevo": nuevo_stock,
+                "referencia_id": venta_id,
+                "referencia_tipo": "venta",
+                "numero_comprobante": numero_comprobante,
+                "cliente_id": cita["cliente_id"],
+                "profesional_id": cita["profesional_id"],
+                "usuario": current_user.get("email")
+            })
+        
+            print(f"📉 Inventario actualizado: {item['nombre']} ({stock_anterior} → {nuevo_stock})")
+
+    # Registrar todos los movimientos en una sola operación
+    if movimientos_inventario:
+        motion_doc = {
+            "sede_id": cita["sede_id"],
+            "fecha": fecha_actual,
+            "movimientos": movimientos_inventario,
+            "creado_por": current_user.get("email")
+        }
+        
+        try:
+            await collection_inventory_motions.insert_one(motion_doc)
+            print(f"✅ Movimientos de inventario registrados: {len(movimientos_inventario)} productos")
+        except Exception as e:
+            print(f"⚠️ Error registrando movimientos de inventario: {e}")
+    else:
+        print("ℹ️ No hay productos en esta venta, no se registran movimientos de inventario")
 
     # ====================================
     # 1️⃣3️⃣ ACUMULAR COMISIONES DEL ESTILISTA (SI APLICA)
