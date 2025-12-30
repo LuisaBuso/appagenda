@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "../../types/config";
+// Removí el import no usado: import { useAuth } from "../../context/AuthContext";
 
 export interface Servicio {
   _id: string;
@@ -23,7 +24,7 @@ export interface Servicio {
     COP?: number;
     MXN?: number;
   };
-  sede_id?: string;
+  sede_id?: string | null; // 🔥 CAMBIO: Permitir string | null | undefined
   codigo_referencia?: string;
 }
 
@@ -62,7 +63,7 @@ interface ServicioEjemplo {
 const TODOS_SERVICIOS_GUAYAQUIL: ServicioEjemplo[] = [
   { codigo: '1687644', nombre: 'PEINADOS O TRENZADOS', duracion: 40, categoria: 'Peinados', precio: 5, requiere_producto: false },
   { codigo: '1542486', nombre: 'SERVICIO EXPRESS', duracion: 90, categoria: 'Express', precio: 35, requiere_producto: false },
-  { codigo: '1128696', nombre: 'Color', duracion: 120, categoria: 'Color', precio: 300, requiere_producto: false },
+  { codigo: '1128696', nombre: 'COLOR', duracion: 120, categoria: 'Color', precio: 300, requiere_producto: false },
   { codigo: '736672', nombre: 'TRANSICION D MEDIA - EX ALTA', duracion: 180, categoria: 'Transición', precio: 60, requiere_producto: false },
   { codigo: '736667', nombre: 'TRANSICIÓN D EXB - MEDIA', duracion: 105, categoria: 'Transición', precio: 30, requiere_producto: false },
   { codigo: '736662', nombre: 'COMPLETO EX ALTA', duracion: 180, categoria: 'Completo', precio: 70, requiere_producto: false },
@@ -84,16 +85,154 @@ const TODOS_SERVICIOS_GUAYAQUIL: ServicioEjemplo[] = [
   { codigo: '736534', nombre: 'CORTE DE PUNTAS', duracion: 40, categoria: 'Corte', precio: 20, requiere_producto: true }
 ];
 
-// 🔥 FUNCIÓN PRINCIPAL: Obtener servicios de la sede de Guayaquil
+// 🔥 OBTENER LA MONEDA DE LA SEDE ACTUAL
+function getMonedaSede(): string {
+  const monedaSede = localStorage.getItem('beaux-moneda') || sessionStorage.getItem('beaux-moneda');
+  return monedaSede || 'USD'; // Default a USD si no hay moneda
+}
+
+// 🔥 FUNCIÓN AUXILIAR PARA OBTENER PRECIO SEGÚN MONEDA
+function obtenerPrecioPorMoneda(
+  precios: { USD: number; COP?: number; MXN?: number }, 
+  monedaSede: string
+): { precio: number; moneda: string } {
+  
+  // Verificar monedas en orden de prioridad
+  if (monedaSede === 'COP' && precios.COP !== undefined && precios.COP !== null) {
+    return { precio: precios.COP, moneda: 'COP' };
+  } else if (monedaSede === 'MXN' && precios.MXN !== undefined && precios.MXN !== null) {
+    return { precio: precios.MXN, moneda: 'MXN' };
+  } else if (precios.USD !== undefined && precios.USD !== null) {
+    return { precio: precios.USD, moneda: 'USD' };
+  }
+  
+  // Si no hay precios disponibles, retornar 0 en USD
+  return { precio: 0, moneda: 'USD' };
+}
+
+// 🔥 FUNCIÓN PRINCIPAL: Obtener servicios según la sede
 export async function getServicios(token: string): Promise<Servicio[]> {
   try {
-    // 🔥 ID de la sede de Guayaquil
-    const sedeId = "SD-28080";
+    // 🔥 OBTENER LA SEDE DESDE EL STORAGE O AUTH CONTEXT
+    const sedeId = localStorage.getItem('beaux-sede_id') || sessionStorage.getItem('beaux-sede_id');
+    const nombreLocal = localStorage.getItem('beaux-nombre_local') || sessionStorage.getItem('beaux-nombre_local');
+    const monedaSede = getMonedaSede();
     
+    console.log(`📍 Sede actual: ${sedeId} - ${nombreLocal}`);
+    console.log(`💰 Moneda de la sede: ${monedaSede}`);
+    
+    // 🔥 VERIFICAR SI ES GUAYAQUIL
+    const esGuayaquil = sedeId === 'SD-28080' || 
+                        nombreLocal?.toLowerCase().includes('guayaquil') ||
+                        nombreLocal === 'RF GUAYAQUIL';
+    
+    if (!esGuayaquil) {
+      console.log('📍 No es Guayaquil, obteniendo servicios normales de la API');
+      return await getServiciosNormales(token, sedeId || undefined, monedaSede); // 🔥 Pasar monedaSede
+    }
+    
+    console.log('📍 Es Guayaquil, usando servicios EXCLUSIVOS');
+    return await getServiciosExclusivosGuayaquil(token, sedeId || undefined, monedaSede); // 🔥 Pasar monedaSede
+    
+  } catch (error) {
+    console.error('❌ Error en getServicios:', error);
+    return [];
+  }
+}
+
+// 🔥 FUNCIÓN PARA OBTENER SERVICIOS NORMALES (para sedes que NO son Guayaquil)
+async function getServiciosNormales(token: string, sedeId?: string, monedaSede: string = 'USD'): Promise<Servicio[]> {
+  try {
+    let url = `${API_BASE_URL}admin/servicios/`;
+    
+    // Si hay sedeId, agregarlo como parámetro
+    if (sedeId) {
+      url += `?sede_id=${sedeId}`;
+    }
+    
+    console.log('📍 Obteniendo servicios normales desde:', url);
+    console.log(`💰 Mostrando precios en moneda: ${monedaSede}`);
+    
+    const res = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      credentials: "include",
+    });
+    
+    if (!res.ok) {
+      console.error(`❌ Error HTTP ${res.status}:`, res.statusText);
+      throw new Error(`Error ${res.status} al cargar servicios`);
+    }
+    
+    const serviciosData: ServicioAPI[] = await res.json();
+    console.log('📦 Servicios normales obtenidos de API:', serviciosData.length);
+    
+    // Procesar los servicios de la API
+    const serviciosProcesados: Servicio[] = serviciosData.map((servicio: ServicioAPI) => {
+      // Usar la función auxiliar para obtener el precio según la moneda
+      const { precio: precioFinal, moneda: monedaParaUsuario } = obtenerPrecioPorMoneda(
+        servicio.precios || { USD: 0 },
+        monedaSede
+      );
+      
+      console.log(`💰 ${servicio.nombre}: ${precioFinal} ${monedaParaUsuario} (precios disponibles: ${JSON.stringify(servicio.precios)})`);
+      
+      return {
+        _id: servicio._id,
+        servicio_id: servicio.servicio_id || servicio._id,
+        nombre: servicio.nombre,
+        descripcion: servicio.categoria || '',
+        duracion: servicio.duracion_minutos || 30,
+        duracion_minutos: servicio.duracion_minutos || 30,
+        precio: precioFinal,
+        precio_local: precioFinal,
+        moneda_local: monedaParaUsuario,
+        estado: servicio.activo ? 'activo' : 'inactivo',
+        comision_estilista: servicio.comision_estilista || 0,
+        categoria: servicio.categoria || 'General',
+        requiere_producto: servicio.requiere_producto || false,
+        activo: servicio.activo !== undefined ? servicio.activo : true,
+        creado_por: servicio.creado_por,
+        created_at: servicio.created_at,
+        updated_at: servicio.updated_at,
+        sede_id: servicio.sede_id || sedeId || null,
+        precios_completos: servicio.precios || { USD: precioFinal }
+      };
+    });
+    
+    console.log('✅ Servicios normales procesados:', serviciosProcesados.length);
+    
+    // Mostrar resumen de precios
+    console.log('💰 === RESUMEN DE PRECIOS POR MONEDA ===');
+    const serviciosPorMoneda = serviciosProcesados.reduce((acc, servicio) => {
+      const moneda = servicio.moneda_local || 'USD';
+      acc[moneda] = (acc[moneda] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    
+    Object.entries(serviciosPorMoneda).forEach(([moneda, cantidad]) => {
+      console.log(`   ${moneda}: ${cantidad} servicios`);
+    });
+    console.log('========================================');
+    
+    return serviciosProcesados;
+    
+  } catch (error) {
+    console.error('❌ Error en getServiciosNormales:', error);
+    return [];
+  }
+}
+
+// 🔥 FUNCIÓN PARA OBTENER SERVICIOS EXCLUSIVOS DE GUAYAQUIL
+async function getServiciosExclusivosGuayaquil(token: string, sedeId?: string, monedaSede: string = 'USD'): Promise<Servicio[]> {
+  try {
     // 🔥 URL usando el endpoint específico
-    const url = `${API_BASE_URL}scheduling/services/?sede_id=${sedeId}`;
+    const url = `${API_BASE_URL}scheduling/services/?sede_id=${sedeId || 'SD-28080'}`;
     
     console.log('📍 Obteniendo servicios EXCLUSIVOS de Guayaquil desde:', url);
+    console.log(`💰 Mostrando precios en moneda: ${monedaSede}`);
     
     const res = await fetch(url, {
       headers: {
@@ -115,17 +254,16 @@ export async function getServicios(token: string): Promise<Servicio[]> {
     
     if (serviciosData.length === 0) {
       console.warn('⚠️ La API no devolvió servicios, usando lista completa de servicios');
-      return crearServiciosExclusivosGuayaquil();
+      return crearServiciosExclusivosGuayaquil(monedaSede);
     }
     
     // 🔥 PROCESAR LOS SERVICIOS DE LA API
     serviciosProcesados = serviciosData.map((servicio: ServicioAPI) => {
-      const monedaParaUsuario = 'USD';
-      let precioFinal = 0;
-      
-      if (servicio.precios && servicio.precios.USD !== undefined) {
-        precioFinal = servicio.precios.USD;
-      }
+      // Usar la función auxiliar para obtener el precio según la moneda
+      const { precio: precioFinal, moneda: monedaParaUsuario } = obtenerPrecioPorMoneda(
+        servicio.precios || { USD: 0 },
+        monedaSede
+      );
       
       // 🔥 BUSCAR EL CÓDIGO EN NUESTRA LISTA COMPLETA
       const servicioCompleto = TODOS_SERVICIOS_GUAYAQUIL.find(s => 
@@ -133,6 +271,8 @@ export async function getServicios(token: string): Promise<Servicio[]> {
       );
       
       const codigoRef = servicioCompleto ? servicioCompleto.codigo : '';
+      
+      console.log(`💰 ${servicio.nombre}: ${precioFinal} ${monedaParaUsuario}`);
       
       return {
         _id: servicio._id,
@@ -153,7 +293,7 @@ export async function getServicios(token: string): Promise<Servicio[]> {
         creado_por: servicio.creado_por,
         created_at: servicio.created_at,
         updated_at: servicio.updated_at,
-        sede_id: servicio.sede_id || sedeId,
+        sede_id: servicio.sede_id || sedeId || null,
         precios_completos: servicio.precios || { USD: precioFinal }
       };
     });
@@ -171,32 +311,43 @@ export async function getServicios(token: string): Promise<Servicio[]> {
       });
       
       // 🔥 AÑADIR LOS SERVICIOS FALTANTES
-      const serviciosFaltantesProcesados = serviciosFaltantes.map(servicio => ({
-        _id: `faltante-${servicio.codigo}`,
-        servicio_id: `SV-${servicio.codigo}`,
-        codigo_referencia: servicio.codigo,
-        nombre: servicio.nombre,
-        descripcion: `${servicio.categoria} - Servicio EXCLUSIVO Guayaquil`,
-        duracion: servicio.duracion,
-        duracion_minutos: servicio.duracion,
-        precio: servicio.precio,
-        precio_local: servicio.precio,
-        moneda_local: 'USD',
-        estado: 'activo',
-        categoria: servicio.categoria,
-        requiere_producto: servicio.requiere_producto,
-        activo: true,
-        comision_estilista: 0,
-        creado_por: 'sistema-guayaquil-completo',
-        sede_id: sedeId,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        precios_completos: { 
-          USD: servicio.precio,
-          COP: servicio.precio * 4000,
-          MXN: servicio.precio * 18
+      const serviciosFaltantesProcesados: Servicio[] = serviciosFaltantes.map(servicio => {
+        // Convertir precio según moneda de la sede
+        let precioConvertido = servicio.precio;
+        
+        if (monedaSede === 'COP') {
+          precioConvertido = servicio.precio * 4000; // Conversión USD a COP
+        } else if (monedaSede === 'MXN') {
+          precioConvertido = servicio.precio * 18; // Conversión USD a MXN
         }
-      }));
+        
+        return {
+          _id: `faltante-${servicio.codigo}`,
+          servicio_id: `SV-${servicio.codigo}`,
+          codigo_referencia: servicio.codigo,
+          nombre: servicio.nombre,
+          descripcion: `${servicio.categoria} - Servicio EXCLUSIVO Guayaquil`,
+          duracion: servicio.duracion,
+          duracion_minutos: servicio.duracion,
+          precio: precioConvertido,
+          precio_local: precioConvertido,
+          moneda_local: monedaSede,
+          estado: 'activo',
+          categoria: servicio.categoria,
+          requiere_producto: servicio.requiere_producto,
+          activo: true,
+          comision_estilista: 0,
+          creado_por: 'sistema-guayaquil-completo',
+          sede_id: sedeId || 'SD-28080' || null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          precios_completos: { 
+            USD: servicio.precio,
+            COP: servicio.precio * 4000,
+            MXN: servicio.precio * 18
+          }
+        };
+      });
       
       serviciosProcesados = [...serviciosProcesados, ...serviciosFaltantesProcesados];
     }
@@ -207,55 +358,66 @@ export async function getServicios(token: string): Promise<Servicio[]> {
     console.log('📋 === SERVICIOS COMPLETOS GUAYAQUIL (22 servicios) ===');
     serviciosProcesados.forEach((servicio, index) => {
       const ref = servicio.codigo_referencia ? `[${servicio.codigo_referencia}]` : '[SIN CODIGO]';
-      console.log(`${index + 1}. ${ref} ${servicio.nombre} - USD ${servicio.precio} - ${servicio.duracion}min - ${servicio.categoria}`);
+      console.log(`${index + 1}. ${ref} ${servicio.nombre} - ${servicio.moneda_local} ${servicio.precio} - ${servicio.duracion}min - ${servicio.categoria}`);
     });
     console.log('=======================================================');
     
     return serviciosProcesados;
     
   } catch (error) {
-    console.error('❌ Error en getServicios:', error);
+    console.error('❌ Error en getServiciosExclusivosGuayaquil:', error);
     
     // 🔥 EN CASO DE ERROR, CREAR TODOS LOS SERVICIOS
     console.log('🚧 Creando TODOS los servicios EXCLUSIVOS de Guayaquil...');
-    return crearServiciosExclusivosGuayaquil();
+    return crearServiciosExclusivosGuayaquil(monedaSede);
   }
 }
 
-// 🔥 FUNCIÓN PARA CREAR TODOS LOS SERVICIOS
-function crearServiciosExclusivosGuayaquil(): Servicio[] {
-  return TODOS_SERVICIOS_GUAYAQUIL.map((servicio: ServicioEjemplo) => ({
-    _id: `guayaquil-exclusivo-${servicio.codigo}`,
-    servicio_id: `SV-${servicio.codigo}`,
-    codigo_referencia: servicio.codigo,
-    nombre: servicio.nombre,
-    descripcion: `${servicio.categoria} - Servicio EXCLUSIVO Guayaquil`,
-    duracion: servicio.duracion,
-    duracion_minutos: servicio.duracion,
-    precio: servicio.precio,
-    precio_local: servicio.precio,
-    moneda_local: 'USD',
-    estado: 'activo',
-    categoria: servicio.categoria,
-    requiere_producto: servicio.requiere_producto,
-    activo: true,
-    comision_estilista: 0,
-    creado_por: 'sistema-guayaquil-completo',
-    sede_id: 'SD-28080',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    precios_completos: { 
-      USD: servicio.precio,
-      COP: servicio.precio * 4000,
-      MXN: servicio.precio * 18
+// 🔥 FUNCIÓN PARA CREAR TODOS LOS SERVICIOS (actualizada para usar moneda)
+function crearServiciosExclusivosGuayaquil(monedaSede: string = 'USD'): Servicio[] {
+  return TODOS_SERVICIOS_GUAYAQUIL.map((servicio: ServicioEjemplo) => {
+    // Convertir precio según moneda de la sede
+    let precioConvertido = servicio.precio;
+    
+    if (monedaSede === 'COP') {
+      precioConvertido = servicio.precio * 4000; // Conversión USD a COP
+    } else if (monedaSede === 'MXN') {
+      precioConvertido = servicio.precio * 18; // Conversión USD a MXN
     }
-  }));
+    
+    return {
+      _id: `guayaquil-exclusivo-${servicio.codigo}`,
+      servicio_id: `SV-${servicio.codigo}`,
+      codigo_referencia: servicio.codigo,
+      nombre: servicio.nombre,
+      descripcion: `${servicio.categoria} - Servicio EXCLUSIVO Guayaquil`,
+      duracion: servicio.duracion,
+      duracion_minutos: servicio.duracion,
+      precio: precioConvertido,
+      precio_local: precioConvertido,
+      moneda_local: monedaSede,
+      estado: 'activo',
+      categoria: servicio.categoria,
+      requiere_producto: servicio.requiere_producto,
+      activo: true,
+      comision_estilista: 0,
+      creado_por: 'sistema-guayaquil-completo',
+      sede_id: 'SD-28080',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      precios_completos: { 
+        USD: servicio.precio,
+        COP: servicio.precio * 4000,
+        MXN: servicio.precio * 18
+      }
+    };
+  });
 }
 
 // 🔥 OBTENER SERVICIOS DE UN ESTILISTA
 export async function getServiciosEstilista(estilistaId: string, token: string): Promise<Servicio[]> {
   try {
-    // 1. Obtener todos los servicios EXCLUSIVOS de Guayaquil
+    // 1. Obtener todos los servicios según la sede
     const todosServicios = await getServicios(token);
     
     if (todosServicios.length === 0) {
@@ -272,7 +434,7 @@ export async function getServiciosEstilista(estilistaId: string, token: string):
     });
     
     if (!res.ok) {
-      console.warn('⚠️ No se pudo obtener el estilista, mostrando todos los servicios EXCLUSIVOS');
+      console.warn('⚠️ No se pudo obtener el estilista, mostrando todos los servicios');
       return todosServicios;
     }
     
@@ -430,6 +592,39 @@ export async function deleteServicio(token: string, servicioId: string): Promise
   return await response.json();
 }
 
+// 🔥 FUNCIÓN AUXILIAR PARA PROCESAR SERVICIO CON MONEDA
+function procesarServicioConMonedaIndividual(servicioData: any): Servicio {
+  const monedaSede = getMonedaSede();
+  
+  // Usar la función auxiliar para obtener el precio según la moneda
+  const { precio: precioFinal, moneda: monedaParaUsuario } = obtenerPrecioPorMoneda(
+    servicioData.precios || { USD: 0 },
+    monedaSede
+  );
+  
+  return {
+    _id: servicioData._id,
+    servicio_id: servicioData.servicio_id || servicioData._id,
+    nombre: servicioData.nombre,
+    descripcion: servicioData.categoria || '',
+    duracion: servicioData.duracion_minutos || 30,
+    duracion_minutos: servicioData.duracion_minutos || 30,
+    precio: precioFinal,
+    precio_local: precioFinal,
+    moneda_local: monedaParaUsuario,
+    estado: servicioData.activo ? 'activo' : 'inactivo',
+    comision_estilista: servicioData.comision_estilista || null,
+    categoria: servicioData.categoria || 'General',
+    requiere_producto: servicioData.requiere_producto || false,
+    activo: servicioData.activo !== undefined ? servicioData.activo : true,
+    creado_por: servicioData.creado_por,
+    created_at: servicioData.created_at,
+    updated_at: servicioData.updated_at,
+    precios_completos: servicioData.precios,
+    sede_id: servicioData.sede_id || null
+  };
+}
+
 // 🔥 OBTENER SERVICIO POR ID
 export async function getServicioById(token: string, servicioId: string): Promise<Servicio | null> {
   try {
@@ -458,37 +653,17 @@ export async function getServicioById(token: string, servicioId: string): Promis
   }
 }
 
-// 🔥 FUNCIÓN AUXILIAR PARA PROCESAR SERVICIO CON MONEDA
-function procesarServicioConMonedaIndividual(servicioData: any): Servicio {
-  const monedaParaUsuario = 'USD';
-  let precioFinal = 0;
+// 🔥 HOOK PARA USAR EN COMPONENTES QUE NECESITAN VERIFICAR LA SEDE
+export function useEsGuayaquil(): boolean {
+  const sedeId = localStorage.getItem('beaux-sede_id') || sessionStorage.getItem('beaux-sede_id');
+  const nombreLocal = localStorage.getItem('beaux-nombre_local') || sessionStorage.getItem('beaux-nombre_local');
   
-  if (servicioData.precios && typeof servicioData.precios === 'object') {
-    if (monedaParaUsuario && servicioData.precios[monedaParaUsuario] !== null && servicioData.precios[monedaParaUsuario] !== undefined) {
-      precioFinal = servicioData.precios[monedaParaUsuario];
-    } else if (servicioData.precios.USD !== null && servicioData.precios.USD !== undefined) {
-      precioFinal = servicioData.precios.USD;
-    }
-  }
-  
-  return {
-    _id: servicioData._id,
-    servicio_id: servicioData.servicio_id || servicioData._id,
-    nombre: servicioData.nombre,
-    descripcion: servicioData.categoria || '',
-    duracion: servicioData.duracion_minutos || 30,
-    duracion_minutos: servicioData.duracion_minutos || 30,
-    precio: precioFinal,
-    precio_local: precioFinal,
-    moneda_local: monedaParaUsuario,
-    estado: servicioData.activo ? 'activo' : 'inactivo',
-    comision_estilista: servicioData.comision_estilista || null,
-    categoria: servicioData.categoria || 'General',
-    requiere_producto: servicioData.requiere_producto || false,
-    activo: servicioData.activo !== undefined ? servicioData.activo : true,
-    creado_por: servicioData.creado_por,
-    created_at: servicioData.created_at,
-    updated_at: servicioData.updated_at,
-    precios_completos: servicioData.precios
-  };
+  return sedeId === 'SD-28080' || 
+         nombreLocal?.toLowerCase().includes('guayaquil') ||
+         nombreLocal === 'RF GUAYAQUIL';
+}
+
+// 🔥 HOOK PARA OBTENER LA MONEDA ACTUAL
+export function useMonedaActual(): string {
+  return getMonedaSede();
 }

@@ -10,11 +10,15 @@ export interface CreateClienteData {
 }
 
 export interface UpdateClienteData {
+  cliente_id?: string;
   nombre?: string;
   correo?: string;
   telefono?: string;
-  notas?: string;
+  cedula?: string;
+  ciudad?: string;
+  fecha_de_nacimiento?: string;
   sede_id?: string;
+  notas?: string;
 }
 
 export interface ClienteResponse {
@@ -54,7 +58,7 @@ export interface FichaCliente {
   apellido: string | null;
   cedula: string;
   telefono: string;
-  
+
   // 🔥 IMÁGENES EN NUEVA ESTRUCTURA
   fotos?: {
     antes: string[];
@@ -62,25 +66,25 @@ export interface FichaCliente {
     antes_urls: string[];
     despues_urls: string[];
   };
-  
+
   // 🔥 CAMPOS PARA COMPATIBILIDAD
   antes_url?: string;
   despues_url?: string;
-  
+
   precio: string | number;
   estado: string;
   estado_pago: string;
   local: string;
   notas_cliente: string; // 🔥 CAMBIADO: Ahora es obligatorio
   comentario_interno: string;
-  
+
   // 🔥 RESPUESTAS EN NUEVA ESTRUCTURA
   respuestas?: Array<{
     pregunta: string;
     respuesta: boolean;
     observaciones: string;
   }>;
-  
+
   // 🔥 PARA COMPATIBILIDAD
   respuesta_1?: string;
   respuesta_2?: string;
@@ -92,7 +96,7 @@ export interface FichaCliente {
   respuesta_8?: string;
   respuesta_9?: string;
   respuesta_10?: string;
-  
+
   tipo_ficha?: string;
   datos_especificos?: any;
   descripcion_servicio?: string;
@@ -136,12 +140,12 @@ const transformarHistorialCabello = (historialCitas: any[]): any[] => {
 // 🔥 FUNCIÓN PARA ARREGLAR URLs DE S3 HTTPS A HTTP
 const fixS3Url = (url: string): string => {
   if (!url) return '';
-  
+
   // Si es una URL de S3 de AWS, cambiar https por http para evitar problemas de certificado
   if (url.includes('s3.amazonaws.com') || url.includes('.s3.')) {
     return url.replace('https://', 'http://');
   }
-  
+
   return url;
 };
 
@@ -262,6 +266,7 @@ export const clientesService = {
   },
 
   // 🔥 NUEVO MÉTODO: OBTENER FICHAS DEL CLIENTE - CORREGIDO
+  // 🔥 NUEVO MÉTODO: OBTENER FICHAS DEL CLIENTE - CORREGIDO
   async getFichasCliente(token: string, clienteId: string): Promise<FichaCliente[]> {
     try {
       console.log(`🔍 Obteniendo fichas para cliente: ${clienteId}`);
@@ -289,17 +294,7 @@ export const clientesService = {
 
       // 🔥 TRANSFORMAR LOS DATOS PARA COMPATIBILIDAD
       return fichas.map(ficha => {
-        console.log('📊 Estructura de ficha recibida:', {
-          servicio: ficha.servicio,
-          estilista: ficha.estilista,
-          profesional_nombre: ficha.profesional_nombre,
-          sede: ficha.sede,
-          fotos: ficha.fotos,
-          tiene_fotos: !!ficha.fotos,
-          fotos_antes: ficha.fotos?.antes?.length || 0,
-          fotos_despues: ficha.fotos?.despues?.length || 0,
-          notas_cliente: ficha.notas_cliente
-        });
+        console.log('📊 Estructura de ficha recibida:', ficha);
 
         // 🔥 FUNCIÓN PARA ARREGLAR URLs DE S3
         const fixAllUrls = (urls: string[] | undefined): string[] => {
@@ -320,18 +315,52 @@ export const clientesService = {
           despues_urls: fixAllUrls(ficha.fotos.despues_urls)
         } : undefined;
 
-        // 🔥 EXTRAER RESPUESTAS DEL CUESTIONARIO
-        let respuestasTransformadas: any = {};
-        if (ficha.respuestas && Array.isArray(ficha.respuestas)) {
-          ficha.respuestas.forEach((respuesta, index) => {
-            const key = `respuesta_${index + 1}`;
-            respuestasTransformadas[key] = respuesta.respuesta ? 'Sí' : 'No';
-          });
+        // 🔥 EXTRAER INFORMACIÓN DE DATOS_ESPECIFICOS SI EXISTE
+        let notasDeDiagnostico = '';
+        let recomendaciones = '';
+
+        if (ficha.datos_especificos) {
+          // 🔥 CONSTRUIR NOTAS A PARTIR DE DATOS_ESPECIFICOS
+          const datos = ficha.datos_especificos;
+
+          const respuestasTextuales = ficha.respuestas?.map(r =>
+            `${r.pregunta}: ${r.respuesta}${r.observaciones ? ` - ${r.observaciones}` : ''}`
+          ).join('\n') || '';
+
+          notasDeDiagnostico = `🧪 DIAGNÓSTICO DE RIZOTIPO:
+${respuestasTextuales}
+
+📋 RECOMENDACIONES PERSONALIZADAS:
+${datos.recomendaciones_personalizadas || 'Sin recomendaciones'}
+
+✂️ FRECUENCIA DE CORTE:
+${datos.frecuencia_corte || 'No especificada'}
+
+💆 TÉCNICAS DE ESTILIZADO:
+${datos.tecnicas_estilizado || 'No especificadas'}
+
+🧴 PRODUCTOS SUGERIDOS:
+${datos.productos_sugeridos || 'No especificados'}
+
+📝 OBSERVACIONES GENERALES:
+${datos.observaciones_generales || 'Ninguna'}`;
+
+          recomendaciones = datos.recomendaciones_personalizadas || '';
         }
 
-        // 🔥 ASEGURAR VALORES POR DEFECTO
-        const notasClienteAseguradas = ficha.notas_cliente || ficha.descripcion_servicio || '';
-        const comentarioInternoAsegurado = ficha.comentario_interno || ficha.descripcion_servicio || '';
+        // 🔥 DETERMINAR NOTAS DEL CLIENTE (PRIORIDAD)
+        const notasClienteAseguradas =
+          ficha.notas_cliente?.trim() ||
+          notasDeDiagnostico ||
+          ficha.descripcion_servicio ||
+          'Sin notas';
+
+        // 🔥 DETERMINAR COMENTARIO INTERNO
+        const comentarioInternoAsegurado =
+          ficha.comentario_interno?.trim() ||
+          recomendaciones ||
+          ficha.descripcion_servicio ||
+          'Sin comentarios';
 
         return {
           ...ficha,
@@ -342,9 +371,6 @@ export const clientesService = {
           notas_cliente: notasClienteAseguradas,
           comentario_interno: comentarioInternoAsegurado,
 
-          // 🔥 AGREGAR RESPUESTAS TRANSFORMADAS
-          ...respuestasTransformadas,
-
           // 🔥 VALORES POR DEFECTO
           precio: ficha.precio || '0',
           estado: ficha.estado || 'completado',
@@ -353,8 +379,11 @@ export const clientesService = {
 
           // 🔥 Asegurar que los campos de nombres estén completos
           servicio: ficha.servicio || ficha.servicio_nombre || 'Servicio sin nombre',
+          servicio_nombre: ficha.servicio_nombre || ficha.servicio || 'Servicio sin nombre',
           sede: ficha.sede || ficha.sede_nombre || 'Sede no especificada',
+          sede_nombre: ficha.sede_nombre || ficha.sede || 'Sede no especificada',
           estilista: ficha.estilista || ficha.profesional_nombre || 'Estilista no asignado',
+          profesional_nombre: ficha.profesional_nombre || ficha.estilista || 'Estilista no asignado',
           sede_estilista: ficha.sede_estilista || ficha.sede || ficha.sede_nombre || 'Sede no especificada',
 
           // 🔥 Asegurar campos obligatorios
@@ -362,7 +391,14 @@ export const clientesService = {
           apellido: ficha.apellido || '',
           nombre: ficha.nombre || '',
           cedula: ficha.cedula || '',
-          telefono: ficha.telefono || ''
+          telefono: ficha.telefono || '',
+
+          // 🔥 Agregar fecha formateada
+          fecha_ficha_formatted: ficha.fecha_ficha,
+
+          // 🔥 Preservar datos específicos
+          datos_especificos: ficha.datos_especificos,
+          respuestas: ficha.respuestas || []
         };
       });
 
@@ -413,23 +449,37 @@ export const clientesService = {
     return await response.json();
   },
 
+  // services/clientesService.ts - Solo un método updateCliente
   async updateCliente(token: string, clienteId: string, cliente: UpdateClienteData): Promise<any> {
+    // Preparar los datos completos del cliente
     const requestData: any = {
+      cliente_id: clienteId, // Mantener el mismo ID
       nombre: cliente.nombre?.trim(),
       correo: cliente.correo?.trim(),
       telefono: cliente.telefono?.trim(),
-      notas: cliente.notas?.trim(),
-      sede_id: cliente.sede_id
+      cedula: cliente.cedula?.trim(),
+      ciudad: cliente.ciudad?.trim(),
+      fecha_de_nacimiento: cliente.fecha_de_nacimiento?.trim(),
+      sede_id: cliente.sede_id?.trim(),
+      notas: cliente.notas?.trim()
     };
 
-    // Eliminar campos vacíos
+    // Eliminar campos vacíos o undefined (excepto algunos que pueden ser opcionales)
     Object.keys(requestData).forEach(key => {
       if (requestData[key] === undefined || requestData[key] === '') {
-        delete requestData[key];
+        // No eliminamos los campos que son parte del schema pero pueden estar vacíos
+        // según el API
+        if (key !== 'correo' && key !== 'telefono' && key !== 'cedula' &&
+          key !== 'ciudad' && key !== 'fecha_de_nacimiento' && key !== 'notas') {
+          delete requestData[key];
+        }
       }
     });
 
-    console.log('📤 Actualizando cliente:', requestData);
+    console.log('📤 Actualizando cliente con datos:', {
+      clienteId,
+      requestData
+    });
 
     const response = await fetch(`${API_BASE_URL}clientes/${clienteId}`, {
       method: 'PUT',
@@ -443,7 +493,8 @@ export const clientesService = {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => null);
-      throw new Error(errorData?.detail || `Error al actualizar cliente: ${response.statusText}`);
+      const errorMessage = errorData?.detail || `Error ${response.status}: ${response.statusText}`;
+      throw new Error(errorMessage);
     }
 
     return await response.json();
@@ -491,7 +542,7 @@ export const clientesService = {
       if (citas.length > 0) {
         console.log('📊 ESTRUCTURA DE LA PRIMERA CITA:', {
           _id: citas[0]._id,
-          fecha: citas[0].fecha,
+          fecha: citas[0].fecha, // Aquí debería ser '2025-12-19'
           servicio_nombre: citas[0].servicio_nombre,
           profesional_nombre: citas[0].profesional_nombre,
           estado: citas[0].estado,
@@ -507,15 +558,9 @@ export const clientesService = {
         // Obtener estilista - YA VIENE EN profesional_nombre
         const estilista = cita.profesional_nombre || 'Estilista no especificado';
 
-        // Formatear fecha
-        let fechaFormateada = 'Fecha no disponible';
-        try {
-          if (cita.fecha) {
-            fechaFormateada = new Date(cita.fecha).toLocaleDateString('es-ES');
-          }
-        } catch (error) {
-          console.error('Error formateando fecha:', error);
-        }
+        // 🔥 NO FORMATAR LA FECHA AQUÍ - DEJARLA COMO VIENE DEL SERVIDOR
+        const fechaOriginal = cita.fecha; // Esto debería ser '2025-12-19'
+        console.log(`📅 Fecha original del servidor para cita ${cita._id}: ${fechaOriginal}`);
 
         // Obtener servicio
         const servicio = cita.servicio_nombre || 'Servicio no especificado';
@@ -543,7 +588,7 @@ export const clientesService = {
             : `$${valorTotal} ${moneda}`;
 
         return {
-          fecha: fechaFormateada,
+          fecha: fechaOriginal, // 🔥 DEVOLVER FECHA ORIGINAL '2025-12-19'
           servicio: servicio,
           estilista: estilista,
           notas: notas,
@@ -579,7 +624,7 @@ export const clientesService = {
     }
   },
 
-  // 🔥 NUEVO MÉTODO: OBTENER HISTORIAL DE PRODUCTOS
+  // 🔥 NUEVO MÉTODO: OBTENER HISTORIAL DE PRODUCTOS - CORREGIDO
   async getHistorialProductos(token: string, clienteId: string): Promise<any[]> {
     try {
       console.log(`🛍️ Obteniendo historial de productos para cliente: ${clienteId}`);
@@ -592,20 +637,30 @@ export const clientesService = {
         return [];
       }
 
+      console.log(`📊 Transformando ${historialCitas.length} citas a productos`);
+
       // 🔥 TRANSFORMAR LAS CITAS EN "PRODUCTOS" PARA MOSTRAR
-      // En este caso, cada servicio puede considerarse un "producto"
-      return historialCitas.map(cita => ({
-        producto: cita.servicio, // Usamos el nombre del servicio como producto
-        fecha: cita.fecha,
-        precio: cita.valor_total,
-        estilista: cita.estilista,
-        estado_pago: cita.estado_pago,
-        metodo_pago: cita.metodo_pago
-      }));
+      return historialCitas.map(cita => {
+        console.log(`📅 Fecha de cita a convertir a producto: ${cita.fecha}`);
+
+        return {
+          producto: cita.servicio, // Usamos el nombre del servicio como producto
+          fecha: cita.fecha, // 🔥 FECHA ORIGINAL '2025-12-19' (no formateada)
+          precio: cita.valor_total,
+          estilista: cita.estilista,
+          estado_pago: cita.estado_pago,
+          metodo_pago: cita.metodo_pago,
+          // 🔥 Agregar datos adicionales si los necesitas
+          servicio_id: cita.datos_completos?.servicio_id,
+          cita_id: cita.datos_completos?._id,
+          estado_cita: cita.estado
+        };
+      });
 
     } catch (error) {
       console.error('❌ Error obteniendo historial de productos:', error);
       return [];
     }
   },
+
 };

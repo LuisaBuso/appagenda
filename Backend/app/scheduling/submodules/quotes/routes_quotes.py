@@ -7,7 +7,15 @@ from bson import ObjectId
 import uuid
 import boto3
 import json
+from dotenv import load_dotenv
+load_dotenv()
 
+
+from app.scheduling.submodules.quotes.controllers import (
+    generar_pdf_ficha,
+    crear_html_correo_ficha,
+    enviar_correo_con_pdf
+)
 from app.scheduling.models import FichaCreate
 from app.scheduling.models import Cita, ProductoItem, PagoRequest
 from app.database.mongo import (
@@ -38,11 +46,14 @@ s3_client = boto3.client(
     region_name=os.getenv("AWS_REGION", "us-west-2")
 )
 
+
 def upload_to_s3(file: UploadFile, folder_path: str) -> str:
     try:
         file_extension = file.filename.split('.')[-1]
+
         unique_filename = f"{uuid.uuid4()}.{file_extension}"
         s3_key = f"{folder_path}/{unique_filename}"
+
 
         s3_client.put_object(
             Bucket=os.getenv("AWS_BUCKET_NAME"),
@@ -52,15 +63,15 @@ def upload_to_s3(file: UploadFile, folder_path: str) -> str:
         )
 
         base_url = os.getenv("AWS_PUBLIC_BASE_URL")
-        if not base_url:
+        if not base_url:    
             raise RuntimeError("AWS_PUBLIC_BASE_URL no está configurado")
 
         return f"{base_url}/{s3_key}"
 
+
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
 
 # -----------------------
 # EMAIL (config desde env)
@@ -309,8 +320,8 @@ async def crear_cita(
     data["abono"] = float(abono)
     data["saldo_pendiente"] = float(saldo_pendiente)
     data["estado_pago"] = estado_pago
-    data["metodo_pago_inicial"] = metodo_pago_inicial  # ⭐ NUEVO
-    data["metodo_pago_actual"] = metodo_pago_inicial   # ⭐ NUEVO
+    data["metodo_pago_inicial"] = metodo_pago_inicial  # ⭐ NUEVO x
+    data["metodo_pago_actual"] = metodo_pago_inicial   # ⭐ NUEVO x
     data["moneda"] = moneda_sede
     data["estado"] = "confirmada"  # Estado por defecto
 
@@ -814,7 +825,7 @@ async def crear_cita(
             "valor_total": valor_total,
             "estado_pago": estado_pago,
             "metodo_pago_inicial": metodo_pago_inicial,  # ⭐ NUEVO
-            "metodo_pago_actual": metodo_pago_inicial,   # ⭐ NUEVO (mismo al inicio)
+            "metodo_pago_actual": metodo_pago_inicial,   # ⭐ NUEVO (mismo al inicio) aqui
             "saldo_pendiente": saldo_pendiente,
             "emails_enviados": {
                 "cliente": bool(cliente_email),
@@ -1609,6 +1620,8 @@ async def eliminar_producto_de_cita(
 ):
     """
     Elimina un producto específico de una cita y recalcula totales.
+    ⭐ Recalcula el total RESTANDO solo el producto eliminado.
+    ⭐ Aplica redondeo para corregir errores de punto flotante.
     """
     # Solo admin sede, admin o estilista
     if current_user["rol"] not in ["admin_sede", "admin", "estilista"]:
@@ -1770,18 +1783,16 @@ async def eliminar_todos_productos_de_cita(
         "cita": cita_actualizada
     }
 # ============================================
-# ✅ Finalizar servicio
+# ✅ Finalizar servicio con PDF
 # ============================================
 @router.put("/citas/{cita_id}/finalizar", response_model=dict)
-async def finalizar_servicio(
+async def finalizar_servicio_con_pdf(
     cita_id: str,
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Finaliza un servicio (NO factura, NO crea comisión).
-    Solo cambia el estado a 'finalizado'.
+    Finaliza un servicio, genera PDF y envía por correo.
     """
-
     # Verificar rol
     if current_user["rol"] not in ["admin_sede", "estilista"]:
         raise HTTPException(
@@ -1804,7 +1815,15 @@ async def finalizar_servicio(
             detail="Esta cita ya fue finalizada"
         )
 
-    # Actualización
+    # Buscar la ficha asociada a la cita
+    ficha = await collection_card.find_one({"datos_especificos.cita_id": cita_id})
+    if not ficha:
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontró ficha técnica asociada a esta cita"
+        )
+
+    # Actualizar estado de la cita
     update_data = {
         "estado": "finalizado",
         "fecha_finalizacion": datetime.utcnow(),
@@ -1812,14 +1831,108 @@ async def finalizar_servicio(
     }
 
     await collection_citas.update_one(
-    {"_id": ObjectId(cita_id)},
-    {"$set": update_data}
+        {"_id": ObjectId(cita_id)},
+        {"$set": update_data}
     )
 
+    # Obtener la cita actualizada con TODOS los datos
+    cita_actualizada = await collection_citas.find_one({"_id": ObjectId(cita_id)})
+
+    # Actualizar también el estado de la ficha
+    await collection_card.update_one(
+        {"_id": ficha["_id"]},
+        {"$set": {"estado": "finalizado"}}
+    )
+
+    # Generar PDF con los datos de la ficha
+    cliente_email = None  # Definir fuera del try para usarla en el return
+    try:
+        print(f"🔍 Generando PDF para cita {cita_id}...")
+        print(f"📄 Datos financieros de la cita: valor_total={cita_actualizada.get('valor_total')}, abono={cita_actualizada.get('abono')}")
+        print(f"📄 Método de pago: actual={cita_actualizada.get('metodo_pago_actual')}, inicial={cita_actualizada.get('metodo_pago_inicial')}")
+        
+        # Preparar datos de cita para el PDF
+        cita_data_for_pdf = {
+            "cita_id": cita_id,
+            "estado": cita_actualizada.get("estado", "finalizado"),
+            "fecha_finalizacion": cita_actualizada.get("fecha_finalizacion", datetime.utcnow()),
+            "finalizado_por": cita_actualizada.get("finalizado_por", current_user.get("email")),
+            # Datos financieros COMPLETOS
+            "valor_total": cita_actualizada.get("valor_total", 0),
+            "abono": cita_actualizada.get("abono", 0),
+            "saldo_pendiente": cita_actualizada.get("saldo_pendiente", 0),
+            "estado_pago": cita_actualizada.get("estado_pago", "pendiente"),
+            "metodo_pago_actual": cita_actualizada.get("metodo_pago_actual"),
+            "metodo_pago_inicial": cita_actualizada.get("metodo_pago_inicial"),
+            "moneda": cita_actualizada.get("moneda", "COP"),
+            "hora_fin": cita_actualizada.get("hora_fin", "No especificado"),
+        }
+        
+        pdf_bytes = await generar_pdf_ficha(ficha, cita_data_for_pdf)
+        
+        print(f"✅ PDF generado exitosamente ({len(pdf_bytes)} bytes)")
+        
+        # Preparar datos para el correo
+        cliente_email = ficha.get("email")
+        if not cliente_email:
+            # Si no hay email en la ficha, buscar en el cliente
+            print(f"🔍 Buscando email del cliente con ID: {ficha.get('cliente_id')}")
+            cliente = await collection_clients.find_one({"_id": ficha.get("cliente_id")})
+            if cliente and cliente.get("email"):
+                cliente_email = cliente.get("email")
+                print(f"📧 Email encontrado: {cliente_email}")
+        
+        if cliente_email:
+            # Crear HTML del correo (SIN AWAIT - porque ahora es función normal)
+            html_correo = crear_html_correo_ficha(
+                cliente_nombre=ficha.get("nombre", "Cliente"),
+                servicio_nombre=ficha.get("servicio_nombre", "Servicio"),
+                fecha=datetime.utcnow().strftime("%d/%m/%Y %H:%M")
+            )
+            
+            # Crear nombre del archivo PDF
+            ficha_id_str = str(ficha.get('_id', ''))
+            nombre_archivo = f"comprobante_servicio_{ficha_id_str[-6:] if len(ficha_id_str) >= 6 else ficha_id_str}.pdf"
+            
+            print(f"📧 Enviando correo a {cliente_email}")
+            
+            # Enviar correo con PDF adjunto (ESTA SÍ lleva await porque es async)
+            enviado = await enviar_correo_con_pdf(
+                destinatario=cliente_email,
+                asunto=f"✅ Comprobante de Servicio - {ficha.get('servicio_nombre', 'Servicio')}",
+                mensaje_html=html_correo,
+                pdf_bytes=pdf_bytes,
+                nombre_archivo=nombre_archivo
+            )
+            
+            if enviado:
+                print(f"✅ PDF enviado a {cliente_email}")
+            else:
+                print(f"⚠️ PDF generado pero no enviado")
+        else:
+            print("⚠️ No se encontró email del cliente")
+        
+        # Guardar referencia del PDF generado
+        await collection_citas.update_one(
+            {"_id": ObjectId(cita_id)},
+            {"$set": {
+                "pdf_generado": True,
+                "pdf_fecha_generacion": datetime.utcnow(),
+                "pdf_enviado": bool(cliente_email)
+            }}
+        )
+        
+    except Exception as e:
+        print(f"❌ Error generando/enviando PDF: {e}")
+        import traceback
+        traceback.print_exc()
 
     return {
         "success": True,
         "message": "Servicio finalizado correctamente",
         "cita_id": cita_id,
-        "estado": "finalizado"
+        "estado": "finalizado",
+        "pdf_generado": True,
+        "pdf_enviado": bool(cliente_email) if cliente_email is not None else False,
+        "cliente_email": cliente_email
     }
