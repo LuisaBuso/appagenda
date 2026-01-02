@@ -1,8 +1,10 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from datetime import datetime
 from typing import Optional, List
 from bson import ObjectId
 import random
+import asyncio
+from datetime import timedelta
 
 from app.database.mongo import (
     collection_citas,
@@ -615,25 +617,314 @@ async def obtener_facturas_cliente(
 
 
 # ============================================================
-# 📊 Obtener ventas
+# 🔹 Obtener ventas con paginación y filtros
 # ============================================================
 @router.get("/sales/{sede_id}")
 async def obtener_ventas_sede(
     sede_id: str,
+    # Parámetros de paginación
+    page: int = Query(1, ge=1, description="Número de página (inicia en 1)"),
+    limit: int = Query(50, ge=1, le=200, description="Registros por página (máx 200)"),
+    
+    # Filtros de fecha
+    fecha_desde: Optional[str] = Query(
+        None, 
+        description="Fecha inicio (formato: YYYY-MM-DD)",
+        regex=r"^\d{4}-\d{2}-\d{2}$"
+    ),
+    fecha_hasta: Optional[str] = Query(
+        None,
+        description="Fecha fin (formato: YYYY-MM-DD)",
+        regex=r"^\d{4}-\d{2}-\d{2}$"
+    ),
+    
+    # Filtros adicionales
+    profesional_id: Optional[str] = Query(None, description="Filtrar por profesional"),
+    search: Optional[str] = Query(None, description="Buscar en nombre, cédula o email del cliente"),
+    
+    # Ordenamiento
+    sort_order: str = Query("desc", regex=r"^(asc|desc)$", description="Orden ascendente o descendente"),
+    
     current_user: dict = Depends(get_current_user)
 ):
+    """
+    Obtiene ventas paginadas con múltiples filtros
+    
+    Parámetros:
+    - **sede_id**: ID de la sede (SD-XXXXX)
+    - **page**: Número de página (default: 1)
+    - **limit**: Registros por página (default: 50, max: 200)
+    - **fecha_desde**: Filtro fecha inicio (YYYY-MM-DD)
+    - **fecha_hasta**: Filtro fecha fin (YYYY-MM-DD)
+    - **profesional_id**: ID del profesional
+    - **search**: Buscar en nombre, cédula o email del cliente
+    
+    Ejemplo de uso:
+    /sales/SD-88809?page=1&limit=50&fecha_desde=2025-12-01&fecha_hasta=2025-12-31
+    """
+    
+    # Validar permisos
     if current_user["rol"] not in ["admin_sede", "superadmin"]:
         raise HTTPException(status_code=403, detail="No autorizado")
+    
+    try:
+        from datetime import timedelta
+        
+        # ============================================================
+        # 🔹 Construir filtros dinámicos
+        # ============================================================
+        filtros = {"sede_id": sede_id}
+        
+        # DEBUG: Log para ver qué estamos buscando
+        print(f"🔍 Buscando ventas para sede_id: {sede_id}")
+        
+        # Filtro de fechas (usando ISODate para MongoDB)
+        if fecha_desde or fecha_hasta:
+            filtros["fecha_pago"] = {}
+            
+            if fecha_desde:
+                # Convertir a inicio del día en UTC
+                fecha_inicio = datetime.strptime(fecha_desde, "%Y-%m-%d")
+                filtros["fecha_pago"]["$gte"] = fecha_inicio
+                print(f"📅 Filtro fecha_desde: {fecha_inicio}")
+            
+            if fecha_hasta:
+                # Convertir a fin del día en UTC
+                fecha_fin = datetime.strptime(fecha_hasta, "%Y-%m-%d")
+                fecha_fin = fecha_fin.replace(hour=23, minute=59, second=59)
+                filtros["fecha_pago"]["$lte"] = fecha_fin
+                print(f"📅 Filtro fecha_hasta: {fecha_fin}")
+        else:
+            # Si NO hay filtros de fecha, buscar últimos 7 días por defecto
+            if not profesional_id and not search:
+                fecha_fin = datetime.now()
+                fecha_inicio = fecha_fin - timedelta(days=7)
+                filtros["fecha_pago"] = {
+                    "$gte": fecha_inicio,
+                    "$lte": fecha_fin
+                }
+                print(f"📅 Filtro automático (últimos 7 días): {fecha_inicio} a {fecha_fin}")
+        
+        # DEBUG: Imprimir filtros aplicados
+        print(f"🔎 Filtros aplicados: {filtros}")
+        
+        # ============================================================
+        # 🔹 Filtros adicionales (manejo especial de $or)
+        # ============================================================
+        condiciones_or = []
+        
+        # Filtro por profesional (búsqueda híbrida)
+        if profesional_id:
+            condiciones_or.extend([
+                {"profesional_id": profesional_id},  # Sistema actual
+                {"items.profesional_id": profesional_id}  # Data migrada
+            ])
+        
+        # Búsqueda de texto en datos del cliente
+        if search:
+            condiciones_or.extend([
+                {"nombre_cliente": {"$regex": search, "$options": "i"}},
+                {"cedula_cliente": {"$regex": search, "$options": "i"}},
+                {"email_cliente": {"$regex": search, "$options": "i"}},
+                {"telefono_cliente": {"$regex": search, "$options": "i"}}
+            ])
+        
+        # Si hay condiciones OR, agregarlas al filtro
+        if condiciones_or:
+            # Si solo hay un tipo de filtro OR, usar directamente
+            if profesional_id and not search:
+                filtros["$or"] = condiciones_or
+            elif search and not profesional_id:
+                filtros["$or"] = condiciones_or
+            # Si hay ambos filtros, combinarlos con $and
+            else:
+                filtros["$and"] = [
+                    {
+                        "$or": [
+                            {"profesional_id": profesional_id},
+                            {"items.profesional_id": profesional_id}
+                        ]
+                    },
+                    {
+                        "$or": [
+                            {"nombre_cliente": {"$regex": search, "$options": "i"}},
+                            {"cedula_cliente": {"$regex": search, "$options": "i"}},
+                            {"email_cliente": {"$regex": search, "$options": "i"}},
+                            {"telefono_cliente": {"$regex": search, "$options": "i"}}
+                        ]
+                    }
+                ]
+        
+        # DEBUG: Imprimir filtros finales
+        print(f"🔎 Filtros finales completos: {filtros}")
+        
+        # ============================================================
+        # 🔹 Contar total de registros (con timeout)
+        # ============================================================
+        try:
+            total_ventas = await asyncio.wait_for(
+                collection_sales.count_documents(filtros),
+                timeout=10.0  # 10 segundos máximo
+            )
+        except asyncio.TimeoutError:
+            # Si tarda mucho, retornar -1 (frontend puede manejarlo)
+            total_ventas = -1
+        
+        # ============================================================
+        # 🔹 Calcular paginación
+        # ============================================================
+        skip = (page - 1) * limit
+        total_pages = (total_ventas + limit - 1) // limit if total_ventas > 0 else 0
+        
+        # ============================================================
+        # 🔹 Ordenamiento (fijo por fecha descendente)
+        # ============================================================
+        sort_by = "fecha_pago"
+        sort_direction = -1  # Descendente (más recientes primero)
+        
+        # ============================================================
+        # 🔹 Proyección optimizada (campos de tu schema)
+        # ============================================================
+        projection = {
+            "_id": 1,
+            "identificador": 1,
+            "fecha_pago": 1,
+            "moneda": 1,
+            "local": 1,
+            "sede_id": 1,
+            "cliente_id": 1,
+            "nombre_cliente": 1,
+            "cedula_cliente": 1,
+            "email_cliente": 1,
+            "telefono_cliente": 1,
+            "items": 1,
+            "desglose_pagos": 1,
+            "facturado_por": 1,
+            "numero_comprobante": 1,
+            "tipo_comision": 1,
+            "profesional_id": 1,
+            "profesional_nombre": 1,
+            "historial_pagos": 1
+        }
+        
+        # ============================================================
+        # 🔹 Obtener ventas paginadas
+        # ============================================================
+        ventas = await collection_sales.find(filtros, projection)\
+            .sort(sort_by, sort_direction,)\
+            .skip(skip)\
+            .limit(limit)\
+            .to_list(limit)
+        
+        # ============================================================
+        # 🔹 Procesar datos y convertir ObjectIds RECURSIVAMENTE
+        # ============================================================
+        from bson import ObjectId
+        
+        def limpiar_objectids(obj):
+            """
+            Convierte recursivamente TODOS los ObjectId a string
+            Funciona con diccionarios, listas y valores anidados
+            """
+            if isinstance(obj, ObjectId):
+                return str(obj)
+            elif isinstance(obj, dict):
+                return {key: limpiar_objectids(value) for key, value in obj.items()}
+            elif isinstance(obj, list):
+                return [limpiar_objectids(item) for item in obj]
+            elif isinstance(obj, datetime):
+                return obj.isoformat()
+            else:
+                return obj
+        
+        # Limpiar TODAS las ventas recursivamente
+        ventas = [limpiar_objectids(venta) for venta in ventas]
 
-    ventas = await collection_sales.find({
-        "sede_id": sede_id
-    }).sort("fecha_pago", -1).to_list(None)
+        
+        # ============================================================
+        # 🔹 Respuesta estructurada
+        # ============================================================
+        return {
+            "success": True,
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": total_ventas,
+                "total_pages": total_pages,
+                "has_next": skip + limit < total_ventas if total_ventas > 0 else False,
+                "has_prev": page > 1,
+                "showing": len(ventas),
+                "from": skip + 1 if len(ventas) > 0 else 0,
+                "to": skip + len(ventas)
+            },
+            "filters_applied": {
+                "sede_id": sede_id,
+                "fecha_desde": fecha_desde,
+                "fecha_hasta": fecha_hasta,
+                "profesional_id": profesional_id,
+                "search": search
+            },
+            "ventas": ventas
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al obtener ventas: {str(e)}"
+        )
 
-    for venta in ventas:
-        venta["_id"] = str(venta["_id"])
 
-    return {
-        "success": True,
-        "total": len(ventas),
-        "ventas": ventas
-    }
+# ============================================================
+# 🔹 Endpoint para obtener detalle de una venta específica
+# ============================================================
+@router.get("/sales/{sede_id}/{venta_id}")
+async def obtener_detalle_venta(
+    sede_id: str,
+    venta_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Obtiene el detalle completo de una venta específica
+    """
+    
+    if current_user["rol"] not in ["admin_sede", "superadmin"]:
+        raise HTTPException(status_code=403, detail="No autorizado")
+    
+    try:
+        from bson import ObjectId
+        
+        # Función reutilizable para limpiar ObjectIds
+        def limpiar_objectids(obj):
+            """Convierte recursivamente TODOS los ObjectId a string"""
+            if isinstance(obj, ObjectId):
+                return str(obj)
+            elif isinstance(obj, dict):
+                return {key: limpiar_objectids(value) for key, value in obj.items()}
+            elif isinstance(obj, list):
+                return [limpiar_objectids(item) for item in obj]
+            elif isinstance(obj, datetime):
+                return obj.isoformat()
+            else:
+                return obj
+        
+        venta = await collection_sales.find_one({
+            "_id": ObjectId(venta_id),
+            "sede_id": sede_id
+        })
+        
+        if not venta:
+            raise HTTPException(status_code=404, detail="Venta no encontrada")
+        
+        # Limpiar todos los ObjectIds recursivamente
+        venta = limpiar_objectids(venta)
+        
+        return {
+            "success": True,
+            "venta": venta
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al obtener detalle de venta: {str(e)}"
+        )
