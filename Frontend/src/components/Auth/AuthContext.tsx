@@ -113,7 +113,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const keys = [
       "beaux-id", 
       "beaux-name", 
-      "beaux-email", 
+      "beaux-email",  
       "beaux-role", 
       "access_token",
       "beaux-pais",
@@ -127,7 +127,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       "beaux-reglas_comision"
     ];
     keys.forEach((k) => {
-      localStorage.removeItem(k);
       sessionStorage.removeItem(k);
     });
   }, []);
@@ -149,15 +148,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   // Función para guardar usuario en storage
-  const saveUserToStorage = useCallback((userData: User, remember: boolean) => {
-    const storage = remember ? localStorage : sessionStorage;
-    
-    storage.setItem("beaux-id", userData.id);
-    storage.setItem("beaux-name", userData.name);
-    storage.setItem("beaux-email", userData.email);
-    storage.setItem("beaux-role", userData.role);
-    storage.setItem("access_token", userData.token);
-    
+  const saveUserToStorage = useCallback((userData: User, _remember: boolean) => {
+    // Solo usar sessionStorage
+    sessionStorage.setItem("beaux-id", userData.id);
+    sessionStorage.setItem("beaux-name", userData.name);
+    sessionStorage.setItem("beaux-email", userData.email);
+    sessionStorage.setItem("beaux-role", userData.role);
+    sessionStorage.setItem("access_token", userData.token);
     // Guardar información adicional si existe
     const additionalFields = {
       'beaux-pais': userData.pais,
@@ -170,10 +167,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       'beaux-activa': userData.activa?.toString(),
       'beaux-reglas_comision': userData.reglas_comision ? JSON.stringify(userData.reglas_comision) : undefined
     };
-    
     Object.entries(additionalFields).forEach(([key, value]) => {
       if (value !== undefined) {
-        storage.setItem(key, value);
+        sessionStorage.setItem(key, value);
       }
     });
   }, []);
@@ -182,30 +178,29 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     const initializeAuth = async () => {
       try {
-        const storedEmail = localStorage.getItem("beaux-email") || sessionStorage.getItem("beaux-email");
-        const storedToken = localStorage.getItem("access_token") || sessionStorage.getItem("access_token");
+        const storedEmail = sessionStorage.getItem("beaux-email");
+        const storedToken =  sessionStorage.getItem("access_token");
 
         if (storedEmail && storedToken) {
           const isValid = await validateToken(storedToken);
-          
           if (isValid) {
             const userData: User = {
-              id: localStorage.getItem("beaux-id") || sessionStorage.getItem("beaux-id") || "",
-              name: localStorage.getItem("beaux-name") || sessionStorage.getItem("beaux-name") || "",
+              id: sessionStorage.getItem("beaux-id") || "",
+              name: sessionStorage.getItem("beaux-name") || "",
               email: storedEmail,
-              role: localStorage.getItem("beaux-role") || sessionStorage.getItem("beaux-role") || "user",
+              role: sessionStorage.getItem("beaux-role") || "user",
               token: storedToken,
               access_token: storedToken,
-              pais: localStorage.getItem("beaux-pais") || undefined,
-              sede_id: localStorage.getItem("beaux-sede_id") || undefined,
-              nombre_local: localStorage.getItem("beaux-nombre_local") || undefined,
-              moneda: localStorage.getItem("beaux-moneda") || undefined,
-              zona_horaria: localStorage.getItem("beaux-zona_horaria") || undefined,
-              telefono: localStorage.getItem("beaux-telefono") || undefined,
-              direccion: localStorage.getItem("beaux-direccion") || undefined,
-              activa: localStorage.getItem("beaux-activa") === 'true',
-              reglas_comision: localStorage.getItem("beaux-reglas_comision") 
-                ? JSON.parse(localStorage.getItem("beaux-reglas_comision")!) 
+              pais: sessionStorage.getItem("beaux-pais") || undefined,
+              sede_id: sessionStorage.getItem("beaux-sede_id") || undefined,
+              nombre_local: sessionStorage.getItem("beaux-nombre_local") || undefined,
+              moneda: sessionStorage.getItem("beaux-moneda") || undefined,
+              zona_horaria: sessionStorage.getItem("beaux-zona_horaria") || undefined,
+              telefono: sessionStorage.getItem("beaux-telefono") || undefined,
+              direccion: sessionStorage.getItem("beaux-direccion") || undefined,
+              activa: sessionStorage.getItem("beaux-activa") === 'true',
+              reglas_comision: sessionStorage.getItem("beaux-reglas_comision") 
+                ? JSON.parse(sessionStorage.getItem("beaux-reglas_comision")!) 
                 : undefined,
             };
             setUser(userData);
