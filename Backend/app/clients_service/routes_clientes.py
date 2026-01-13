@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from app.clients_service.models import Cliente, NotaCliente
-from app.database.mongo import collection_clients, collection_citas, collection_card,collection_servicios, collection_locales,collection_estilista
+from app.database.mongo import collection_clients, collection_citas, collection_card,collection_servicios, collection_locales,collection_estilista, collection_sales
 from app.auth.routes import get_current_user
 from app.id_generator.generator import generar_id
 from datetime import datetime
@@ -61,28 +61,29 @@ async def crear_cliente(
         if rol not in ["admin_sede", "admin_franquicia", "super_admin"]:
             raise HTTPException(403, "No autorizado")
 
-        # 🚫 ELIMINADO: verificación de correo / teléfono duplicado
-        # existing = await verificar_duplicado_cliente(
-        #     correo=cliente.correo,
-        #     telefono=cliente.telefono
-        # )
-        #
-        # if existing:
-        #     campo = (
-        #         "correo"
-        #         if cliente.correo == existing.get("correo")
-        #         else "teléfono"
-        #     )
-        #     raise HTTPException(400, f"Ya existe un cliente con este {campo}")
-
-        sede = current_user.get("sede_id", "000")
-        cliente_id = await generar_id("cliente", sede)
+        sede_autenticada = current_user.get("sede_id", "000")
+        
+        # ✅ Consultar información de la sede
+        sede_info = await collection_locales.find_one({"sede_id": sede_autenticada})
+        
+        if not sede_info:
+            raise HTTPException(400, "Sede no encontrada")
+        
+        # ✅ Verificar si la sede maneja clientes globales
+        es_global = sede_info.get("es_global", False)
+        
+        # ✅ Generar ID del cliente
+        cliente_id = await generar_id("cliente", sede_autenticada)
 
         data = cliente.dict(exclude_none=True)
         data["cliente_id"] = cliente_id
         data["fecha_creacion"] = datetime.now()
         data["creado_por"] = current_user.get("email", "unknown")
-        data["sede_id"] = sede
+        
+        # ⭐ Si es sede global, no asignar sede_id específica
+        data["sede_id"] = None if es_global else sede_autenticada
+        
+        data["pais"] = sede_info.get("pais", "")
         data["notas_historial"] = []
 
         result = await collection_clients.insert_one(data)
