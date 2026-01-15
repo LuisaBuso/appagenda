@@ -1,6 +1,21 @@
 from pydantic import BaseModel, EmailStr, field_validator
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
+
+# Modelo para metadata de paginación
+class MetadataPaginacion(BaseModel):
+    total: int
+    pagina: int
+    limite: int
+    total_paginas: int
+    tiene_siguiente: bool
+    tiene_anterior: bool
+
+# Modelo para la respuesta completa
+class ClientesPaginados(BaseModel):
+    clientes: List[dict]
+    metadata: MetadataPaginacion
+
 
 class Cliente(BaseModel):
     cliente_id: Optional[str] = None
