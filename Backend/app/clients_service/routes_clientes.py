@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
-from app.clients_service.models import Cliente, NotaCliente
+from app.clients_service.models import Cliente, NotaCliente,ClientesPaginados
 from app.database.mongo import collection_clients, collection_citas, collection_card,collection_servicios, collection_locales,collection_estilista, collection_sales
 from app.auth.routes import get_current_user
 from app.id_generator.generator import generar_id
@@ -134,18 +134,88 @@ async def listar_clientes(
 
 
 # ============================================================
-# LISTAR TODOS LOS CLIENTES (SUPER ADMIN)
+# LISTAR TODOS LOS CLIENTES (SUPER ADMIN Y CLIENTES GLOBALES)
 # ============================================================
 
-@router.get("/todos", response_model=List[dict])
-async def listar_todos(current_user: dict = Depends(get_current_user)):
+@router.get("/todos", response_model=ClientesPaginados)
+async def listar_todos(
+    filtro: Optional[str] = Query(None),
+    limite: int = Query(100, ge=1, le=500),
+    pagina: int = Query(1, ge=1),
+    current_user: dict = Depends(get_current_user)
+):
     try:
-        if current_user.get("rol") != "super_admin":
+        rol = current_user.get("rol")
+        
+        # Validar roles permitidos
+        if rol not in ["super_admin", "admin_sede"]:
             raise HTTPException(403, "No autorizado")
 
-        clientes = await collection_clients.find({}).to_list(None)
-        return [cliente_to_dict(c) for c in clientes]
+        query = {}
+        
+        # Lógica según el rol
+        if rol == "admin_sede":
+            sede_id = current_user.get("sede_id")
+            
+            if not sede_id:
+                raise HTTPException(400, "Usuario sin sede asignada")
+            
+            # Verificar si la sede es global
+            sede_info = await collection_locales.find_one({"sede_id": sede_id})
+            
+            if not sede_info:
+                raise HTTPException(404, "Sede no encontrada")
+            
+            # Si es sede global, traer clientes con sede_id null
+            # Si no es global, no debería usar este endpoint
+            if sede_info.get("es_global") == True:
+                query["sede_id"] = None
+            else:
+                raise HTTPException(403, "Solo sedes globales pueden acceder a este endpoint")
+        
+        # Si es super_admin, no aplica filtro de sede (trae todos)
+        
+        # Aplicar filtros de búsqueda si existen
+        if filtro:
+            filtro_condiciones = [
+                {"nombre": {"$regex": filtro, "$options": "i"}},
+                {"correo": {"$regex": filtro, "$options": "i"}},
+                {"telefono": {"$regex": filtro, "$options": "i"}},
+                {"cliente_id": {"$regex": filtro, "$options": "i"}},
+            ]
+            
+            if query:
+                # Combinar query existente con filtros de búsqueda
+                query = {"$and": [query, {"$or": filtro_condiciones}]}
+            else:
+                query["$or"] = filtro_condiciones
 
+        # Calcular paginación
+        skip = (pagina - 1) * limite
+        
+        # Obtener total de documentos
+        total_clientes = await collection_clients.count_documents(query)
+        
+        # Ejecutar query con paginación
+        clientes = await collection_clients.find(query).skip(skip).limit(limite).to_list(None)
+        
+        # Calcular metadata de paginación
+        total_paginas = (total_clientes + limite - 1) // limite
+        
+        return {
+            "clientes": [cliente_to_dict(c) for c in clientes],
+            "metadata": {
+                "total": total_clientes,
+                "pagina": pagina,
+                "limite": limite,
+                "total_paginas": total_paginas,
+                "tiene_siguiente": pagina < total_paginas,
+                "tiene_anterior": pagina > 1
+            }
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error al obtener todos los clientes: {e}", exc_info=True)
         raise HTTPException(500, "Error al obtener todos los clientes")
