@@ -31,6 +31,7 @@ const navItems: NavItem[] = [
   { title: 'Sedes', href: '/superadmin/sedes', icon: Home, roles: ['super_admin'] },
   { title: 'Estilistas', href: '/superadmin/stylists', icon: Users, roles: ['super_admin'] },
   { title: 'Servicios', href: '/superadmin/services', icon: Package, roles: ['super_admin'] },
+  { title: 'Ventas Facturadas', href: '/superadmin/sales-invoices', icon: CreditCard, roles: ['super_admin'] },
 
   { title: 'Dashboard', href: '/sede/dashboard', icon: LayoutDashboard, roles: ['admin_sede'] },
   { title: 'Agenda', href: '/sede/appointments', icon: Users, roles: ['admin_sede'] },
@@ -39,6 +40,7 @@ const navItems: NavItem[] = [
   { title: 'Facturacion', href: '/sede/billing', icon: CreditCard, roles: ['admin_sede'] },
   { title: 'Estilistas', href: '/sede/stylists', icon: Users, roles: ['admin_sede'] },
   { title: 'Comisiones', href: '/sede/commissions', icon: CreditCard, roles: ['admin_sede'] },
+  { title: 'Ventas Facturadas', href: '/sede/sales-invoiced', icon: CreditCard, roles: ['admin_sede'] },
 
   { title: 'Agenda', href: '/stylist/appointments', icon: Users, roles: ['estilista'] },
   { title: 'Comisiones', href: '/stylist/commissions', icon: CreditCard, roles: ['estilista'] },

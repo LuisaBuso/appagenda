@@ -49,7 +49,7 @@ export interface FichaCliente {
   servicio_id: string;
   servicio_nombre: string;
   profesional_id: string;
-  profesional_nombre: string;
+  profesional_nombre: string; // Este campo puede venir como "Estilista" genérico
   sede_nombre: string;
   fecha_ficha: string;
   fecha_reserva: string;
@@ -75,7 +75,7 @@ export interface FichaCliente {
   estado: string;
   estado_pago: string;
   local: string;
-  notas_cliente: string; // 🔥 CAMBIADO: Ahora es obligatorio
+  notas_cliente: string;
   comentario_interno: string;
 
   // 🔥 RESPUESTAS EN NUEVA ESTRUCTURA
@@ -84,18 +84,6 @@ export interface FichaCliente {
     respuesta: boolean;
     observaciones: string;
   }>;
-
-  // 🔥 PARA COMPATIBILIDAD
-  respuesta_1?: string;
-  respuesta_2?: string;
-  respuesta_3?: string;
-  respuesta_4?: string;
-  respuesta_5?: string;
-  respuesta_6?: string;
-  respuesta_7?: string;
-  respuesta_8?: string;
-  respuesta_9?: string;
-  respuesta_10?: string;
 
   tipo_ficha?: string;
   datos_especificos?: any;
@@ -110,11 +98,38 @@ export interface FichaCliente {
   migrated_at?: string;
   imagenes_actualizadas_at?: string;
 
-  // 🔥 NUEVOS CAMPOS CON NOMBRES
+  // 🔥 NUEVOS CAMPOS CON NOMBRES - IMPORTANTE: el backend envía "estilista" con el nombre real
   servicio: string;
   sede: string;
-  estilista: string;
+  estilista: string; // ✅ Este campo tiene el nombre real del profesional
   sede_estilista: string;
+}
+
+// 🔥 INTERFAZ PARA INFO DE PDF
+export interface PDFInfoResponse {
+  success: boolean;
+  message: string;
+  cliente: {
+    id: string;
+    nombre: string;
+    documento: string;
+    email: string;
+  };
+  cita: {
+    id: string;
+    servicio: string;
+    fecha: string;
+    estado: string;
+    valor_total: number;
+  };
+  pdf: {
+    tamano_bytes: number;
+    tamano_kb: number;
+    fecha_generacion: string;
+    disponible_descarga: boolean;
+  };
+  download_url: string;
+  advertencia?: string;
 }
 
 // Helper functions fuera del objeto para evitar problemas con 'this'
@@ -147,6 +162,11 @@ const fixS3Url = (url: string): string => {
   }
 
   return url;
+};
+
+// 🔥 Función helper para obtener el país desde sessionStorage
+const obtenerPaisDesdeStorage = (): string | null => {
+  return sessionStorage.getItem('beaux-pais');
 };
 
 export const clientesService = {
@@ -192,36 +212,56 @@ export const clientesService = {
   },
 
   async getAllClientes(token: string): Promise<Cliente[]> {
-    const response = await fetch(`${API_BASE_URL}clientes/todos`, {
-      method: 'GET',
-      headers: {
-        'accept': 'application/json',
-        'Authorization': `Bearer ${token}`
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Error al obtener todos los clientes: ${response.statusText}`);
+    // 🔥 Obtener el país automáticamente desde sessionStorage
+    const pais = obtenerPaisDesdeStorage();
+    const esColombia = pais && pais.toLowerCase() === 'colombia';
+    
+    // 🔥 SOLO usar el endpoint /clientes/todos si el país NO es Colombia
+    if (esColombia) {
+      console.log(`🇨🇴 Sede de ${pais} detectada, usando endpoint /clientes/`);
+      return this.getClientes(token);
     }
 
-    const data: ClienteResponse[] = await response.json();
+    console.log(`🌍 Sede internacional (${pais || 'sin país especificado'}), usando endpoint /clientes/todos`);
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}clientes/todos`, {
+        method: 'GET',
+        headers: {
+          'accept': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
 
-    return data.map(cliente => ({
-      id: cliente.cliente_id,
-      nombre: cliente.nombre,
-      telefono: cliente.telefono || 'No disponible',
-      email: cliente.correo || 'No disponible',
-      diasSinVenir: cliente.dias_sin_visitar || calcularDiasSinVisitar(cliente.fecha_creacion),
-      diasSinComprar: cliente.dias_sin_visitar || 0,
-      ltv: cliente.total_gastado || 0,
-      ticketPromedio: cliente.ticket_promedio || 0,
-      rizotipo: obtenerRizotipoAleatorio(),
-      nota: cliente.notas_historial?.[0]?.contenido || '',
-      sede_id: cliente.sede_id,
-      historialCitas: [],
-      historialCabello: [],
-      historialProductos: []
-    }));
+      if (!response.ok) {
+        // Si falla el endpoint /todos para internacionales, intentar con el normal
+        console.warn('❌ Error en /clientes/todos, intentando con /clientes/');
+        return this.getClientes(token);
+      }
+
+      const data: ClienteResponse[] = await response.json();
+
+      return data.map(cliente => ({
+        id: cliente.cliente_id,
+        nombre: cliente.nombre,
+        telefono: cliente.telefono || 'No disponible',
+        email: cliente.correo || 'No disponible',
+        diasSinVenir: cliente.dias_sin_visitar || calcularDiasSinVisitar(cliente.fecha_creacion),
+        diasSinComprar: cliente.dias_sin_visitar || 0,
+        ltv: cliente.total_gastado || 0,
+        ticketPromedio: cliente.ticket_promedio || 0,
+        rizotipo: obtenerRizotipoAleatorio(),
+        nota: cliente.notas_historial?.[0]?.contenido || '',
+        sede_id: cliente.sede_id,
+        historialCitas: [],
+        historialCabello: [],
+        historialProductos: []
+      }));
+    } catch (error) {
+      console.error('❌ Error crítico en getAllClientes:', error);
+      // Fallback al endpoint normal en caso de error
+      return this.getClientes(token);
+    }
   },
 
   async getClienteById(token: string, clienteId: string): Promise<Cliente> {
@@ -266,7 +306,6 @@ export const clientesService = {
   },
 
   // 🔥 NUEVO MÉTODO: OBTENER FICHAS DEL CLIENTE - CORREGIDO
-  // 🔥 NUEVO MÉTODO: OBTENER FICHAS DEL CLIENTE - CORREGIDO
   async getFichasCliente(token: string, clienteId: string): Promise<FichaCliente[]> {
     try {
       console.log(`🔍 Obteniendo fichas para cliente: ${clienteId}`);
@@ -288,13 +327,29 @@ export const clientesService = {
         return [];
       }
 
-      const fichas: FichaCliente[] = await response.json();
+      const fichas: any[] = await response.json();
 
       console.log(`✅ Se obtuvieron ${fichas.length} fichas para el cliente ${clienteId}`);
 
       // 🔥 TRANSFORMAR LOS DATOS PARA COMPATIBILIDAD
       return fichas.map(ficha => {
-        console.log('📊 Estructura de ficha recibida:', ficha);
+        console.log('📊 Estructura de ficha recibida:', {
+          _id: ficha._id,
+          servicio_nombre: ficha.servicio_nombre,
+          profesional_nombre: ficha.profesional_nombre,
+          estilista: ficha.estilista, // ✅ Este es el campo que tiene el nombre real
+          datos_especificos: ficha.datos_especificos,
+          fotos: ficha.fotos
+        });
+
+        // 🔥 DETERMINAR EL NOMBRE CORRECTO DEL PROFESIONAL
+        // Si profesional_nombre es "Estilista" (genérico) y tenemos estilista con nombre real, usar estilista
+        let nombreProfesionalFinal = ficha.profesional_nombre;
+        
+        if (ficha.profesional_nombre === "Estilista" && ficha.estilista && ficha.estilista !== "Estilista") {
+          console.log(`🔄 Usando nombre real del estilista: ${ficha.estilista} (en lugar de "${ficha.profesional_nombre}")`);
+          nombreProfesionalFinal = ficha.estilista;
+        }
 
         // 🔥 FUNCIÓN PARA ARREGLAR URLs DE S3
         const fixAllUrls = (urls: string[] | undefined): string[] => {
@@ -323,7 +378,7 @@ export const clientesService = {
           // 🔥 CONSTRUIR NOTAS A PARTIR DE DATOS_ESPECIFICOS
           const datos = ficha.datos_especificos;
 
-          const respuestasTextuales = ficha.respuestas?.map(r =>
+          const respuestasTextuales = ficha.respuestas?.map((r: any) =>
             `${r.pregunta}: ${r.respuesta}${r.observaciones ? ` - ${r.observaciones}` : ''}`
           ).join('\n') || '';
 
@@ -362,8 +417,13 @@ ${datos.observaciones_generales || 'Ninguna'}`;
           ficha.descripcion_servicio ||
           'Sin comentarios';
 
-        return {
+        // 🔥 CREAR OBJETO TRANSFORMADO
+        const fichaTransformada: FichaCliente = {
           ...ficha,
+          // 🔥 USAR EL NOMBRE CORRECTO DEL PROFESIONAL
+          profesional_nombre: nombreProfesionalFinal,
+          estilista: nombreProfesionalFinal, // Mantener ambos campos por compatibilidad
+          
           // 🔥 AGREGAR CAMPOS DE COMPATIBILIDAD CON VALORES ASEGURADOS
           fotos: fotosArregladas,
           antes_url: primeraImagenAntes,
@@ -382,8 +442,6 @@ ${datos.observaciones_generales || 'Ninguna'}`;
           servicio_nombre: ficha.servicio_nombre || ficha.servicio || 'Servicio sin nombre',
           sede: ficha.sede || ficha.sede_nombre || 'Sede no especificada',
           sede_nombre: ficha.sede_nombre || ficha.sede || 'Sede no especificada',
-          estilista: ficha.estilista || ficha.profesional_nombre || 'Estilista no asignado',
-          profesional_nombre: ficha.profesional_nombre || ficha.estilista || 'Estilista no asignado',
           sede_estilista: ficha.sede_estilista || ficha.sede || ficha.sede_nombre || 'Sede no especificada',
 
           // 🔥 Asegurar campos obligatorios
@@ -400,11 +458,214 @@ ${datos.observaciones_generales || 'Ninguna'}`;
           datos_especificos: ficha.datos_especificos,
           respuestas: ficha.respuestas || []
         };
+
+        console.log(`✅ Ficha ${ficha._id} transformada:`, {
+          servicio: fichaTransformada.servicio_nombre,
+          profesional_final: fichaTransformada.profesional_nombre,
+          estilista_final: fichaTransformada.estilista
+        });
+
+        return fichaTransformada;
       });
 
     } catch (error) {
       console.error('❌ Error obteniendo fichas del cliente:', error);
       return [];
+    }
+  },
+
+  // 🔥 NUEVOS MÉTODOS PARA MANEJAR PDFs
+
+  /**
+   * Genera y descarga un PDF para una cita específica
+   */
+  async generarPDFCita(token: string, clienteId: string, citaId: string): Promise<Blob> {
+    try {
+      console.log(`📄 Generando PDF para cita: cliente=${clienteId}, cita=${citaId}`);
+
+      const response = await fetch(
+        `${API_BASE_URL}api/pdf/generar-pdf/${clienteId}/${citaId}`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/pdf'
+          }
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Error ${response.status}: ${errorText}`);
+      }
+
+      const blob = await response.blob();
+      
+      // Verificar que sea un PDF válido
+      if (blob.size === 0 || !blob.type.includes('pdf')) {
+        throw new Error('El archivo recibido no es un PDF válido');
+      }
+
+      console.log(`✅ PDF generado exitosamente: ${blob.size} bytes`);
+      return blob;
+
+    } catch (error) {
+      console.error('❌ Error generando PDF:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Obtiene información sobre el PDF antes de descargarlo
+   */
+  async obtenerInfoPDF(token: string, clienteId: string, citaId: string): Promise<PDFInfoResponse> {
+    try {
+      console.log(`ℹ️ Obteniendo información del PDF para cita: ${citaId}`);
+
+      const response = await fetch(
+        `${API_BASE_URL}api/pdf/generar-pdf-info/${clienteId}/${citaId}`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json'
+          }
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Error ${response.status}: ${errorText}`);
+      }
+
+      const info: PDFInfoResponse = await response.json();
+      console.log(`✅ Información del PDF obtenida:`, info);
+      return info;
+
+    } catch (error) {
+      console.error('❌ Error obteniendo información del PDF:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Reenvía el PDF por correo electrónico
+   */
+  async reenviarPDFCorreo(
+    token: string, 
+    clienteId: string, 
+    citaId: string, 
+    emailDestino?: string
+  ): Promise<{ success: boolean; message: string; email_destino: string }> {
+    try {
+      console.log(`📧 Reenviando PDF por correo: cita=${citaId}, email=${emailDestino || 'default'}`);
+
+      const body: any = {};
+      if (emailDestino) {
+        body.email_destino = emailDestino;
+      }
+
+      const response = await fetch(
+        `${API_BASE_URL}reenviar-pdf-correo/${clienteId}/${citaId}`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Error ${response.status}: ${errorText}`);
+      }
+
+      const result = await response.json();
+      console.log(`✅ PDF reenviado por correo:`, result);
+      return result;
+
+    } catch (error) {
+      console.error('❌ Error reenviando PDF por correo:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Descarga el PDF directamente con un nombre personalizado
+   */
+  async descargarPDF(
+    token: string, 
+    clienteId: string, 
+    citaId: string, 
+    nombreCliente: string, 
+    servicioNombre: string
+  ): Promise<void> {
+    try {
+      // Obtener el blob del PDF
+      const blob = await this.generarPDFCita(token, clienteId, citaId);
+      
+      // Crear URL para el blob
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      
+      // Crear nombre descriptivo para el archivo
+      const timestamp = new Date().toISOString().split('T')[0];
+      const nombreClienteSanitizado = nombreCliente.replace(/\s+/g, '_').toLowerCase();
+      const servicioSanitizado = servicioNombre
+        .replace(/\s+/g, '_')
+        .toLowerCase()
+        .substring(0, 30);
+      
+      link.download = `comprobante_${nombreClienteSanitizado}_${servicioSanitizado}_${timestamp}.pdf`;
+      
+      // Descargar el archivo
+      document.body.appendChild(link);
+      link.click();
+      
+      // Limpiar
+      setTimeout(() => {
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+      }, 100);
+
+      console.log(`✅ PDF descargado: ${link.download}`);
+
+    } catch (error) {
+      console.error('❌ Error descargando PDF:', error);
+      throw error;
+    }
+  },
+
+  // 🔥 MÉTODO DE CONVENIENCIA PARA FICHAS
+  async generarPDFDesdeFicha(
+    token: string,
+    clienteId: string,
+    ficha: FichaCliente
+  ): Promise<void> {
+    try {
+      // Obtener cita_id desde la ficha
+      const citaId = ficha.datos_especificos?.cita_id;
+      
+      if (!citaId) {
+        throw new Error('La ficha no tiene un cita_id asociado');
+      }
+
+      // Usar el método de descarga
+      await this.descargarPDF(
+        token,
+        clienteId,
+        citaId,
+        ficha.nombre,
+        ficha.servicio_nombre || ficha.servicio
+      );
+
+    } catch (error) {
+      console.error('❌ Error generando PDF desde ficha:', error);
+      throw error;
     }
   },
 
@@ -449,11 +710,10 @@ ${datos.observaciones_generales || 'Ninguna'}`;
     return await response.json();
   },
 
-  // services/clientesService.ts - Solo un método updateCliente
   async updateCliente(token: string, clienteId: string, cliente: UpdateClienteData): Promise<any> {
     // Preparar los datos completos del cliente
     const requestData: any = {
-      cliente_id: clienteId, // Mantener el mismo ID
+      cliente_id: clienteId,
       nombre: cliente.nombre?.trim(),
       correo: cliente.correo?.trim(),
       telefono: cliente.telefono?.trim(),
@@ -464,11 +724,9 @@ ${datos.observaciones_generales || 'Ninguna'}`;
       notas: cliente.notas?.trim()
     };
 
-    // Eliminar campos vacíos o undefined (excepto algunos que pueden ser opcionales)
+    // Eliminar campos vacíos o undefined
     Object.keys(requestData).forEach(key => {
       if (requestData[key] === undefined || requestData[key] === '') {
-        // No eliminamos los campos que son parte del schema pero pueden estar vacíos
-        // según el API
         if (key !== 'correo' && key !== 'telefono' && key !== 'cedula' &&
           key !== 'ciudad' && key !== 'fecha_de_nacimiento' && key !== 'notas') {
           delete requestData[key];
@@ -542,9 +800,9 @@ ${datos.observaciones_generales || 'Ninguna'}`;
       if (citas.length > 0) {
         console.log('📊 ESTRUCTURA DE LA PRIMERA CITA:', {
           _id: citas[0]._id,
-          fecha: citas[0].fecha, // Aquí debería ser '2025-12-19'
+          fecha: citas[0].fecha,
           servicio_nombre: citas[0].servicio_nombre,
-          profesional_nombre: citas[0].profesional_nombre,
+          profesional_nombre: citas[0].profesional_nombre, // ✅ Este campo viene correcto en las citas
           estado: citas[0].estado,
           estado_pago: citas[0].estado_pago,
           valor_total: citas[0].valor_total,
@@ -555,11 +813,11 @@ ${datos.observaciones_generales || 'Ninguna'}`;
 
       // 🔥 TRANSFORMAR LAS CITAS CORRECTAMENTE
       return citas.map((cita: any) => {
-        // Obtener estilista - YA VIENE EN profesional_nombre
-        const estilista = cita.profesional_nombre || 'Estilista no especificado';
+        // ✅ Usar profesional_nombre directamente (en citas viene bien)
+        const profesional = cita.profesional_nombre || 'Profesional no especificado';
 
         // 🔥 NO FORMATAR LA FECHA AQUÍ - DEJARLA COMO VIENE DEL SERVIDOR
-        const fechaOriginal = cita.fecha; // Esto debería ser '2025-12-19'
+        const fechaOriginal = cita.fecha;
         console.log(`📅 Fecha original del servidor para cita ${cita._id}: ${fechaOriginal}`);
 
         // Obtener servicio
@@ -588,9 +846,9 @@ ${datos.observaciones_generales || 'Ninguna'}`;
             : `$${valorTotal} ${moneda}`;
 
         return {
-          fecha: fechaOriginal, // 🔥 DEVOLVER FECHA ORIGINAL '2025-12-19'
+          fecha: fechaOriginal,
           servicio: servicio,
-          estilista: estilista,
+          estilista: profesional, // ✅ Mantener "estilista" por compatibilidad con la interfaz
           notas: notas,
           metodo_pago: metodoPago,
           estado_pago: estadoPago,
@@ -599,10 +857,8 @@ ${datos.observaciones_generales || 'Ninguna'}`;
           hora_inicio: cita.hora_inicio || '',
           hora_fin: cita.hora_fin || '',
           estado: cita.estado || 'confirmada',
-          // 🔥 GUARDAR DATOS COMPLETOS PARA USO FUTURO
           datos_completos: {
             ...cita,
-            // Incluir todos los datos originales
             _id: cita._id,
             sede_id: cita.sede_id,
             cliente_id: cita.cliente_id,
@@ -644,13 +900,12 @@ ${datos.observaciones_generales || 'Ninguna'}`;
         console.log(`📅 Fecha de cita a convertir a producto: ${cita.fecha}`);
 
         return {
-          producto: cita.servicio, // Usamos el nombre del servicio como producto
-          fecha: cita.fecha, // 🔥 FECHA ORIGINAL '2025-12-19' (no formateada)
+          producto: cita.servicio,
+          fecha: cita.fecha,
           precio: cita.valor_total,
-          estilista: cita.estilista,
+          estilista: cita.estilista, // ✅ Mantener "estilista" por compatibilidad
           estado_pago: cita.estado_pago,
           metodo_pago: cita.metodo_pago,
-          // 🔥 Agregar datos adicionales si los necesitas
           servicio_id: cita.datos_completos?.servicio_id,
           cita_id: cita.datos_completos?._id,
           estado_cita: cita.estado
@@ -660,6 +915,28 @@ ${datos.observaciones_generales || 'Ninguna'}`;
     } catch (error) {
       console.error('❌ Error obteniendo historial de productos:', error);
       return [];
+    }
+  },
+
+  // 🔥 MÉTODO INTELIGENTE QUE DECIDE AUTOMÁTICAMENTE SEGÚN EL PAÍS
+  async obtenerClientes(token: string, sedeId?: string): Promise<Cliente[]> {
+    const pais = obtenerPaisDesdeStorage();
+    const esColombia = pais && pais.toLowerCase() === 'colombia';
+    
+    console.log(`📍 País detectado en sessionStorage: ${pais || 'No especificado'}`);
+    
+    if (sedeId && sedeId !== 'all') {
+      // Si se especifica una sede, usar filtrado siempre
+      console.log(`🎯 Filtrando por sede específica: ${sedeId}`);
+      return this.getClientes(token, sedeId);
+    } else if (esColombia) {
+      // Si es Colombia, usar endpoint normal
+      console.log('🇨🇴 Usando endpoint /clientes/ para Colombia');
+      return this.getClientes(token);
+    } else {
+      // Si es internacional, usar /todos
+      console.log('🌍 Usando endpoint /clientes/todos para sede internacional');
+      return this.getAllClientes(token);
     }
   },
 

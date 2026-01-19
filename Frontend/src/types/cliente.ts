@@ -1,7 +1,7 @@
 // types/cliente.ts - Interfaz Cliente actualizada
 export interface Cliente {
   id: string;
-  cliente_id?: string; // Agregar para compatibilidad
+  cliente_id?: string;
   nombre: string;
   telefono: string;
   email: string;
@@ -16,13 +16,13 @@ export interface Cliente {
   ciudad?: string;
   fecha_de_nacimiento?: string;
   fecha_creacion?: string;
-  fecha_registro?: string; // <-- AÑADIR ESTA PROPIEDAD
+  fecha_registro?: string;
   
-  // Historiales
+  // Historiales - ACTUALIZADO: cambiar estilista por profesional
   historialCitas: Array<{
     fecha: string;
     servicio: string;
-    estilista: string;
+    profesional: string; // ✅ CAMBIADO: estilista → profesional
     notas?: string;
     metodo_pago?: string;
     estado_pago?: string;
@@ -43,7 +43,7 @@ export interface Cliente {
     producto: string;
     fecha: string;
     precio?: string | number;
-    estilista?: string;
+    profesional?: string; // ✅ CAMBIADO: estilista → profesional
     estado_pago?: string;
     metodo_pago?: string;
   }>;
@@ -55,8 +55,9 @@ export interface Cliente {
     cliente_id_antiguo?: string;
     servicio_id: string;
     servicio_nombre: string;
-    profesional_nombre?: string;
     profesional_id: string;
+    profesional_nombre?: string; // ✅ SOLO este campo para el profesional
+    sede_nombre?: string;
     fecha_ficha: string;
     fecha_reserva: string;
     email: string | null;
@@ -78,7 +79,6 @@ export interface Cliente {
     estado: string;
     estado_pago: string;
     local: string;
-    sede_nombre?: string;
     notas_cliente?: string;
     comentario_interno: string;
     
@@ -88,24 +88,28 @@ export interface Cliente {
       observaciones: string;
     }>;
     
-    respuesta_1?: string;
-    respuesta_2?: string;
-    respuesta_3?: string;
-    respuesta_4?: string;
-    respuesta_5?: string;
-    respuesta_6?: string;
-    respuesta_7?: string;
-    respuesta_8?: string;
-    respuesta_9?: string;
-    respuesta_10?: string;
-    
+    tipo_ficha?: string;
+    datos_especificos?: any;
+    descripcion_servicio?: string;
+    autorizacion_publicacion?: boolean;
+    created_at?: string;
+    created_by?: string;
+    user_id?: string;
+    procesado_imagenes?: boolean;
+    origen?: string;
     source_file?: string;
     migrated_at?: string;
-    procesado_imagenes?: boolean;
     imagenes_actualizadas_at?: string;
+    
+    // Campos para compatibilidad - ACTUALIZADOS
     servicio: string;
     sede: string;
-    estilista: string;
-    sede_estilista: string;
+    sede_estilista: string; // ❌ Nota: Este nombre debería cambiarse, pero lo dejamos por compatibilidad
+    
+    // ❌ ELIMINADO: estilista: string; // Ya no usamos este campo
+    
+    // Campos adicionales que podrían venir
+    servicio_nombre_backup?: string;
+    fecha_ficha_formatted?: string;
   }>;
 }
