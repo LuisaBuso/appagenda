@@ -7,6 +7,9 @@ export interface CreateClienteData {
   telefono?: string;
   notas?: string;
   sede_id?: string;
+  cedula?: string;
+  ciudad?: string;
+  fecha_de_nacimiento?: string;
 }
 
 export interface UpdateClienteData {
@@ -27,6 +30,8 @@ export interface ClienteResponse {
   nombre: string;
   correo?: string;
   telefono?: string;
+  cedula?: string;
+  ciudad?: string;
   sede_id: string;
   fecha_creacion: string;
   creado_por: string;
@@ -49,7 +54,7 @@ export interface FichaCliente {
   servicio_id: string;
   servicio_nombre: string;
   profesional_id: string;
-  profesional_nombre: string; // Este campo puede venir como "Estilista" genérico
+  profesional_nombre: string;
   sede_nombre: string;
   fecha_ficha: string;
   fecha_reserva: string;
@@ -98,10 +103,9 @@ export interface FichaCliente {
   migrated_at?: string;
   imagenes_actualizadas_at?: string;
 
-  // 🔥 NUEVOS CAMPOS CON NOMBRES - IMPORTANTE: el backend envía "estilista" con el nombre real
   servicio: string;
   sede: string;
-  estilista: string; // ✅ Este campo tiene el nombre real del profesional
+  estilista: string;
   sede_estilista: string;
 }
 
@@ -132,7 +136,7 @@ export interface PDFInfoResponse {
   advertencia?: string;
 }
 
-// Helper functions fuera del objeto para evitar problemas con 'this'
+// Helper functions
 const calcularDiasSinVisitar = (fechaCreacion: string): number => {
   const fechaUltimaVisita = new Date(fechaCreacion);
   const hoy = new Date();
@@ -156,7 +160,6 @@ const transformarHistorialCabello = (historialCitas: any[]): any[] => {
 const fixS3Url = (url: string): string => {
   if (!url) return '';
 
-  // Si es una URL de S3 de AWS, cambiar https por http para evitar problemas de certificado
   if (url.includes('s3.amazonaws.com') || url.includes('.s3.')) {
     return url.replace('https://', 'http://');
   }
@@ -164,68 +167,13 @@ const fixS3Url = (url: string): string => {
   return url;
 };
 
-// 🔥 Función helper para obtener el país desde sessionStorage
-const obtenerPaisDesdeStorage = (): string | null => {
-  return sessionStorage.getItem('beaux-pais');
-};
-
 export const clientesService = {
-  async getClientes(token: string, sedeId?: string): Promise<Cliente[]> {
-    let url = `${API_BASE_URL}clientes/`;
 
-    // Si se especifica una sede, usar el endpoint de filtrado
-    if (sedeId && sedeId !== 'all') {
-      url = `${API_BASE_URL}clientes/filtrar/${sedeId}`;
-    }
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'accept': 'application/json',
-        'Authorization': `Bearer ${token}`
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Error al obtener clientes: ${response.statusText}`);
-    }
-
-    const data: ClienteResponse[] = await response.json();
-
-    // Transformar la respuesta del backend al formato del frontend
-    return data.map(cliente => ({
-      id: cliente.cliente_id,
-      nombre: cliente.nombre,
-      telefono: cliente.telefono || 'No disponible',
-      email: cliente.correo || 'No disponible',
-      diasSinVenir: cliente.dias_sin_visitar || calcularDiasSinVisitar(cliente.fecha_creacion),
-      diasSinComprar: cliente.dias_sin_visitar || 0,
-      ltv: cliente.total_gastado || 0,
-      ticketPromedio: cliente.ticket_promedio || 0,
-      rizotipo: obtenerRizotipoAleatorio(),
-      nota: cliente.notas_historial?.[0]?.contenido || '',
-      sede_id: cliente.sede_id,
-      historialCitas: [],
-      historialCabello: [],
-      historialProductos: []
-    }));
-  },
-
-  async getAllClientes(token: string): Promise<Cliente[]> {
-    // 🔥 Obtener el país automáticamente desde sessionStorage
-    const pais = obtenerPaisDesdeStorage();
-    const esColombia = pais && pais.toLowerCase() === 'colombia';
-    
-    // 🔥 SOLO usar el endpoint /clientes/todos si el país NO es Colombia
-    if (esColombia) {
-      console.log(`🇨🇴 Sede de ${pais} detectada, usando endpoint /clientes/`);
-      return this.getClientes(token);
-    }
-
-    console.log(`🌍 Sede internacional (${pais || 'sin país especificado'}), usando endpoint /clientes/todos`);
-    
+  async getAllClientes(token: string, pagina: number = 1, limite: number = 500): Promise<Cliente[]> {
     try {
-      const response = await fetch(`${API_BASE_URL}clientes/todos`, {
+      console.log(`📋 Obteniendo todos los clientes (pagina=${pagina}, limite=${limite})`);
+
+      const response = await fetch(`${API_BASE_URL}clientes/todos?limite=${limite}&pagina=${pagina}`, {
         method: 'GET',
         headers: {
           'accept': 'application/json',
@@ -234,33 +182,56 @@ export const clientesService = {
       });
 
       if (!response.ok) {
-        // Si falla el endpoint /todos para internacionales, intentar con el normal
-        console.warn('❌ Error en /clientes/todos, intentando con /clientes/');
-        return this.getClientes(token);
+        const errorText = await response.text();
+        console.error(`❌ Error ${response.status} en /clientes/todos:`, errorText);
+        throw new Error(`Error al obtener clientes: ${response.status} ${response.statusText}`);
       }
 
-      const data: ClienteResponse[] = await response.json();
+      const data = await response.json();
 
-      return data.map(cliente => ({
-        id: cliente.cliente_id,
-        nombre: cliente.nombre,
+      // Manejar diferentes estructuras de respuesta
+      let clientesArray: any[] = [];
+      
+      if (Array.isArray(data)) {
+        clientesArray = data;
+      } else if (data && typeof data === 'object') {
+        // Si es un objeto con propiedad clientes
+        if (data.clientes && Array.isArray(data.clientes)) {
+          clientesArray = data.clientes;
+        } else if (data.data && Array.isArray(data.data)) {
+          clientesArray = data.data;
+        } else {
+          // Intentar extraer clientes de cualquier propiedad
+          const values = Object.values(data);
+          clientesArray = values.find(val => Array.isArray(val)) || [];
+        }
+      }
+
+      console.log(`✅ Total de clientes obtenidos: ${clientesArray.length}`);
+
+      // Transformar la respuesta al formato Cliente
+      return clientesArray.map((cliente: any) => ({
+        id: cliente.cliente_id || cliente.id || cliente._id || '',
+        nombre: cliente.nombre || '',
         telefono: cliente.telefono || 'No disponible',
-        email: cliente.correo || 'No disponible',
-        diasSinVenir: cliente.dias_sin_visitar || calcularDiasSinVisitar(cliente.fecha_creacion),
+        email: cliente.correo || cliente.email || 'No disponible',
+        cedula: cliente.cedula || '',
+        ciudad: cliente.ciudad || '',
+        diasSinVenir: cliente.dias_sin_visitar || calcularDiasSinVisitar(cliente.fecha_creacion || cliente.created_at || ''),
         diasSinComprar: cliente.dias_sin_visitar || 0,
         ltv: cliente.total_gastado || 0,
         ticketPromedio: cliente.ticket_promedio || 0,
         rizotipo: obtenerRizotipoAleatorio(),
-        nota: cliente.notas_historial?.[0]?.contenido || '',
-        sede_id: cliente.sede_id,
+        nota: cliente.notas_historial?.[0]?.contenido || cliente.notas || '',
+        sede_id: cliente.sede_id || '',
         historialCitas: [],
         historialCabello: [],
         historialProductos: []
       }));
+
     } catch (error) {
-      console.error('❌ Error crítico en getAllClientes:', error);
-      // Fallback al endpoint normal en caso de error
-      return this.getClientes(token);
+      console.error('❌ Error en getAllClientes:', error);
+      throw error;
     }
   },
 
@@ -291,6 +262,8 @@ export const clientesService = {
       nombre: cliente.nombre,
       telefono: cliente.telefono || 'No disponible',
       email: cliente.correo || 'No disponible',
+      cedula: cliente.cedula || '',
+      ciudad: cliente.ciudad || '',
       diasSinVenir: cliente.dias_sin_visitar || calcularDiasSinVisitar(cliente.fecha_creacion),
       diasSinComprar: cliente.dias_sin_visitar || 0,
       ltv: cliente.total_gastado || 0,
@@ -333,21 +306,10 @@ export const clientesService = {
 
       // 🔥 TRANSFORMAR LOS DATOS PARA COMPATIBILIDAD
       return fichas.map(ficha => {
-        console.log('📊 Estructura de ficha recibida:', {
-          _id: ficha._id,
-          servicio_nombre: ficha.servicio_nombre,
-          profesional_nombre: ficha.profesional_nombre,
-          estilista: ficha.estilista, // ✅ Este es el campo que tiene el nombre real
-          datos_especificos: ficha.datos_especificos,
-          fotos: ficha.fotos
-        });
-
         // 🔥 DETERMINAR EL NOMBRE CORRECTO DEL PROFESIONAL
-        // Si profesional_nombre es "Estilista" (genérico) y tenemos estilista con nombre real, usar estilista
         let nombreProfesionalFinal = ficha.profesional_nombre;
-        
+
         if (ficha.profesional_nombre === "Estilista" && ficha.estilista && ficha.estilista !== "Estilista") {
-          console.log(`🔄 Usando nombre real del estilista: ${ficha.estilista} (en lugar de "${ficha.profesional_nombre}")`);
           nombreProfesionalFinal = ficha.estilista;
         }
 
@@ -370,66 +332,18 @@ export const clientesService = {
           despues_urls: fixAllUrls(ficha.fotos.despues_urls)
         } : undefined;
 
-        // 🔥 EXTRAER INFORMACIÓN DE DATOS_ESPECIFICOS SI EXISTE
-        let notasDeDiagnostico = '';
-        let recomendaciones = '';
-
-        if (ficha.datos_especificos) {
-          // 🔥 CONSTRUIR NOTAS A PARTIR DE DATOS_ESPECIFICOS
-          const datos = ficha.datos_especificos;
-
-          const respuestasTextuales = ficha.respuestas?.map((r: any) =>
-            `${r.pregunta}: ${r.respuesta}${r.observaciones ? ` - ${r.observaciones}` : ''}`
-          ).join('\n') || '';
-
-          notasDeDiagnostico = `🧪 DIAGNÓSTICO DE RIZOTIPO:
-${respuestasTextuales}
-
-📋 RECOMENDACIONES PERSONALIZADAS:
-${datos.recomendaciones_personalizadas || 'Sin recomendaciones'}
-
-✂️ FRECUENCIA DE CORTE:
-${datos.frecuencia_corte || 'No especificada'}
-
-💆 TÉCNICAS DE ESTILIZADO:
-${datos.tecnicas_estilizado || 'No especificadas'}
-
-🧴 PRODUCTOS SUGERIDOS:
-${datos.productos_sugeridos || 'No especificados'}
-
-📝 OBSERVACIONES GENERALES:
-${datos.observaciones_generales || 'Ninguna'}`;
-
-          recomendaciones = datos.recomendaciones_personalizadas || '';
-        }
-
-        // 🔥 DETERMINAR NOTAS DEL CLIENTE (PRIORIDAD)
-        const notasClienteAseguradas =
-          ficha.notas_cliente?.trim() ||
-          notasDeDiagnostico ||
-          ficha.descripcion_servicio ||
-          'Sin notas';
-
-        // 🔥 DETERMINAR COMENTARIO INTERNO
-        const comentarioInternoAsegurado =
-          ficha.comentario_interno?.trim() ||
-          recomendaciones ||
-          ficha.descripcion_servicio ||
-          'Sin comentarios';
-
         // 🔥 CREAR OBJETO TRANSFORMADO
         const fichaTransformada: FichaCliente = {
           ...ficha,
-          // 🔥 USAR EL NOMBRE CORRECTO DEL PROFESIONAL
           profesional_nombre: nombreProfesionalFinal,
-          estilista: nombreProfesionalFinal, // Mantener ambos campos por compatibilidad
-          
+          estilista: nombreProfesionalFinal,
+
           // 🔥 AGREGAR CAMPOS DE COMPATIBILIDAD CON VALORES ASEGURADOS
           fotos: fotosArregladas,
           antes_url: primeraImagenAntes,
           despues_url: primeraImagenDespues,
-          notas_cliente: notasClienteAseguradas,
-          comentario_interno: comentarioInternoAsegurado,
+          notas_cliente: ficha.notas_cliente?.trim() || 'Sin notas',
+          comentario_interno: ficha.comentario_interno?.trim() || 'Sin comentarios',
 
           // 🔥 VALORES POR DEFECTO
           precio: ficha.precio || '0',
@@ -451,19 +365,10 @@ ${datos.observaciones_generales || 'Ninguna'}`;
           cedula: ficha.cedula || '',
           telefono: ficha.telefono || '',
 
-          // 🔥 Agregar fecha formateada
-          fecha_ficha_formatted: ficha.fecha_ficha,
-
           // 🔥 Preservar datos específicos
           datos_especificos: ficha.datos_especificos,
           respuestas: ficha.respuestas || []
         };
-
-        console.log(`✅ Ficha ${ficha._id} transformada:`, {
-          servicio: fichaTransformada.servicio_nombre,
-          profesional_final: fichaTransformada.profesional_nombre,
-          estilista_final: fichaTransformada.estilista
-        });
 
         return fichaTransformada;
       });
@@ -474,15 +379,9 @@ ${datos.observaciones_generales || 'Ninguna'}`;
     }
   },
 
-  // 🔥 NUEVOS MÉTODOS PARA MANEJAR PDFs
-
-  /**
-   * Genera y descarga un PDF para una cita específica
-   */
+  // 🔥 MÉTODOS PARA MANEJAR PDFs
   async generarPDFCita(token: string, clienteId: string, citaId: string): Promise<Blob> {
     try {
-      console.log(`📄 Generando PDF para cita: cliente=${clienteId}, cita=${citaId}`);
-
       const response = await fetch(
         `${API_BASE_URL}api/pdf/generar-pdf/${clienteId}/${citaId}`,
         {
@@ -500,13 +399,11 @@ ${datos.observaciones_generales || 'Ninguna'}`;
       }
 
       const blob = await response.blob();
-      
-      // Verificar que sea un PDF válido
+
       if (blob.size === 0 || !blob.type.includes('pdf')) {
         throw new Error('El archivo recibido no es un PDF válido');
       }
 
-      console.log(`✅ PDF generado exitosamente: ${blob.size} bytes`);
       return blob;
 
     } catch (error) {
@@ -515,13 +412,8 @@ ${datos.observaciones_generales || 'Ninguna'}`;
     }
   },
 
-  /**
-   * Obtiene información sobre el PDF antes de descargarlo
-   */
   async obtenerInfoPDF(token: string, clienteId: string, citaId: string): Promise<PDFInfoResponse> {
     try {
-      console.log(`ℹ️ Obteniendo información del PDF para cita: ${citaId}`);
-
       const response = await fetch(
         `${API_BASE_URL}api/pdf/generar-pdf-info/${clienteId}/${citaId}`,
         {
@@ -538,9 +430,7 @@ ${datos.observaciones_generales || 'Ninguna'}`;
         throw new Error(`Error ${response.status}: ${errorText}`);
       }
 
-      const info: PDFInfoResponse = await response.json();
-      console.log(`✅ Información del PDF obtenida:`, info);
-      return info;
+      return await response.json();
 
     } catch (error) {
       console.error('❌ Error obteniendo información del PDF:', error);
@@ -548,18 +438,13 @@ ${datos.observaciones_generales || 'Ninguna'}`;
     }
   },
 
-  /**
-   * Reenvía el PDF por correo electrónico
-   */
   async reenviarPDFCorreo(
-    token: string, 
-    clienteId: string, 
-    citaId: string, 
+    token: string,
+    clienteId: string,
+    citaId: string,
     emailDestino?: string
   ): Promise<{ success: boolean; message: string; email_destino: string }> {
     try {
-      console.log(`📧 Reenviando PDF por correo: cita=${citaId}, email=${emailDestino || 'default'}`);
-
       const body: any = {};
       if (emailDestino) {
         body.email_destino = emailDestino;
@@ -583,9 +468,7 @@ ${datos.observaciones_generales || 'Ninguna'}`;
         throw new Error(`Error ${response.status}: ${errorText}`);
       }
 
-      const result = await response.json();
-      console.log(`✅ PDF reenviado por correo:`, result);
-      return result;
+      return await response.json();
 
     } catch (error) {
       console.error('❌ Error reenviando PDF por correo:', error);
@@ -593,46 +476,36 @@ ${datos.observaciones_generales || 'Ninguna'}`;
     }
   },
 
-  /**
-   * Descarga el PDF directamente con un nombre personalizado
-   */
   async descargarPDF(
-    token: string, 
-    clienteId: string, 
-    citaId: string, 
-    nombreCliente: string, 
+    token: string,
+    clienteId: string,
+    citaId: string,
+    nombreCliente: string,
     servicioNombre: string
   ): Promise<void> {
     try {
-      // Obtener el blob del PDF
       const blob = await this.generarPDFCita(token, clienteId, citaId);
-      
-      // Crear URL para el blob
+
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      
-      // Crear nombre descriptivo para el archivo
+
       const timestamp = new Date().toISOString().split('T')[0];
       const nombreClienteSanitizado = nombreCliente.replace(/\s+/g, '_').toLowerCase();
       const servicioSanitizado = servicioNombre
         .replace(/\s+/g, '_')
         .toLowerCase()
         .substring(0, 30);
-      
+
       link.download = `comprobante_${nombreClienteSanitizado}_${servicioSanitizado}_${timestamp}.pdf`;
-      
-      // Descargar el archivo
+
       document.body.appendChild(link);
       link.click();
-      
-      // Limpiar
+
       setTimeout(() => {
         document.body.removeChild(link);
         window.URL.revokeObjectURL(url);
       }, 100);
-
-      console.log(`✅ PDF descargado: ${link.download}`);
 
     } catch (error) {
       console.error('❌ Error descargando PDF:', error);
@@ -640,21 +513,18 @@ ${datos.observaciones_generales || 'Ninguna'}`;
     }
   },
 
-  // 🔥 MÉTODO DE CONVENIENCIA PARA FICHAS
   async generarPDFDesdeFicha(
     token: string,
     clienteId: string,
     ficha: FichaCliente
   ): Promise<void> {
     try {
-      // Obtener cita_id desde la ficha
       const citaId = ficha.datos_especificos?.cita_id;
-      
+
       if (!citaId) {
         throw new Error('La ficha no tiene un cita_id asociado');
       }
 
-      // Usar el método de descarga
       await this.descargarPDF(
         token,
         clienteId,
@@ -675,10 +545,11 @@ ${datos.observaciones_generales || 'Ninguna'}`;
       correo: cliente.correo?.trim() || '',
       telefono: cliente.telefono?.trim() || '',
       notas: cliente.notas?.trim() || '',
-      sede_id: cliente.sede_id || ''
+      sede_id: cliente.sede_id || '',
+      cedula: cliente.cedula?.trim() || '',
+      ciudad: cliente.ciudad?.trim() || '',
+      fecha_de_nacimiento: cliente.fecha_de_nacimiento?.trim() || ''
     };
-
-    console.log('📤 Creando cliente con datos:', requestData);
 
     const response = await fetch(`${API_BASE_URL}clientes/`, {
       method: 'POST',
@@ -695,8 +566,6 @@ ${datos.observaciones_generales || 'Ninguna'}`;
 
       try {
         const errorData = await response.json();
-        console.error('❌ Error del backend:', errorData);
-
         if (errorData.detail) {
           errorMessage = errorData.detail;
         }
@@ -711,7 +580,6 @@ ${datos.observaciones_generales || 'Ninguna'}`;
   },
 
   async updateCliente(token: string, clienteId: string, cliente: UpdateClienteData): Promise<any> {
-    // Preparar los datos completos del cliente
     const requestData: any = {
       cliente_id: clienteId,
       nombre: cliente.nombre?.trim(),
@@ -724,7 +592,7 @@ ${datos.observaciones_generales || 'Ninguna'}`;
       notas: cliente.notas?.trim()
     };
 
-    // Eliminar campos vacíos o undefined
+    // Eliminar campos vacíos
     Object.keys(requestData).forEach(key => {
       if (requestData[key] === undefined || requestData[key] === '') {
         if (key !== 'correo' && key !== 'telefono' && key !== 'cedula' &&
@@ -732,11 +600,6 @@ ${datos.observaciones_generales || 'Ninguna'}`;
           delete requestData[key];
         }
       }
-    });
-
-    console.log('📤 Actualizando cliente con datos:', {
-      clienteId,
-      requestData
     });
 
     const response = await fetch(`${API_BASE_URL}clientes/${clienteId}`, {
@@ -777,8 +640,6 @@ ${datos.observaciones_generales || 'Ninguna'}`;
 
   async getHistorialCitas(token: string, clienteId: string): Promise<any[]> {
     try {
-      console.log(`🔍 Obteniendo historial de citas para cliente: ${clienteId}`);
-
       const response = await fetch(`${API_BASE_URL}clientes/${clienteId}/historial`, {
         method: 'GET',
         headers: {
@@ -794,51 +655,15 @@ ${datos.observaciones_generales || 'Ninguna'}`;
 
       const citas = await response.json();
 
-      console.log(`✅ Se obtuvieron ${citas.length} citas del historial`);
-
-      // 🔥 DEBUG: Mostrar estructura de la primera cita
-      if (citas.length > 0) {
-        console.log('📊 ESTRUCTURA DE LA PRIMERA CITA:', {
-          _id: citas[0]._id,
-          fecha: citas[0].fecha,
-          servicio_nombre: citas[0].servicio_nombre,
-          profesional_nombre: citas[0].profesional_nombre, // ✅ Este campo viene correcto en las citas
-          estado: citas[0].estado,
-          estado_pago: citas[0].estado_pago,
-          valor_total: citas[0].valor_total,
-          metodo_pago: citas[0].metodo_pago,
-          notas: citas[0].notas
-        });
-      }
-
-      // 🔥 TRANSFORMAR LAS CITAS CORRECTAMENTE
       return citas.map((cita: any) => {
-        // ✅ Usar profesional_nombre directamente (en citas viene bien)
         const profesional = cita.profesional_nombre || 'Profesional no especificado';
-
-        // 🔥 NO FORMATAR LA FECHA AQUÍ - DEJARLA COMO VIENE DEL SERVIDOR
-        const fechaOriginal = cita.fecha;
-        console.log(`📅 Fecha original del servidor para cita ${cita._id}: ${fechaOriginal}`);
-
-        // Obtener servicio
         const servicio = cita.servicio_nombre || 'Servicio no especificado';
-
-        // Obtener notas (si existen)
         const notas = cita.notas || '';
-
-        // Obtener método de pago
         const metodoPago = cita.metodo_pago || 'No especificado';
-
-        // Obtener estado de pago
         const estadoPago = cita.estado_pago || 'pendiente';
-
-        // Obtener valor total
         const valorTotal = cita.valor_total || 0;
-
-        // Obtener moneda
         const moneda = cita.moneda || 'USD';
 
-        // Formatear valor
         const valorFormateado = moneda === 'COP'
           ? `$${valorTotal.toLocaleString('es-CO')} COP`
           : moneda === 'USD'
@@ -846,9 +671,9 @@ ${datos.observaciones_generales || 'Ninguna'}`;
             : `$${valorTotal} ${moneda}`;
 
         return {
-          fecha: fechaOriginal,
+          fecha: cita.fecha,
           servicio: servicio,
-          estilista: profesional, // ✅ Mantener "estilista" por compatibilidad con la interfaz
+          estilista: profesional,
           notas: notas,
           metodo_pago: metodoPago,
           estado_pago: estadoPago,
@@ -880,37 +705,25 @@ ${datos.observaciones_generales || 'Ninguna'}`;
     }
   },
 
-  // 🔥 NUEVO MÉTODO: OBTENER HISTORIAL DE PRODUCTOS - CORREGIDO
   async getHistorialProductos(token: string, clienteId: string): Promise<any[]> {
     try {
-      console.log(`🛍️ Obteniendo historial de productos para cliente: ${clienteId}`);
-
-      // Primero obtenemos el historial de citas
       const historialCitas = await this.getHistorialCitas(token, clienteId);
 
       if (historialCitas.length === 0) {
-        console.log(`ℹ️ No hay historial de citas para el cliente ${clienteId}`);
         return [];
       }
 
-      console.log(`📊 Transformando ${historialCitas.length} citas a productos`);
-
-      // 🔥 TRANSFORMAR LAS CITAS EN "PRODUCTOS" PARA MOSTRAR
-      return historialCitas.map(cita => {
-        console.log(`📅 Fecha de cita a convertir a producto: ${cita.fecha}`);
-
-        return {
-          producto: cita.servicio,
-          fecha: cita.fecha,
-          precio: cita.valor_total,
-          estilista: cita.estilista, // ✅ Mantener "estilista" por compatibilidad
-          estado_pago: cita.estado_pago,
-          metodo_pago: cita.metodo_pago,
-          servicio_id: cita.datos_completos?.servicio_id,
-          cita_id: cita.datos_completos?._id,
-          estado_cita: cita.estado
-        };
-      });
+      return historialCitas.map(cita => ({
+        producto: cita.servicio,
+        fecha: cita.fecha,
+        precio: cita.valor_total,
+        estilista: cita.estilista,
+        estado_pago: cita.estado_pago,
+        metodo_pago: cita.metodo_pago,
+        servicio_id: cita.datos_completos?.servicio_id,
+        cita_id: cita.datos_completos?._id,
+        estado_cita: cita.estado
+      }));
 
     } catch (error) {
       console.error('❌ Error obteniendo historial de productos:', error);
@@ -918,26 +731,10 @@ ${datos.observaciones_generales || 'Ninguna'}`;
     }
   },
 
-  // 🔥 MÉTODO INTELIGENTE QUE DECIDE AUTOMÁTICAMENTE SEGÚN EL PAÍS
-  async obtenerClientes(token: string, sedeId?: string): Promise<Cliente[]> {
-    const pais = obtenerPaisDesdeStorage();
-    const esColombia = pais && pais.toLowerCase() === 'colombia';
-    
-    console.log(`📍 País detectado en sessionStorage: ${pais || 'No especificado'}`);
-    
-    if (sedeId && sedeId !== 'all') {
-      // Si se especifica una sede, usar filtrado siempre
-      console.log(`🎯 Filtrando por sede específica: ${sedeId}`);
-      return this.getClientes(token, sedeId);
-    } else if (esColombia) {
-      // Si es Colombia, usar endpoint normal
-      console.log('🇨🇴 Usando endpoint /clientes/ para Colombia');
-      return this.getClientes(token);
-    } else {
-      // Si es internacional, usar /todos
-      console.log('🌍 Usando endpoint /clientes/todos para sede internacional');
-      return this.getAllClientes(token);
-    }
+  // 🔥 MÉTODO SIMPLIFICADO: SIEMPRE USA getAllClientes
+  async obtenerClientes(token: string): Promise<Cliente[]> {
+    console.log('🌍 Usando endpoint /clientes/todos para obtener todos los clientes');
+    return this.getAllClientes(token);
   },
 
 };

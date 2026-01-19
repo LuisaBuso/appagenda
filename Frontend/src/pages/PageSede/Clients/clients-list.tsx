@@ -1,66 +1,104 @@
+// components/ClientsList.tsx
 "use client"
 
-import { useState, useEffect } from "react"
-import { Search, Plus, User, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useState,  } from "react"
+import { 
+  Search, 
+  Plus, 
+  User, 
+  ChevronLeft, 
+  ChevronRight, 
+  Loader2,
+  X
+} from 'lucide-react'
 import { Button } from "../../../components/ui/button"
 import { Input } from "../../../components/ui/input"
+import { Badge } from "../../../components/ui/badge"
 import type { Cliente } from "../../../types/cliente"
-import type { Sede } from "../../PageSuperAdmin/Sedes/sedeService"
 
 interface ClientsListProps {
   onSelectClient: (client: Cliente) => void
   onAddClient: () => void
   clientes: Cliente[]
+  metadata?: {
+    total: number;
+    pagina: number;
+    limite: number;
+    total_paginas: number;
+    tiene_siguiente: boolean;
+    tiene_anterior: boolean;
+  }
   error?: string | null
-  onRetry?: () => void
-  onSedeChange?: (sedeId: string) => void
-  selectedSede?: string
-  sedes?: Sede[]
+  isLoading?: boolean
+  onPageChange?: (page: number, filtro?: string) => void
+  onSearch?: (filtro: string) => void
 }
 
 export function ClientsList({ 
   onSelectClient, 
   onAddClient, 
   clientes, 
+  metadata,
   error, 
-  onRetry,
-  sedes = []
+  isLoading = false,
+  onPageChange,
+  onSearch
 }: ClientsListProps) {
   const [searchTerm, setSearchTerm] = useState("")
-  const [currentPage, setCurrentPage] = useState(1)
-  const itemsPerPage = 50
+  const [searchTimeout, setSearchTimeout] = useState<NodeJS.Timeout | null>(null)
 
-  // Filtrar clientes por búsqueda
-  const filteredClientes = clientes.filter(cliente =>
-    cliente.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    cliente.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    cliente.telefono.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  // Manejar búsqueda con debounce
+  const handleSearch = (value: string) => {
+    setSearchTerm(value)
+    
+    if (searchTimeout) {
+      clearTimeout(searchTimeout)
+    }
+    
+    const timeout = setTimeout(() => {
+      if (onSearch) {
+        onSearch(value)
+      } else if (onPageChange) {
+        onPageChange(1, value)
+      }
+    }, 500)
+    
+    setSearchTimeout(timeout)
+  }
 
-  // Calcular paginación
-  const totalPages = Math.ceil(filteredClientes.length / itemsPerPage)
-  const startIndex = (currentPage - 1) * itemsPerPage
-  const endIndex = startIndex + itemsPerPage
-  const paginatedClientes = filteredClientes.slice(startIndex, endIndex)
+  // Limpiar búsqueda
+  const clearSearch = () => {
+    setSearchTerm("")
+    if (onSearch) {
+      onSearch("")
+    } else if (onPageChange) {
+      onPageChange(1, "")
+    }
+  }
 
-  // Resetear a página 1 cuando se busca
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [searchTerm])
-
-  // Navegación de páginas
-  const goToPage = (page: number) => {
-    if (page >= 1 && page <= totalPages) {
-      setCurrentPage(page)
+  // Manejar cambio de página
+  const handlePageChange = (page: number) => {
+    if (onPageChange) {
+      onPageChange(page, searchTerm)
     }
   }
 
   const goToPreviousPage = () => {
-    goToPage(currentPage - 1)
+    if (metadata?.tiene_anterior && metadata.pagina > 1) {
+      handlePageChange(metadata.pagina - 1)
+    }
   }
 
   const goToNextPage = () => {
-    goToPage(currentPage + 1)
+    if (metadata?.tiene_siguiente && metadata.pagina < (metadata.total_paginas || 1)) {
+      handlePageChange(metadata.pagina + 1)
+    }
+  }
+
+  const goToPage = (page: number) => {
+    if (page >= 1 && page <= (metadata?.total_paginas || 1)) {
+      handlePageChange(page)
+    }
   }
 
   if (error) {
@@ -69,9 +107,9 @@ export function ClientsList({
         <div className="text-center">
           <div className="text-sm text-gray-600 mb-2">Error al cargar clientes</div>
           <p className="text-xs text-gray-500 mb-3">{error}</p>
-          {onRetry && (
+          {onPageChange && (
             <Button 
-              onClick={onRetry}
+              onClick={() => onPageChange(1, searchTerm)}
               variant="outline"
               className="text-xs border-gray-300 text-gray-700 hover:bg-gray-50"
             >
@@ -89,10 +127,8 @@ export function ClientsList({
       <div className="border-b border-gray-100 px-4 py-3">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h1 className="text-lg font-medium text-gray-900">Clientes</h1>
-            {clientes.length > 0 && (
+            {metadata && (
               <p className="text-xs text-gray-500 mt-1">
-                Mostrando {Math.min(endIndex, filteredClientes.length)} de {filteredClientes.length} clientes
               </p>
             )}
           </div>
@@ -107,31 +143,67 @@ export function ClientsList({
           </Button>
         </div>
         
-        {/* Search */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
-          <Input
-            placeholder="Buscar cliente..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-9 h-8 text-sm border-gray-300"
-          />
+        {/* Filtros */}
+        <div className="space-y-2">
+          {/* Search */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+            <Input
+              placeholder="Buscar por nombre, email, teléfono o cédula..."
+              value={searchTerm}
+              onChange={(e) => handleSearch(e.target.value)}
+              className="pl-9 h-8 text-sm border-gray-300"
+              disabled={isLoading}
+            />
+            {searchTerm && (
+              <button
+                onClick={clearSearch}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                disabled={isLoading}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Badges de filtros activos */}
+        {searchTerm && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            <Badge variant="secondary" className="text-xs">
+              Buscando: "{searchTerm}"
+            </Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-5 px-2 text-xs text-gray-500 hover:text-gray-700"
+              onClick={clearSearch}
+              disabled={isLoading}
+            >
+              Limpiar filtro
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Table */}
       <div className="flex-1 overflow-auto p-4">
-        {paginatedClientes.length === 0 ? (
+        {isLoading ? (
+          <div className="flex h-48 items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+            <span className="ml-2 text-sm text-gray-600">Cargando clientes...</span>
+          </div>
+        ) : clientes.length === 0 ? (
           <div className="flex h-48 items-center justify-center rounded-lg border border-dashed border-gray-200 bg-white">
             <div className="text-center">
               <User className="h-8 w-8 text-gray-300 mx-auto mb-2" />
               <p className="text-sm text-gray-600 mb-1">
-                {clientes.length === 0 ? "No hay clientes" : "No se encontraron resultados"}
+                {searchTerm ? "No se encontraron resultados" : "No hay clientes"}
               </p>
               <p className="text-xs text-gray-500">
-                {clientes.length === 0 ? "Agrega tu primer cliente" : "Ajusta tu búsqueda"}
+                {searchTerm ? "Ajusta tu búsqueda" : "Agrega tu primer cliente"}
               </p>
-              {clientes.length === 0 && (
+              {!searchTerm && (
                 <Button
                   onClick={onAddClient}
                   variant="outline"
@@ -146,46 +218,64 @@ export function ClientsList({
           </div>
         ) : (
           <>
-            <div className="rounded-lg border border-gray-100 bg-white mb-4">
+            <div className="rounded-lg border border-gray-100 bg-white mb-4 overflow-hidden">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-gray-100">
+                  <tr className="border-b border-gray-100 bg-gray-50">
                     <th className="px-3 py-2 text-left font-medium text-gray-700 text-xs">Nombre</th>
                     <th className="px-3 py-2 text-left font-medium text-gray-700 text-xs">Teléfono</th>
                     <th className="px-3 py-2 text-left font-medium text-gray-700 text-xs">Email</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700 text-xs">Días</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700 text-xs">Sede</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700 text-xs">Cédula</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700 text-xs">Ciudad</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedClientes.map((cliente) => (
+                  {clientes.map((cliente) => (
                     <tr
                       key={cliente.id}
                       onClick={() => onSelectClient(cliente)}
-                      className="border-b border-gray-50 last:border-b-0 hover:bg-gray-50 cursor-pointer"
+                      className="border-b border-gray-50 last:border-b-0 hover:bg-gray-50 cursor-pointer transition-colors"
                     >
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
-                          <div className="h-6 w-6 rounded-full bg-gray-100 flex items-center justify-center text-xs text-gray-700">
-                            {cliente.nombre.charAt(0)}
+                          <div className="h-7 w-7 rounded-full bg-blue-100 flex items-center justify-center text-xs font-medium text-blue-600">
+                            {cliente.nombre.charAt(0).toUpperCase()}
                           </div>
-                          <span className="text-gray-900">{cliente.nombre}</span>
+                          <div>
+                            <div className="font-medium text-gray-900">{cliente.nombre}</div>
+                            {cliente.diasSinVenir !== undefined && (
+                              <div className={`text-xs ${
+                                cliente.diasSinVenir > 60 
+                                  ? 'text-red-600' 
+                                  : cliente.diasSinVenir > 30 
+                                  ? 'text-yellow-600'
+                                  : 'text-green-600'
+                              }`}>
+                                {cliente.diasSinVenir} días sin venir
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </td>
-                      <td className="px-3 py-2 text-gray-600">{cliente.telefono}</td>
-                      <td className="px-3 py-2 text-gray-600">{cliente.email}</td>
-                      <td className="px-3 py-2">
-                        <span className={`px-1.5 py-0.5 rounded text-xs ${cliente.diasSinVenir > 30 
-                          ? 'bg-gray-100 text-gray-600' 
-                          : 'bg-gray-50 text-gray-500'
-                        }`}>
-                          {cliente.diasSinVenir}
-                        </span>
+                      <td className="px-3 py-2 text-gray-600">
+                        {cliente.telefono !== 'No disponible' && cliente.telefono ? (
+                          <span>{cliente.telefono}</span>
+                        ) : (
+                          '—'
+                        )}
                       </td>
                       <td className="px-3 py-2 text-gray-600">
-                        {cliente.sede_id ? 
-                          sedes.find(s => s.sede_id === cliente.sede_id)?.nombre || '—' 
-                          : '—'}
+                        {cliente.email !== 'No disponible' && cliente.email ? (
+                          <span>{cliente.email}</span>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-gray-600">
+                        {cliente.cedula || '—'}
+                      </td>
+                      <td className="px-3 py-2 text-gray-600">
+                        {cliente.ciudad || '—'}
                       </td>
                     </tr>
                   ))}
@@ -194,10 +284,11 @@ export function ClientsList({
             </div>
 
             {/* Controles de paginación */}
-            {filteredClientes.length > itemsPerPage && (
-              <div className="flex items-center justify-between px-1">
+            {metadata && metadata.total_paginas > 1 && (
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-1 py-2">
                 <div className="text-xs text-gray-600">
-                  Página {currentPage} de {totalPages}
+                  <span className="font-medium">Página {metadata.pagina}</span> de {metadata.total_paginas} • 
+                  Total: {metadata.total} clientes
                 </div>
                 
                 <div className="flex items-center gap-2">
@@ -205,55 +296,75 @@ export function ClientsList({
                     variant="outline"
                     size="sm"
                     onClick={goToPreviousPage}
-                    disabled={currentPage === 1}
-                    className="h-7 px-2 border-gray-300 text-gray-700 hover:bg-gray-50"
+                    disabled={!metadata.tiene_anterior || isLoading}
+                    className="h-8 px-3 border-gray-300 text-gray-700 hover:bg-gray-50"
                   >
-                    <ChevronLeft className="h-3 w-3 mr-1" />
-                    <span className="text-xs">Anterior</span>
+                    <ChevronLeft className="h-4 w-4 mr-1" />
+                    <span className="text-sm">Anterior</span>
                   </Button>
                   
-                  <div className="flex gap-1">
+                  <div className="flex items-center gap-1">
                     {/* Mostrar números de página */}
-                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    {Array.from({ length: Math.min(5, metadata.total_paginas) }, (_, i) => {
                       let pageNumber
-                      if (totalPages <= 5) {
+                      if (metadata.total_paginas <= 5) {
                         pageNumber = i + 1
-                      } else if (currentPage <= 3) {
+                      } else if (metadata.pagina <= 3) {
                         pageNumber = i + 1
-                      } else if (currentPage >= totalPages - 2) {
-                        pageNumber = totalPages - 4 + i
+                      } else if (metadata.pagina >= metadata.total_paginas - 2) {
+                        pageNumber = metadata.total_paginas - 4 + i
                       } else {
-                        pageNumber = currentPage - 2 + i
+                        pageNumber = metadata.pagina - 2 + i
                       }
                       
                       return (
                         <Button
                           key={pageNumber}
-                          variant={pageNumber === currentPage ? "default" : "outline"}
+                          variant={pageNumber === metadata.pagina ? "default" : "outline"}
                           size="sm"
                           onClick={() => goToPage(pageNumber)}
-                          className={`h-7 w-7 text-xs ${pageNumber === currentPage ? "bg-gray-900 text-white hover:bg-gray-800" : "border-gray-300 text-gray-700 hover:bg-gray-50"}`}
+                          disabled={isLoading}
+                          className={`h-8 w-8 text-sm ${
+                            pageNumber === metadata.pagina 
+                              ? "bg-blue-600 text-white hover:bg-blue-700" 
+                              : "border-gray-300 text-gray-700 hover:bg-gray-50"
+                          }`}
                         >
                           {pageNumber}
                         </Button>
                       )
                     })}
+                    
+                    {metadata.total_paginas > 5 && metadata.pagina < metadata.total_paginas - 2 && (
+                      <>
+                        <span className="text-gray-400">...</span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => goToPage(metadata.total_paginas)}
+                          disabled={isLoading}
+                          className="h-8 w-8 text-sm border-gray-300 text-gray-700 hover:bg-gray-50"
+                        >
+                          {metadata.total_paginas}
+                        </Button>
+                      </>
+                    )}
                   </div>
                   
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={goToNextPage}
-                    disabled={currentPage === totalPages}
-                    className="h-7 px-2 border-gray-300 text-gray-700 hover:bg-gray-50"
+                    disabled={!metadata.tiene_siguiente || isLoading}
+                    className="h-8 px-3 border-gray-300 text-gray-700 hover:bg-gray-50"
                   >
-                    <span className="text-xs">Siguiente</span>
-                    <ChevronRight className="h-3 w-3 ml-1" />
+                    <span className="text-sm">Siguiente</span>
+                    <ChevronRight className="h-4 w-4 ml-1" />
                   </Button>
                 </div>
                 
                 <div className="text-xs text-gray-600">
-                  {itemsPerPage} por página
+                  Mostrando {metadata.limite} por página
                 </div>
               </div>
             )}
