@@ -1,10 +1,9 @@
-// src/pages/Dashboard/sales-donut-chart.tsx
 "use client"
 
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card"
 import { Cell, Pie, PieChart, ResponsiveContainer } from "recharts"
-import { ChartContainer } from "../../../components/ui/chart"
-import { formatMoney } from "./formatMoney"
+import { formatMoney } from "./Api/formatMoney"
+import { memo, useMemo } from "react"
 
 interface DonutDataItem {
   name: string;
@@ -15,37 +14,72 @@ interface DonutDataItem {
 interface SalesDonutChartProps {
   donutData: DonutDataItem[];
   formatCurrency?: (value: number) => string;
+  title?: string;
 }
 
-export function SalesDonutChart({ donutData, formatCurrency }: SalesDonutChartProps) {
+const DEFAULT_COLORS = {
+  Servicios: "#333333",
+  Productos: "#666666",
+  Ventas: "#333333",
+  default: "#888888"
+};
+
+export const SalesDonutChart = memo(function SalesDonutChart({ 
+  donutData, 
+  formatCurrency,
+  title = "Distribución de Ventas"
+}: SalesDonutChartProps) {
   
-  const formatValue = (value: number) => {
+  const formatValue = useMemo(() => (value: number) => {
     if (formatCurrency) {
       return formatCurrency(value);
     }
     return formatMoney(value, 'USD', 'es-CO');
-  };
+  }, [formatCurrency]);
 
-  const total = donutData.reduce((sum, item) => sum + item.value, 0);
+  const { total, enhancedData } = useMemo(() => {
+    const totalValue = donutData.reduce((sum, item) => sum + item.value, 0);
+    
+    const enhanced = donutData.map(item => ({
+      ...item,
+      color: DEFAULT_COLORS[item.name as keyof typeof DEFAULT_COLORS] || DEFAULT_COLORS.default,
+      percentage: totalValue > 0 ? (item.value / totalValue) * 100 : 0
+    }));
+
+    return { total: totalValue, enhancedData: enhanced };
+  }, [donutData]);
+
+  if (donutData.length === 0 || total === 0) {
+    return (
+      <Card className="border border-gray-200">
+        <CardHeader className="p-4 pb-2">
+          <CardTitle className="text-sm font-medium text-gray-900">{title}</CardTitle>
+        </CardHeader>
+        <CardContent className="p-4 pt-2">
+          <div className="flex flex-col items-center justify-center h-40 text-center">
+            <div className="w-24 h-24 rounded-full bg-gray-100 border-8 border-gray-200 flex items-center justify-center mb-3">
+              <span className="text-sm text-gray-500">Sin datos</span>
+            </div>
+            <p className="text-sm text-gray-500">No hay datos de ventas disponibles</p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base font-semibold">Distribución de Ventas (USD)</CardTitle>
+    <Card className="border border-gray-200">
+      <CardHeader className="p-4 pb-2">
+        <CardTitle className="text-sm font-medium text-gray-900">{title}</CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="flex flex-col lg:flex-row items-center lg:items-start gap-8">
-          <ChartContainer
-            config={{
-              servicios: { label: "Servicios", color: "oklch(0.7 0.25 280)" },
-              productos: { label: "Productos", color: "oklch(0.8 0.15 280)" },
-            }}
-            className="h-[160px] w-[160px]"
-          >
+      <CardContent className="p-4 pt-2">
+        <div className="flex flex-col lg:flex-row items-center lg:items-start gap-6">
+          {/* ELIMINAR ChartContainer y usar div simple */}
+          <div className="h-[160px] w-[160px]">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie 
-                  data={donutData} 
+                  data={enhancedData} 
                   cx="50%" 
                   cy="50%" 
                   innerRadius={50} 
@@ -53,13 +87,13 @@ export function SalesDonutChart({ donutData, formatCurrency }: SalesDonutChartPr
                   paddingAngle={0} 
                   dataKey="value"
                 >
-                  {donutData.map((entry, index) => (
+                  {enhancedData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
                 </Pie>
               </PieChart>
             </ResponsiveContainer>
-          </ChartContainer>
+          </div>
 
           <div className="flex-1">
             <div className="mb-4">
@@ -70,19 +104,20 @@ export function SalesDonutChart({ donutData, formatCurrency }: SalesDonutChartPr
             </div>
             
             <div className="space-y-3">
-              {donutData.map((item, index) => (
+              {enhancedData.map((item, index) => (
                 <div key={index} className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
-                    <div>
-                      <div className="text-sm font-medium">{item.name}</div>
-                      <div className="text-xs text-gray-500">
-                        {total > 0 ? `${((item.value / total) * 100).toFixed(1)}%` : '0%'}
-                      </div>
+                  <div className="flex items-center gap-2">
+                    <div 
+                      className="h-3 w-3 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: item.color }}
+                    />
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-gray-900 truncate">{item.name}</div>
+                      <div className="text-xs text-gray-500">{item.percentage.toFixed(1)}%</div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-sm font-semibold">{formatValue(item.value)}</div>
+                  <div className="text-right flex-shrink-0">
+                    <div className="text-sm font-semibold text-gray-900">{formatValue(item.value)}</div>
                   </div>
                 </div>
               ))}
@@ -92,4 +127,4 @@ export function SalesDonutChart({ donutData, formatCurrency }: SalesDonutChartPr
       </CardContent>
     </Card>
   )
-}
+})

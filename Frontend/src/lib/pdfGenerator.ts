@@ -206,7 +206,7 @@ export async function generarPDFFicha(data: FichaPDFData): Promise<void> {
       agregarTexto(pdf, data.ficha.sede, margin + 25, yPos);
       yPos += 7;
 
-      agregarTexto(pdf, 'Estilista:', margin, yPos);
+      agregarTexto(pdf, 'profesional:', margin, yPos);
       agregarTexto(pdf, data.ficha.estilista, margin + 25, yPos);
       yPos += 15;
 
