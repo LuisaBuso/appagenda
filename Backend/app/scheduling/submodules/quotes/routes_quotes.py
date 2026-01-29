@@ -17,7 +17,7 @@ from app.scheduling.submodules.quotes.controllers import (
     enviar_correo_con_pdf
 )
 from app.scheduling.models import FichaCreate
-from app.scheduling.models import Cita, ProductoItem, PagoRequest
+from app.scheduling.models import Cita, ProductoItem, PagoRequest, ServicioEnCita, ServicioEnFicha
 from app.database.mongo import (
     collection_citas,
     collection_horarios,
@@ -125,15 +125,20 @@ async def resolve_cita_by_id(cita_id: str) -> Optional[dict]:
     except Exception:
         return None
 
-# =============================================================
-# 🔹 OBTENER CITAS (filtro por sede o profesional) - OPTIMIZADO
-# =============================================================
+# ============================================================
+# ENDPOINT OBTENER CITAS (con cálculos en tiempo real)
+# ============================================================
 @router.get("/", response_model=dict)
 async def obtener_citas(
     sede_id: Optional[str] = Query(None),
     profesional_id: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user)
 ):
+    """
+    Obtiene citas con datos enriquecidos.
+    ✅ Soporta nueva estructura (servicios con nombre/precio)
+    ✅ Compatible con estructuras antiguas
+    """
     filtro = {}
     if sede_id:
         filtro["sede_id"] = sede_id
@@ -145,66 +150,97 @@ async def obtener_citas(
     if not citas:
         return {"citas": []}
 
-    servicio_ids = list({c.get("servicio_id") for c in citas})
-    profesional_ids = list({c.get("profesional_id") for c in citas})
-    sede_ids = list({c.get("sede_id") for c in citas})
+    # === Bulk fetch para enriquecer datos (solo si es necesario) ===
+    servicio_ids = set()
+    for cita in citas:
+        if "servicios" in cita:
+            for s in cita["servicios"]:
+                servicio_ids.add(s.get("servicio_id"))
+        elif "servicios_ids" in cita:
+            servicio_ids.update(cita["servicios_ids"])
+        elif "servicio_id" in cita:
+            servicio_ids.add(cita["servicio_id"])
 
-    servicios = await collection_servicios.find(
-        {"servicio_id": {"$in": servicio_ids}}
-    ).to_list(None)
+    # Solo consultar servicios si hay IDs
+    servicios_map = {}
+    if servicio_ids:
+        servicios = await collection_servicios.find(
+            {"servicio_id": {"$in": list(servicio_ids)}}
+        ).to_list(None)
+        servicios_map = {s["servicio_id"]: s for s in servicios}
 
-    profesionales = await collection_estilista.find(
-        {"profesional_id": {"$in": profesional_ids}}
-    ).to_list(None)
-
-    sedes = await collection_locales.find(
-        {"sede_id": {"$in": sede_ids}}
-    ).to_list(None)
-
-    servicios_map = {s["servicio_id"]: s for s in servicios}
-    profesionales_map = {p["profesional_id"]: p for p in profesionales}
-    sedes_map = {s["sede_id"]: s for s in sedes}
-
+    # === Enriquecer cada cita ===
     for cita in citas:
         normalize_cita_doc(cita)
 
-        cita["servicio_nombre"] = servicios_map.get(
-            cita.get("servicio_id"), {}
-        ).get("nombre", "Desconocido")
+        # ⭐ NUEVA ESTRUCTURA (con nombre y precio en servicios)
+        if "servicios" in cita and cita["servicios"] and isinstance(cita["servicios"][0], dict):
+            primer_servicio = cita["servicios"][0]
+            
+            # Detectar si es nueva estructura (tiene campo "nombre")
+            if "nombre" in primer_servicio:
+                # Nueva estructura - nombres ya están en la cita
+                nombres = [s.get("nombre", "Servicio") for s in cita["servicios"]]
+                cita["servicio_nombre"] = ", ".join(nombres)
+                
+                # Duración: consultar solo para obtener duraciones
+                duracion_total = 0
+                for s in cita["servicios"]:
+                    srv = servicios_map.get(s.get("servicio_id"))
+                    if srv:
+                        duracion_total += srv.get("duracion_minutos", 0)
+                cita["servicio_duracion"] = duracion_total
+                
+                # Ya no necesitas recalcular servicios_detalle, ya está en la cita
+                # Opcional: si el frontend lo necesita en otro formato
+                cita["servicios_detalle"] = cita["servicios"]
+            else:
+                # Estructura antigua (solo tiene servicio_id)
+                nombres = []
+                duracion = 0
+                for s in cita["servicios"]:
+                    srv = servicios_map.get(s.get("servicio_id"))
+                    if srv:
+                        nombres.append(srv.get("nombre", "Servicio"))
+                        duracion += srv.get("duracion_minutos", 0)
+                
+                cita["servicio_nombre"] = ", ".join(nombres) if nombres else "Sin servicio"
+                cita["servicio_duracion"] = duracion
 
-        cita["profesional_nombre"] = profesionales_map.get(
-            cita.get("profesional_id"), {}
-        ).get("nombre", "No encontrado")
-
-        cita["sede_nombre"] = sedes_map.get(
-            cita.get("sede_id"), {}
-        ).get("nombre", "No encontrada")
+        
+        elif "servicio_id" in cita:
+            # Estructura muy antigua (un solo servicio)
+            srv = servicios_map.get(cita.get("servicio_id"))
+            cita["servicio_nombre"] = srv.get("nombre", "Sin servicio") if srv else "Sin servicio"
 
     return {"citas": citas}
 
 # =============================================================
-# 🔹 CREAR CITA (con validaciones, guardado y email)
+# 🔹 CREAR CITA (ACTUALIZADA)
 # =============================================================
 @router.post("/", response_model=dict)
 async def crear_cita(
     cita: Cita,
     current_user: dict = Depends(get_current_user)
 ):
-    print(f"🔍 crear_cita invoked by {current_user.get('email')} (rol={current_user.get('rol')})")
+    """
+    Crea una cita con la nueva estructura optimizada.
+    ✅ Guarda solo servicios: [{servicio_id, precio_personalizado}]
+    ✅ Calcula totales en tiempo real
+    ✅ Compatible con estructura antigua
+    """
+    print(f"🔍 crear_cita invocada por {current_user.get('email')}")
 
+    # Validar permisos
     if current_user.get("rol") not in ["usuario", "admin_sede", "super_admin"]:
-        raise HTTPException(status_code=403, detail="No autorizado para crear citas")
+        raise HTTPException(status_code=403, detail="No autorizado")
 
-    fecha_str = cita.fecha.strftime("%Y-%m-%d")
+    fecha_str = cita.fecha.strftime("%Y-%m-%d") if isinstance(cita.fecha, datetime) else str(cita.fecha)
 
-    # === obtener datos relacionados ===
+    # === Validaciones básicas ===
     cliente = await collection_clients.find_one({"cliente_id": cita.cliente_id})
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
-
-    servicio = await collection_servicios.find_one({"servicio_id": cita.servicio_id})
-    if not servicio:
-        raise HTTPException(status_code=404, detail="Servicio no encontrado")
 
     profesional = await collection_estilista.find_one({"profesional_id": cita.profesional_id})
     if not profesional:
@@ -214,41 +250,72 @@ async def crear_cita(
     if not sede:
         raise HTTPException(status_code=404, detail="Sede no encontrada")
 
-    # ⭐ OBTENER PRECIO SEGÚN MONEDA DE LA SEDE
     moneda_sede = sede.get("moneda", "COP")
-    precios_servicio = servicio.get("precios", {})
 
-    if moneda_sede not in precios_servicio:
-        raise HTTPException(
-            status_code=400,
-            detail=f"El servicio '{servicio.get('nombre')}' no tiene precio configurado en {moneda_sede}"
-        )
+    # ====================================
+    # ⭐ PROCESAR SERVICIOS (NUEVA LÓGICA)
+    # ====================================
+    if not cita.servicios or len(cita.servicios) == 0:
+        raise HTTPException(status_code=400, detail="Debe especificar al menos un servicio")
 
-    valor_total = precios_servicio[moneda_sede]
-    print(f"💵 Precio del servicio en {moneda_sede}: {valor_total}")
+    servicios_procesados = []
+    servicios_info = []  # Para email
+    valor_total = 0
+    duracion_total = 0
+    nombres_servicios = []  # Para denormalizar
 
-    # === pago / abono ===
-    abono = getattr(cita, "abono", 0) or 0
+    for servicio_item in cita.servicios:
+        servicio_db = await collection_servicios.find_one({"servicio_id": servicio_item.servicio_id})
+        if not servicio_db:
+            raise HTTPException(status_code=404, detail=f"Servicio {servicio_item.servicio_id} no encontrado")
 
-    if abono >= valor_total:
+        # ⭐ DETERMINAR PRECIO
+        es_personalizado = False
+        if servicio_item.precio_personalizado is not None and servicio_item.precio_personalizado > 0:
+            # Precio personalizado válido
+            precio = float(servicio_item.precio_personalizado)
+            es_personalizado = True
+        else:
+            # Usar precio de BD
+            precios = servicio_db.get("precios", {})
+            if moneda_sede not in precios:
+                raise HTTPException(status_code=400, detail=f"Servicio sin precio en {moneda_sede}")
+            precio = float(precios[moneda_sede])
+            es_personalizado = False
+
+        # Acumular totales
+        valor_total += precio
+        duracion_total += servicio_db.get("duracion_minutos", 0)
+        nombres_servicios.append(servicio_db.get("nombre"))
+
+        # ⭐ GUARDAR SERVICIO (estructura mejorada)
+        servicio_guardado = {
+            "servicio_id": servicio_item.servicio_id,
+            "nombre": servicio_db.get("nombre"),  # ⭐ NUEVO
+            "precio_personalizado": es_personalizado,  # ⭐ BOOLEANO
+            "precio": round(precio, 2)  # ⭐ SIEMPRE guardar el precio usado
+        }
+        servicios_procesados.append(servicio_guardado)
+
+    valor_total = round(valor_total, 2)
+    # === Calcular estado de pago ===
+    abono = float(cita.abono or 0)
+    saldo_pendiente = round(valor_total - abono, 2)
+
+    if saldo_pendiente <= 0:
         estado_pago = "pagado"
     elif abono > 0:
         estado_pago = "abonado"
     else:
         estado_pago = "pendiente"
 
-    saldo_pendiente = round(valor_total - abono, 2)
-    
-    # ⭐ NUEVO: Manejar compatibilidad de métodos de pago
-    metodo_pago_inicial = getattr(cita, "metodo_pago_inicial", None) or getattr(cita, "metodo_pago", "sin_pago")
-    
-    # ⭐ NUEVO: Inicializar historial de pagos
+    # === Historial de pagos ===
     historial_pagos = []
     if abono > 0:
         historial_pagos.append({
             "fecha": datetime.now(),
             "monto": float(abono),
-            "metodo": metodo_pago_inicial,
+            "metodo": cita.metodo_pago_inicial,
             "tipo": "abono_inicial",
             "registrado_por": current_user.get("email"),
             "saldo_despues": float(saldo_pendiente)
@@ -313,39 +380,50 @@ async def crear_cita(
             detail=f"El profesional ya tiene una cita con {cliente_solape_nombre} en ese horario"
         )"""
 
-    # === preparar documento y guardar ===
-    data = cita.dict()
-    data["fecha"] = fecha_str
-    data["valor_total"] = float(valor_total)
-    data["abono"] = float(abono)
-    data["saldo_pendiente"] = float(saldo_pendiente)
-    data["estado_pago"] = estado_pago
-    data["metodo_pago_inicial"] = metodo_pago_inicial  # ⭐ NUEVO x
-    data["metodo_pago_actual"] = metodo_pago_inicial   # ⭐ NUEVO x
-    data["moneda"] = moneda_sede
-    data["estado"] = "confirmada"  # Estado por defecto
+# ====================================
+# ⭐ GUARDAR CITA CON DATOS DENORMALIZADOS
+# ====================================
+    data = {
+        "sede_id": cita.sede_id,
+        "cliente_id": cita.cliente_id,
+        "profesional_id": cita.profesional_id,
+    
+        # ⭐ SERVICIOS (con nombres y precios)
+        "servicios": servicios_procesados,
+    
+        # ⭐ DATOS DENORMALIZADOS (para consultas rápidas)
+        "cliente_nombre": cliente.get("nombre"),
+        "cliente_email": cliente.get("email") or cliente.get("correo"),
+        "cliente_telefono": cliente.get("telefono"),
+        "profesional_nombre": profesional.get("nombre"),
+        "sede_nombre": sede.get("nombre"),
+    
+        # Fechas y estado
+        "fecha": fecha_str,
+        "hora_inicio": cita.hora_inicio,
+        "hora_fin": cita.hora_fin,
+        "estado": "confirmada",
+    
+        # Pagos
+        "metodo_pago_inicial": cita.metodo_pago_inicial,
+        "metodo_pago_actual": cita.metodo_pago_inicial,
+        "abono": float(abono),
+        "valor_total": float(valor_total),
+        "saldo_pendiente": float(saldo_pendiente),
+        "estado_pago": estado_pago,
+        "moneda": moneda_sede,
+        "historial_pagos": historial_pagos,
+    
+        # Metadata
+        "creada_por": current_user.get("email"),
+        "creada_por_rol": current_user.get("rol"),
+        "fecha_creacion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "ultima_actualizacion": datetime.now()
+    }
 
-    # Campos denormalizados
-    data["cliente_nombre"] = cliente.get("nombre")
-    data["cliente_email"] = cliente.get("email") or cliente.get("correo")
-    data["cliente_telefono"] = cliente.get("telefono") or cliente.get("celular")
-    data["servicio_nombre"] = servicio.get("nombre")
-    data["servicio_duracion"] = servicio.get("duracion_minutos")
-    data["profesional_nombre"] = profesional.get("nombre")
-    data["profesional_email"] = profesional.get("email")
-    data["sede_nombre"] = sede.get("nombre")
-    data["sede_direccion"] = sede.get("direccion")
-    data["sede_telefono"] = sede.get("telefono")
-
-    data["creada_por"] = current_user.get("email")
-    data["creada_por_rol"] = current_user.get("rol")
-    data["fecha_creacion"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    data["ultima_actualizacion"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    data["historial_pagos"] = historial_pagos  # ⭐ NUEVO
-
+    # Guardar en BD
     result = await collection_citas.insert_one(data)
     cita_id = str(result.inserted_id)
-    data["_id"] = cita_id
 
     # === construir email HTML mejorado ===
     estilo = """
@@ -632,6 +710,10 @@ async def crear_cita(
         "pendiente": "estado-pendiente"
     }.get(estado_pago, "estado-pendiente")
 
+    # Crear lista de nombres de servicios para el email
+    nombres_servicios = [s["nombre"] for s in servicios_info]
+    nombres_concatenados = ", ".join(nombres_servicios)
+
     mensaje_html = f"""
     <!DOCTYPE html>
     <html lang="es">
@@ -643,7 +725,6 @@ async def crear_cita(
     </head>
     <body>
         <div class="email-container">
-            <!-- Header -->
             <div class="email-header">
                 <img class="logo" src="https://rizosfelicesdata.s3.us-east-2.amazonaws.com/logo+principal+rosado+letra+blanco_Mesa+de+tra+(1).png" alt="Rizos Felices">
                 <h1 class="header-title">¡Cita Confirmada!</h1>
@@ -651,9 +732,7 @@ async def crear_cita(
                 <div class="cita-id">ID de cita: {cita_id[:8].upper()}</div>
             </div>
             
-            <!-- Body -->
             <div class="email-body">
-                <!-- Información de la cita -->
                 <div class="section-title">
                     <span>📅 Detalles de la cita</span>
                 </div>
@@ -665,9 +744,9 @@ async def crear_cita(
                     </div>
                     
                     <div class="info-card">
-                        <div class="info-label">Servicio</div>
-                        <div class="info-value">{servicio.get('nombre')}</div>
-                        <small>{servicio.get('duracion_minutos', 60)} minutos</small>
+                        <div class="info-label">Servicio(s)</div>
+                        <div class="info-value">{nombres_concatenados}</div>
+                        <small>{duracion_total} minutos</small>
                     </div>
                     
                     <div class="info-card">
@@ -692,7 +771,6 @@ async def crear_cita(
                     </div>
                 </div>
                 
-                <!-- Información de pago -->
                 <div class="section-title">
                     <span>💰 Información de pago</span>
                 </div>
@@ -727,7 +805,6 @@ async def crear_cita(
                     {f'<p style="margin-top: 15px; font-size: 14px; color: #4a5568;">Saldo pendiente por pagar al momento del servicio.</p>' if saldo_pendiente > 0 else ''}
                 </div>
                 
-                <!-- Instrucciones -->
                 <div class="instrucciones">
                     <div class="instrucciones-title">
                         <span>📋 Recomendaciones importantes</span>
@@ -741,7 +818,6 @@ async def crear_cita(
                     </ul>
                 </div>
                 
-                <!-- Contacto de emergencia -->
                 <div style="margin-top: 30px; padding: 20px; background: #fff7ed; border-radius: 12px; border-left: 4px solid #ed8936;">
                     <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
                         <span style="font-size: 16px; font-weight: 600; color: #9c4221;">📞 ¿Necesitas ayuda?</span>
@@ -755,7 +831,6 @@ async def crear_cita(
                 </div>
             </div>
             
-            <!-- Footer -->
             <div class="email-footer">
                 <p>© {datetime.now().year} Rizos Felices. Todos los derechos reservados.</p>
                 <div class="footer-links">
@@ -818,23 +893,20 @@ async def crear_cita(
         "data": {
             "cita_id": cita_id,
             "cliente": cliente.get("nombre"),
-            "servicio": servicio.get("nombre"),
+            "servicios": nombres_servicios,
             "profesional": profesional.get("nombre"),
             "fecha": fecha_str,
             "horario": f"{cita.hora_inicio} - {cita.hora_fin}",
+            "duracion_total": duracion_total,
             "valor_total": valor_total,
             "estado_pago": estado_pago,
-            "metodo_pago_inicial": metodo_pago_inicial,  # ⭐ NUEVO
-            "metodo_pago_actual": metodo_pago_inicial,   # ⭐ NUEVO (mismo al inicio) aqui
             "saldo_pendiente": saldo_pendiente,
-            "emails_enviados": {
-                "cliente": bool(cliente_email),
-                "profesional": bool(prof_email)
-            }
+            "moneda": moneda_sede
         }
     }
+
 # =============================================================
-# 🔹 EDITAR CITA
+# 🔹 EDITAR CITA (MEJORADA)
 # =============================================================
 @router.put("/{cita_id}", response_model=dict)
 async def editar_cita(
@@ -842,24 +914,95 @@ async def editar_cita(
     cambios: dict,
     current_user: dict = Depends(get_current_user)
 ):
+    """
+    Edita una cita.
+    ✅ Soporta edición de servicios (nueva estructura)
+    ✅ Recalcula totales automáticamente
+    """
     if current_user.get("rol") not in ["admin_sede", "super_admin"]:
-        raise HTTPException(status_code=403, detail="No autorizado para editar citas")
+        raise HTTPException(status_code=403, detail="No autorizado")
 
-    result = await collection_citas.update_one({"cita_id": cita_id}, {"$set": cambios})
-    if result.matched_count == 0:
-        try:
-            oid = ObjectId(cita_id)
-            result = await collection_citas.update_one({"_id": oid}, {"$set": cambios})
-        except Exception:
-            pass
+    cita_actual = await resolve_cita_by_id(cita_id)
+    if not cita_actual:
+        raise HTTPException(status_code=404, detail="Cita no encontrada")
+
+    # ====================================
+    # ⭐ SI SE EDITAN SERVICIOS (nueva estructura)
+    # ====================================
+    if "servicios" in cambios:
+        sede = await collection_locales.find_one({"sede_id": cita_actual.get("sede_id")})
+        moneda_sede = sede.get("moneda", "COP")
+        
+        servicios_procesados = []
+        valor_total = 0
+        
+        for servicio_item in cambios["servicios"]:
+            servicio_id = servicio_item.get("servicio_id")
+            precio_personalizado = servicio_item.get("precio_personalizado")
+            
+            # Buscar servicio en BD
+            servicio_db = await collection_servicios.find_one({"servicio_id": servicio_id})
+            if not servicio_db:
+                raise HTTPException(status_code=404, detail=f"Servicio {servicio_id} no encontrado")
+            
+            # Determinar precio
+            if precio_personalizado is not None and precio_personalizado > 0:
+                precio = float(precio_personalizado)
+                es_personalizado = True
+            else:
+                precios = servicio_db.get("precios", {})
+                if moneda_sede not in precios:
+                    raise HTTPException(status_code=400, detail=f"Servicio sin precio en {moneda_sede}")
+                precio = float(precios[moneda_sede])
+                es_personalizado = False
+            
+            valor_total += precio
+            
+            servicios_procesados.append({
+                "servicio_id": servicio_id,
+                "nombre": servicio_db.get("nombre"),
+                "precio_personalizado": es_personalizado,
+                "precio": round(precio, 2)
+            })
+        
+        # Actualizar servicios y totales
+        cambios["servicios"] = servicios_procesados
+        cambios["valor_total"] = round(valor_total, 2)
+        
+        # Recalcular saldo
+        abono_actual = cita_actual.get("abono", 0)
+        nuevo_saldo = round(valor_total - abono_actual, 2)
+        cambios["saldo_pendiente"] = nuevo_saldo
+        
+        # Recalcular estado de pago
+        if nuevo_saldo <= 0:
+            cambios["estado_pago"] = "pagado"
+        elif abono_actual > 0:
+            cambios["estado_pago"] = "abonado"
+        else:
+            cambios["estado_pago"] = "pendiente"
+
+    # ====================================
+    # ⭐ Actualizar timestamp
+    # ====================================
+    cambios["ultima_actualizacion"] = datetime.now()
+
+    # ====================================
+    # Ejecutar actualización
+    # ====================================
+    result = await collection_citas.update_one(
+        {"_id": ObjectId(cita_id)},
+        {"$set": cambios}
+    )
 
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
 
-    cita = await resolve_cita_by_id(cita_id)
-    if cita:
-        normalize_cita_doc(cita)
-    return {"success": True, "cita": cita}
+    # Obtener cita actualizada
+    cita_actualizada = await collection_citas.find_one({"_id": ObjectId(cita_id)})
+    normalize_cita_doc(cita_actualizada)
+    
+    return {"success": True, "cita": cita_actualizada}
 
 # =============================================================
 # 🔹 CANCELAR CITA
@@ -1049,6 +1192,7 @@ async def no_asistio(cita_id: str, current_user: dict = Depends(get_current_user
 
 # =============================================================
 # 🔹 OBTENER FICHAS POR CLIENTE (con filtros inteligentes)
+# ⭐ ACTUALIZADO PARA SOPORTAR MÚLTIPLES SERVICIOS
 # =============================================================
 @router.get("/fichas", response_model=dict)
 async def obtener_fichas_por_cliente(
@@ -1135,15 +1279,55 @@ async def obtener_fichas_por_cliente(
         datos_especificos = ficha.get("datos_especificos", {})
         cita_id_ficha = datos_especificos.get("cita_id") if isinstance(datos_especificos, dict) else None
         
+        # ⭐ NUEVA LÓGICA: Manejar múltiples servicios
+        servicios_ficha = ficha.get("servicios", [])
+        servicio_id_principal = ficha.get("servicio_id")  # Compatibilidad
+        
+        # Si tiene array de servicios (nuevo formato)
+        if servicios_ficha and isinstance(servicios_ficha, list):
+            # Enriquecer todos los servicios
+            servicios_enriquecidos = []
+            for serv in servicios_ficha:
+                servicio_db = await collection_servicios.find_one(
+                    {"servicio_id": serv.get("servicio_id")}
+                )
+                servicios_enriquecidos.append({
+                    "servicio_id": serv.get("servicio_id"),
+                    "nombre": serv.get("nombre") or (servicio_db.get("nombre") if servicio_db else "Desconocido"),
+                    "precio": serv.get("precio", 0)
+                })
+        
+        # Si solo tiene servicio_id único (formato antiguo)
+        elif servicio_id_principal:
+            servicio_db = await collection_servicios.find_one(
+                {"servicio_id": servicio_id_principal}
+            )
+            servicios_enriquecidos = [{
+                "servicio_id": servicio_id_principal,
+                "nombre": servicio_db.get("nombre") if servicio_db else "Desconocido",
+                "precio": ficha.get("precio", 0)
+            }]
+        
+        else:
+            servicios_enriquecidos = []
+        
+        # Construir objeto de respuesta
         ficha_norm = {
             "id": str(ficha.get("_id")),
-            "cita_id": cita_id_ficha,  # Ahora desde datos_especificos
+            "cita_id": cita_id_ficha,
             "cliente_id": ficha.get("cliente_id"),
             "nombre": ficha.get("nombre"),
             "apellido": ficha.get("apellido"),
             "telefono": ficha.get("telefono"),
             "cedula": ficha.get("cedula"),
-            "servicio_id": ficha.get("servicio_id"),
+            
+            # ⭐ CAMBIO: Ahora devuelve array de servicios
+            "servicios": servicios_enriquecidos,
+            
+            # ⭐ COMPATIBILIDAD: Mantener campos antiguos
+            "servicio_id": servicio_id_principal,
+            "servicio_nombre": servicios_enriquecidos[0]["nombre"] if servicios_enriquecidos else None,
+            
             "profesional_id": ficha.get("profesional_id"),
             "sede_id": ficha.get("sede_id"),
             "fecha_ficha": ficha.get("fecha_ficha"),
@@ -1152,13 +1336,10 @@ async def obtener_fichas_por_cliente(
             "precio": ficha.get("precio"),
             "estado": ficha.get("estado"),
             "estado_pago": ficha.get("estado_pago"),
-            "contenido": datos_especificos,  # Todo el objeto datos_especificos
+            "contenido": datos_especificos,
         }
 
-        # Enriquecimiento
-        servicio = await collection_servicios.find_one(
-            {"servicio_id": ficha.get("servicio_id")}
-        )
+        # Enriquecimiento de profesional y sede
         profesional = await collection_estilista.find_one(
             {"profesional_id": ficha.get("profesional_id")}
         )
@@ -1166,7 +1347,6 @@ async def obtener_fichas_por_cliente(
             {"sede_id": ficha.get("sede_id")}
         )
 
-        ficha_norm["servicio_nombre"] = servicio.get("nombre") if servicio else None
         ficha_norm["profesional_nombre"] = profesional.get("nombre") if profesional else None
         ficha_norm["sede_nombre"] = sede.get("nombre") if sede else None
 
@@ -1182,7 +1362,8 @@ async def obtener_fichas_por_cliente(
     }
 
 # ============================================================
-# 📅 Obtener todas las citas del estilista autenticado new
+# 📅 Obtener todas las citas del estilista autenticado
+# ⭐ ACTUALIZADO PARA SOPORTAR MÚLTIPLES SERVICIOS
 # ============================================================
 @router.get("/citas/estilista", response_model=list)
 async def get_citas_estilista(
@@ -1220,7 +1401,9 @@ async def get_citas_estilista(
     respuesta = []
 
     for c in citas:
-
+        # -----------------------------------------
+        # 1. CLIENTE
+        # -----------------------------------------
         cliente = await collection_clients.find_one({"cliente_id": c.get("cliente_id")})
         cliente_data = {
             "cliente_id": c.get("cliente_id"),
@@ -1230,35 +1413,72 @@ async def get_citas_estilista(
             "email": cliente.get("email") if cliente else "",
         }
 
-        servicio = await collection_servicios.find_one({
-            "$or": [
-                {"servicio_id": c.get("servicio_id")},
-                {"unique_id": c.get("servicio_id")}
-            ]
-        })
-        servicio_data = {
-            "servicio_id": c.get("servicio_id"),
-            "nombre": servicio.get("nombre") if servicio else "Desconocido",
-            "precio": servicio.get("precio") if servicio else None
-        }
+        # -----------------------------------------
+        # ⭐ 2. SERVICIOS (NUEVA LÓGICA)
+        # -----------------------------------------
+        servicios_cita = c.get("servicios", [])
+        servicios_data = []
+        precio_total = 0  # ✅ INICIALIZAR AQUÍ
 
+        # Si tiene array de servicios (nuevo formato)
+        if servicios_cita and isinstance(servicios_cita, list):
+            for serv_item in servicios_cita:
+                servicio_id = serv_item.get("servicio_id")
+                
+                # Buscar info del servicio en BD
+                servicio_db = await collection_servicios.find_one({
+                    "$or": [
+                        {"servicio_id": servicio_id},
+                        {"unique_id": servicio_id}
+                    ]
+                })
+                
+                # Determinar precio (personalizado o de BD)
+                if serv_item.get("precio_personalizado") is not None:
+                    precio = float(serv_item.get("precio_personalizado"))
+                else:
+                    precio = float(servicio_db.get("precio", 0)) if servicio_db else 0
+                
+                precio_total += precio  # ✅ Suma correctamente
+                
+                servicios_data.append({
+                    "servicio_id": servicio_id,
+                    "nombre": serv_item.get("nombre") or (servicio_db.get("nombre") if servicio_db else "Desconocido"),
+                    "precio": precio,  # ✅ Asegurar que se envíe el precio correcto
+                    "precio_personalizado": serv_item.get("precio_personalizado") is not None
+                })
+
+        # -----------------------------------------
+        # 3. SEDE
+        # -----------------------------------------
         sede = await collection_locales.find_one({"sede_id": c.get("sede_id")})
         sede_data = {
             "sede_id": c.get("sede_id"),
             "nombre": sede.get("nombre") if sede else "Sede desconocida"
         }
 
+        # -----------------------------------------
+        # ⭐ 4. RESPUESTA CON SERVICIOS ENRIQUECIDOS
+        # -----------------------------------------
         respuesta.append({
             "cita_id": str(c.get("_id")),
             "cliente": cliente_data,
-            "servicio": servicio_data,
+            
+            # ⭐ NUEVO: Array de servicios
+            "servicios": servicios_data,
+            
             "sede": sede_data,
             "estilista_id": profesional_id,
             "fecha": c.get("fecha"),
             "hora_inicio": c.get("hora_inicio"),
             "hora_fin": c.get("hora_fin"),
             "estado": c.get("estado"),
-            "comentario": c.get("comentario", None)
+            "comentario": c.get("comentario", None),
+            
+            # ⭐ NUEVOS CAMPOS ÚTILES
+            "precio_total": precio_total,
+            "cantidad_servicios": len(servicios_data),
+            "tiene_precio_personalizado": any(s["precio_personalizado"] for s in servicios_data)
         })
 
     return respuesta
@@ -1282,10 +1502,28 @@ async def crear_ficha(
     fotos_despues: Optional[List[UploadFile]] = File(None),
     current_user: dict = Depends(get_current_user)
 ):
-
-    print("📸 Fotos antes recibidas:", fotos_antes)
-    print("📸 Fotos después recibidas:", fotos_despues)
     print("📝 Data recibida:", data.dict())
+
+    # ------------------------------
+    # ⭐ COMPATIBILIDAD: Determinar servicio(s)
+    # ------------------------------
+    servicios_lista = []
+    servicio_id_principal = None
+    
+    # Caso 1: Viene servicios (array) - NUEVO FORMATO
+    if data.servicios and len(data.servicios) > 0:
+        servicios_lista = data.servicios
+        servicio_id_principal = data.servicios[0].servicio_id
+        print(f"✅ Usando servicios (array): {[s.servicio_id for s in servicios_lista]}")
+    
+    # Caso 2: Viene servicio_id único - FORMATO ANTIGUO
+    elif data.servicio_id:
+        servicios_lista = [ServicioEnFicha(servicio_id=data.servicio_id)]
+        servicio_id_principal = data.servicio_id
+        print(f"✅ Usando servicio_id único: {servicio_id_principal}")
+    
+    else:
+        raise HTTPException(400, "Debe especificar al menos un servicio")
 
     # ------------------------------
     # VALIDAR
@@ -1297,14 +1535,27 @@ async def crear_ficha(
     if not cliente:
         raise HTTPException(404, "Cliente no encontrado")
 
-    servicio = await collection_servicios.find_one({
-        "$or": [
-            {"servicio_id": data.servicio_id},
-            {"unique_id": data.servicio_id}
-        ]
-    })
-    if not servicio:
-        raise HTTPException(404, "Servicio no encontrado")
+    # ⭐ VALIDAR TODOS LOS SERVICIOS
+    servicios_validados = []
+    precio_total = 0
+    
+    for servicio_item in servicios_lista:
+        servicio = await collection_servicios.find_one({
+            "$or": [
+                {"servicio_id": servicio_item.servicio_id},
+                {"unique_id": servicio_item.servicio_id}
+            ]
+        })
+        if not servicio:
+            raise HTTPException(404, f"Servicio {servicio_item.servicio_id} no encontrado")
+        
+        servicios_validados.append({
+            "servicio_id": servicio_item.servicio_id,
+            "nombre": servicio.get("nombre"),
+            "precio": servicio_item.precio or servicio.get("precio", 0)
+        })
+        
+        precio_total += servicio_item.precio or servicio.get("precio", 0)
 
     profesional = await collection_estilista.find_one({
         "profesional_id": data.profesional_id
@@ -1322,7 +1573,6 @@ async def crear_ficha(
     urls_antes = []
     if fotos_antes:
         for foto in fotos_antes:
-            print("⬆️ Subiendo foto ANTES:", foto.filename)
             url = upload_to_s3(
                 foto,
                 f"companies/{sede.get('company_id','default')}/clients/{data.cliente_id}/fichas/{data.tipo_ficha}/antes"
@@ -1332,7 +1582,6 @@ async def crear_ficha(
     urls_despues = []
     if fotos_despues:
         for foto in fotos_despues:
-            print("⬆️ Subiendo foto DESPUÉS:", foto.filename)
             url = upload_to_s3(
                 foto,
                 f"companies/{sede.get('company_id','default')}/clients/{data.cliente_id}/fichas/{data.tipo_ficha}/despues"
@@ -1344,19 +1593,22 @@ async def crear_ficha(
     # ------------------------------
     respuestas_final = data.respuestas
 
-    # si vienen dentro de datos_especificos
     if "respuestas" in data.datos_especificos:
         respuestas_final = data.datos_especificos.get("respuestas", [])
 
     # ------------------------------
-    # OBJETO FINAL
+    # ⭐ OBJETO FINAL CON SERVICIOS
     # ------------------------------
     ficha = {
         "_id": ObjectId(),
         "cliente_id": data.cliente_id,
         "sede_id": data.sede_id,
-        "servicio_id": data.servicio_id,
-        "servicio_nombre": data.servicio_nombre or servicio.get("nombre"),
+        
+        # ⭐ COMPATIBILIDAD: Guardar ambos formatos
+        "servicio_id": servicio_id_principal,  # Para queries antiguas
+        "servicios": servicios_validados,  # NUEVO: Lista completa
+        
+        "servicio_nombre": servicios_validados[0]["nombre"],  # Primer servicio
         "profesional_id": data.profesional_id,
         "profesional_nombre": data.profesional_nombre or profesional.get("nombre"),
         "sede_nombre": sede.get("nombre"),
@@ -1370,7 +1622,7 @@ async def crear_ficha(
         "cedula": data.cedula or cliente.get("cedula"),
         "telefono": data.telefono or cliente.get("telefono"),
 
-        "precio": data.precio or servicio.get("precio", 0),
+        "precio": data.precio or precio_total,  # ⭐ Suma de todos los servicios
         "estado": data.estado,
         "estado_pago": data.estado_pago,
 

@@ -134,7 +134,7 @@ async def listar_clientes(
 
 
 # ============================================================
-# LISTAR TODOS LOS CLIENTES (SUPER ADMIN Y CLIENTES GLOBALES)
+# LISTAR TODOS LOS CLIENTES (UNIVERSAL: SUPER ADMIN, SEDES GLOBALES Y SEDES LOCALES)
 # ============================================================
 
 @router.get("/todos", response_model=ClientesPaginados)
@@ -148,13 +148,13 @@ async def listar_todos(
         rol = current_user.get("rol")
         
         # Validar roles permitidos
-        if rol not in ["super_admin", "admin_sede"]:
+        if rol not in ["super_admin", "admin_sede", "estilista"]:
             raise HTTPException(403, "No autorizado")
 
         query = {}
         
         # Lógica según el rol
-        if rol == "admin_sede":
+        if rol in ["admin_sede", "estilista"]:
             sede_id = current_user.get("sede_id")
             
             if not sede_id:
@@ -166,14 +166,15 @@ async def listar_todos(
             if not sede_info:
                 raise HTTPException(404, "Sede no encontrada")
             
-            # Si es sede global, traer clientes con sede_id null
-            # Si no es global, no debería usar este endpoint
+            # 🔥 LÓGICA UNIVERSAL:
             if sede_info.get("es_global") == True:
+                # Sede GLOBAL: traer clientes con sede_id null
                 query["sede_id"] = None
             else:
-                raise HTTPException(403, "Solo sedes globales pueden acceder a este endpoint")
+                # Sede LOCAL/INTERNACIONAL: traer clientes de esa sede específica
+                query["sede_id"] = sede_id
         
-        # Si es super_admin, no aplica filtro de sede (trae todos)
+        # Si es super_admin, no aplica filtro de sede (trae todos los clientes)
         
         # Aplicar filtros de búsqueda si existen
         if filtro:
@@ -259,10 +260,12 @@ async def obtener_cliente(
 ):
     try:
         rol = current_user.get("rol")
+        user_sede_id = current_user.get("sede_id")
 
         if rol not in ["admin_sede", "admin_franquicia", "super_admin", "estilista"]:
-            raise HTTPException(403, "No autorizado")
+            raise HTTPException(status_code=403, detail="No autorizado")
 
+        # 1️⃣ Buscar cliente por cliente_id o _id
         cliente = await collection_clients.find_one({"cliente_id": id})
 
         if not cliente:
@@ -272,17 +275,39 @@ async def obtener_cliente(
                 pass
 
         if not cliente:
-            raise HTTPException(404, "Cliente no encontrado")
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
+        # 2️⃣ Reglas de acceso SOLO para admin_sede / estilista
         if rol in ["admin_sede", "estilista"]:
-            if cliente.get("sede_id") != current_user.get("sede_id"):
-                raise HTTPException(403, "No autorizado")
+            cliente_sede_id = cliente.get("sede_id")
 
+            # ✅ Cliente sin sede → permitido
+            if cliente_sede_id is None:
+                return cliente_to_dict(cliente)
+
+            # 3️⃣ Validar sede del cliente
+            sede_cliente = await collection_locales.find_one(
+                {"sede_id": cliente_sede_id},
+                {"es_global": 1}
+            )
+
+            # ✅ Si la sede del cliente es global → permitido
+            if sede_cliente and sede_cliente.get("es_global") is True:
+                return cliente_to_dict(cliente)
+
+            # ❌ Sede internacional: debe coincidir con la del usuario
+            if cliente_sede_id != user_sede_id:
+                raise HTTPException(status_code=403, detail="No autorizado")
+
+        # 4️⃣ Roles altos pasan directo
         return cliente_to_dict(cliente)
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error obteniendo cliente: {e}")
-        raise HTTPException(500, "Error al obtener cliente")
+        logger.error(f"Error obteniendo cliente {id}: {e}")
+        raise HTTPException(status_code=500, detail="Error al obtener cliente")
+
 
 
 # ============================================================
