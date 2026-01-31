@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, validator
 from datetime import datetime, time, date
 from typing import Optional, List, Dict, Any
 
@@ -45,50 +45,72 @@ class Bloqueo(BaseModel):
     hora_fin: str
     motivo: Optional[str] = None
 
+class ServicioEnCita(BaseModel):
+    servicio_id: str
+    precio_personalizado: Optional[float] = None  # Puede ser None, 0, o un número positivo
+    
+    @validator('precio_personalizado')
+    def validar_precio(cls, v):
+        # Si es 0, convertir a None (significa "usar precio de BD")
+        if v is not None and v == 0:
+            return None
+        return v
 
 # === CITA ===
 class Cita(BaseModel):
-    sede_id: str
     cliente_id: str
-    profesional_id: str    # <── CORREGIDO
-    servicio_id: str
+    profesional_id: str
+    sede_id: str
+    servicios: List[ServicioEnCita]  # ⭐ NUEVO: Lista de servicios con precios opcionales
     fecha: date
     hora_inicio: str
     hora_fin: str
-    estado: str
-    metodo_pago_inicial: Optional[str] = None
+    estado: Optional[str] = "pendiente"  # pendiente | confirmada | cancelada | completada
+    metodo_pago_inicial: Optional[str] = "sin_pago"
     abono: Optional[float] = 0
+    notas: Optional[str] = None
+
+class ServicioEnFicha(BaseModel):
+    """Servicio dentro de una ficha técnica"""
+    servicio_id: str
+    nombre: Optional[str] = None
+    precio: Optional[float] = None
+
 
 class FichaCreate(BaseModel):
     cliente_id: str
-    servicio_id: str
-    profesional_id: str
     sede_id: str
-    tipo_ficha: str
-
+    profesional_id: str
+    
+    # ⭐ CAMBIO: Ahora puede recibir uno o múltiples servicios
+    servicio_id: Optional[str] = None  # Mantener para compatibilidad
+    servicios: Optional[List[ServicioEnFicha]] = None  # NUEVO
+    
     servicio_nombre: Optional[str] = None
     profesional_nombre: Optional[str] = None
+    
     fecha_ficha: Optional[str] = None
-    fecha_reserva: Optional[str] = None
-
+    fecha_reserva: str
+    
     email: Optional[str] = None
     nombre: Optional[str] = None
     apellido: Optional[str] = None
     cedula: Optional[str] = None
     telefono: Optional[str] = None
-
-    precio: Optional[float] = 0
-    estado: Optional[str] = "pendiente"
-    estado_pago: Optional[str] = "pendiente"
-
-    datos_especificos: Optional[Dict[str, Any]] = {}
-    respuestas: Optional[List[Dict[str, Any]]] = []
+    
+    precio: Optional[float] = None
+    estado: str = "completada"
+    estado_pago: str = "pendiente"
+    
+    tipo_ficha: str
+    datos_especificos: Dict[str, Any] = {}
     descripcion_servicio: Optional[str] = None
-
+    respuestas: Optional[List[Dict]] = []
+    
     fotos_antes: Optional[List[str]] = []
     fotos_despues: Optional[List[str]] = []
-
-    autorizacion_publicacion: Optional[bool] = False
+    
+    autorizacion_publicacion: bool = False
     comentario_interno: Optional[str] = None
 
     class Config:
