@@ -5,7 +5,6 @@ import { Sidebar } from "../../../components/Layout/Sidebar";
 import { ServicesList } from "./services-list";
 import { ServiceFormModal } from "./service-form-modal";
 import { ServiceFilters } from "./service-filters";
-import { Button } from "../../../components/ui/button";
 import { Plus, Loader } from "lucide-react";
 import type { Service } from "../../../types/service";
 import { serviciosService } from "./serviciosService";
@@ -26,7 +25,6 @@ export default function ServicesPage() {
 
   const { user, isLoading: authLoading } = useAuth();
 
-  // Cargar servicios desde la API
   const loadServices = async () => {
     if (!user?.access_token) {
       setError('No hay token de autenticación disponible');
@@ -38,7 +36,6 @@ export default function ServicesPage() {
       setIsLoading(true);
       setError(null);
       const servicesData = await serviciosService.getServicios(user.access_token);
-      console.log('📥 Servicios recibidos del backend:', servicesData);
       setServices(servicesData);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al cargar los servicios');
@@ -75,7 +72,6 @@ export default function ServicesPage() {
       setError(null);
 
       if (selectedService) {
-        // Actualizar servicio existente - SIN descripcion
         await serviciosService.updateServicio(
           user.access_token,
           selectedService.id,
@@ -90,7 +86,6 @@ export default function ServicesPage() {
           }
         );
       } else {
-        // Crear nuevo servicio - SIN descripcion
         await serviciosService.createServicio(user.access_token, {
           nombre: service.nombre,
           duracion_minutos: service.duracion,
@@ -102,7 +97,6 @@ export default function ServicesPage() {
         });
       }
 
-      // Recargar la lista
       await loadServices();
       setIsModalOpen(false);
       setSelectedService(null);
@@ -149,68 +143,60 @@ export default function ServicesPage() {
     return matchSearch && matchCategoria && matchActivo;
   });
 
-  // Mostrar loading mientras se verifica la autenticación
   if (authLoading || isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
-        <div className="flex items-center gap-3">
-          <Loader className="h-6 w-6 animate-spin text-blue-600" />
-          <span className="text-lg text-gray-600">
-            {authLoading ? "Verificando autenticación..." : "Cargando servicios..."}
-          </span>
-        </div>
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader className="h-5 w-5 animate-spin" />
       </div>
     );
   }
 
-  // Si no hay usuario autenticado
   if (!user) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+      <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">
-          <div className="text-red-600 text-lg mb-4">No autenticado</div>
-          <div className="text-gray-600">Por favor inicia sesión para acceder a esta página</div>
+          <div className="mb-2">No autenticado</div>
+          <div className="text-sm text-gray-600">Inicia sesión para continuar</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50">
+    <div className="flex min-h-screen">
       <Sidebar />
 
-      <main className="flex-1 overflow-y-auto">
-        <div className="p-8">
+      <main className="flex-1 overflow-auto">
+        <div className="mx-auto max-w-6xl px-4 py-8">
           {/* Header */}
           <div className="mb-8 flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">Servicios</h1>
+              <h1 className="text-xl font-medium">Servicios</h1>
               <p className="mt-1 text-sm text-gray-600">
-                Gestiona todos los servicios de tu salón
+                {filteredServices.length} de {services.length} servicios
               </p>
             </div>
 
-            <Button
+            <button
               onClick={handleAddService}
-              className="bg-[oklch(0.55_0.25_280)] hover:bg-[oklch(0.50_0.25_280)]"
+              className="flex items-center gap-1 px-3 py-1.5 border border-black text-sm hover:bg-gray-50"
             >
-              <Plus className="mr-2 h-4 w-4" /> Añadir servicio
-            </Button>
+              <Plus className="w-4 h-4" />
+              Añadir servicio
+            </button>
           </div>
 
           {/* Error Message */}
           {error && (
-            <div className="mb-6 rounded-lg bg-red-50 p-4">
-              <div className="flex items-center">
-                <div className="text-sm text-red-700">
-                  {error}
-                  <button 
-                    onClick={loadServices}
-                    className="ml-2 font-medium text-red-800 hover:text-red-900 underline"
-                  >
-                    Reintentar
-                  </button>
-                </div>
+            <div className="mb-6 p-3 border border-red-300 bg-red-50">
+              <div className="text-sm text-red-800">
+                {error}
+                <button 
+                  onClick={loadServices}
+                  className="ml-2 font-medium underline"
+                >
+                  Reintentar
+                </button>
               </div>
             </div>
           )}
@@ -230,7 +216,6 @@ export default function ServicesPage() {
         </div>
       </main>
 
-      {/* Modal */}
       <ServiceFormModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}

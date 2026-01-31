@@ -22,4 +22,33 @@ export const updateCita = async (citaId: string, cambios: any, token: string) =>
     console.error('Error en updateCita:', error);
     throw error;
   }
+
+};
+// En tu archivo citasApi.ts
+export const registrarPagoCita = async (
+  citaId: string,
+  pagoData: {
+    monto: number;
+    metodo_pago: string;
+  },
+  token: string
+) => {
+  const response = await fetch(
+    `${API_BASE_URL}scheduling/quotes/citas/${citaId}/pago`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(pagoData)
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.detail || 'Error al registrar pago');
+  }
+
+  return await response.json();
 };

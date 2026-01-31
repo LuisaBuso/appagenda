@@ -1,112 +1,98 @@
-"use client";
+"use client"
 
-import { Card } from "../../../components/ui/card";
-import { Badge } from "../../../components/ui/badge";
-import { Button } from "../../../components/ui/button";
-import { Pencil, Trash2, Clock, Euro } from "lucide-react";
-import type { Service } from "../../../types/service";
+import { Clock, DollarSign, Percent, Tag, Pencil, Trash2 } from 'lucide-react'
+import type { Service } from "../../../types/service"
 
 interface ServicesListProps {
-  services: Service[];
-  onEdit: (service: Service) => void;
-  onDelete: (id: string) => void;
+  services: Service[]
+  onEdit: (service: Service) => void
+  onDelete: (id: string) => void
 }
 
 export function ServicesList({ services, onEdit, onDelete }: ServicesListProps) {
-  if (services.length === 0) {
+  const getSafeValue = (obj: any, key: string, defaultValue: string = '') => {
+    return obj && obj[key] !== undefined && obj[key] !== null ? obj[key] : defaultValue;
+  };
+
+  const validServices = services.filter(service => service && service.id);
+
+  if (validServices.length === 0) {
     return (
-      <div className="flex h-64 items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-white">
-        <div className="text-center">
-          <p className="text-lg font-medium text-gray-900">No se encontraron servicios</p>
-          <p className="mt-1 text-sm text-gray-500">
-            Intenta ajustar los filtros o añade un nuevo servicio
-          </p>
-        </div>
+      <div className="text-center py-8">
+        <p className="text-gray-600 text-sm">No hay servicios</p>
       </div>
     );
   }
 
   return (
-    <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-      {services.map((service) => (
-        <Card
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+      {validServices.map((service) => (
+        <div
           key={service.id}
-          className="rounded-xl border bg-white p-5 shadow-sm transition-all hover:shadow-lg"
+          className="border p-3 hover:bg-gray-50 flex flex-col"
         >
-          {/* Header: Categoría + Estado */}
-          <div className="mb-3 flex items-center justify-between">
-            <Badge variant="outline" className="text-xs">
-              {service.categoria}
-            </Badge>
-
-            <Badge
-              variant="default"
-              className={`${service.activo ? "bg-green-500" : "bg-gray-400"}`}
-            >
-              {service.activo ? "Activo" : "Inactivo"}
-            </Badge>
+          <div className="flex-1">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-medium text-sm truncate">{getSafeValue(service, 'nombre')}</h3>
+              <span className={`text-xs px-1.5 py-0.5 ml-1 flex-shrink-0 ${
+                service.activo 
+                  ? 'bg-gray-100' 
+                  : 'bg-gray-200'
+              }`}>
+                {service.activo ? 'Activo' : 'Inactivo'}
+              </span>
+            </div>
+            
+            <div className="space-y-1.5">
+              <div className="flex items-center text-xs text-gray-600">
+                <Tag className="h-3 w-3 mr-1.5 flex-shrink-0" />
+                <span className="truncate">{getSafeValue(service, 'categoria')}</span>
+              </div>
+              
+              <div className="flex items-center text-xs text-gray-600">
+                <DollarSign className="h-3 w-3 mr-1.5 flex-shrink-0" />
+                <span>${service.precio?.toLocaleString() || '0'}</span>
+              </div>
+              
+              <div className="flex items-center text-xs text-gray-600">
+                <Clock className="h-3 w-3 mr-1.5 flex-shrink-0" />
+                <span>{service.duracion} min</span>
+              </div>
+              
+              <div className="flex items-center text-xs text-gray-600">
+                <Percent className="h-3 w-3 mr-1.5 flex-shrink-0" />
+                <span>{service.comision_porcentaje}% comisión</span>
+              </div>
+            </div>
+            
+            {service.requiere_producto && (
+              <div className="text-xs text-gray-500 mt-2 pt-1.5 border-t">
+                Requiere producto
+              </div>
+            )}
           </div>
-
-          {/* Nombre del servicio */}
-          <h3 className="mb-1 text-lg font-semibold text-gray-900">{service.nombre}</h3>
-
-          {/* Descripción */}
-          <p className="mb-4 text-sm text-gray-600 line-clamp-2">
-            {service.descripcion || `Servicio de ${service.categoria.toLowerCase()}`}
-          </p>
-
-          {/* Detalles del servicio */}
-          <div className="mb-5 space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className="flex items-center gap-1 text-gray-600">
-                <Euro className="h-4 w-4" />
-                Precio
-              </span>
-              <span className="font-semibold text-gray-900">
-                €{service.precio}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between text-sm">
-              <span className="flex items-center gap-1 text-gray-600">
-                <Clock className="h-4 w-4" />
-                Duración
-              </span>
-              <span className="font-semibold text-gray-900">
-                {service.duracion} min
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-600">Comisión</span>
-              <span className="font-semibold text-[oklch(0.55_0.25_280)]">
-                {service.comision_porcentaje}%
-              </span>
-            </div>
-          </div>
-
-          {/* Acciones */}
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="flex-1 border-gray-300"
+          
+          <div className="flex justify-end gap-1 mt-3 pt-2 border-t">
+            <button
               onClick={() => onEdit(service)}
+              className="p-0.5 hover:bg-gray-100 text-gray-600"
+              title="Editar"
             >
-              <Pencil className="mr-1 h-3 w-3" />
-              Editar
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
-              onClick={() => onDelete(service.id)}
+              <Pencil className="h-3 w-3" />
+            </button>
+            <button
+              onClick={() => {
+                if (window.confirm('¿Eliminar servicio?')) {
+                  onDelete(service.id);
+                }
+              }}
+              className="p-0.5 hover:bg-gray-100 text-gray-600"
+              title="Eliminar"
             >
               <Trash2 className="h-3 w-3" />
-            </Button>
+            </button>
           </div>
-        </Card>
+        </div>
       ))}
     </div>
   );

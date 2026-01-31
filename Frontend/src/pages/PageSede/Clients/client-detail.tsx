@@ -3,7 +3,7 @@ import { ArrowLeft, Image as ImageIcon, X, Calendar, MapPin, User, FileText, Tag
 import { Button } from "../../../components/ui/button"
 import type { Cliente } from "../../../types/cliente"
 import { EditClientModal } from "./EditClientModal"
-import { generarPDFFicha, type FichaPDFData } from "../../../lib/pdfGenerator"
+import { API_BASE_URL } from "../../../types/config"
 
 interface ClientDetailProps {
   client: Cliente
@@ -11,14 +11,13 @@ interface ClientDetailProps {
   onClientUpdated?: () => void
 }
 
-// 🔥 INTERFAZ EXTENDIDA PARA LAS FICHAS
+// 🔥 INTERFAZ EXTENDIDA PARA LAS FICHAS - ACTUALIZADA
 interface FichaExtendida {
   _id: string;
   cliente_id: string;
   servicio_nombre: string;
   servicio: string;
   profesional_nombre?: string;
-  estilista?: string;
   sede_nombre?: string;
   sede?: string;
   local?: string;
@@ -33,9 +32,9 @@ interface FichaExtendida {
     antes_urls?: string[];
     despues_urls?: string[];
   };
-  // 🔥 NUEVAS PROPIEDADES PARA DIAGNÓSTICO
   tipo_ficha?: string;
   datos_especificos?: {
+    cita_id?: string;
     plasticidad?: string;
     permeabilidad?: string;
     porosidad?: string;
@@ -64,12 +63,9 @@ interface FichaExtendida {
 function fixImageUrl(url: string | undefined): string {
   if (!url) return '';
   
-  // 1. Convertir http:// a https://
   let fixedUrl = url.replace(/^http:\/\//i, 'https://');
   
-  // 2. Si es un dominio S3 problemático, intentar usar una versión segura
   if (fixedUrl.includes('rf.images.s3.us-east-1.amazonaws.com')) {
-    // Verificar si ya tiene https
     if (!fixedUrl.startsWith('https://')) {
       fixedUrl = 'https://' + fixedUrl.replace(/^https?:\/\//, '');
     }
@@ -85,18 +81,13 @@ function isSecureUrl(url: string): boolean {
 
 // 🔥 FUNCIÓN PARA OBTENER IMAGEN SEGURA
 function getSecureImageUrl(url: string): string {
-  // Si ya es segura, devolver tal cual
   if (isSecureUrl(url)) {
     return url;
   }
   
-  // Intentar arreglar URL insegura
   const fixedUrl = fixImageUrl(url);
   
-  // Si después de arreglar sigue siendo insegura, usar placeholder
   if (!isSecureUrl(fixedUrl)) {
-    // 🔥 CORRECCIÓN: Usar placeholder local en lugar de via.placeholder.com
-    // que está dando problemas de DNS
     return 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjEwMCIgeT0iNzUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxMiIgZmlsbD0iIzZCNzI4MCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9IjAuM2VtIj5TaW4gaW1hZ2VuPC90ZXh0Pjwvc3ZnPg==';
   }
   
@@ -106,6 +97,11 @@ function getSecureImageUrl(url: string): string {
 export function ClientDetail({ client, onBack, onClientUpdated }: ClientDetailProps) {
   const [showImagesModal, setShowImagesModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
+  const [showPDFModal, setShowPDFModal] = useState<{
+    show: boolean;
+    ficha: FichaExtendida | null;
+    fichaId: string | null;
+  }>({ show: false, ficha: null, fichaId: null })
   const [selectedImages, setSelectedImages] = useState<{
     antes?: string,
     despues?: string,
@@ -115,6 +111,7 @@ export function ClientDetail({ client, onBack, onClientUpdated }: ClientDetailPr
   const [isGeneratingPDF, setIsGeneratingPDF] = useState<string | null>(null)
   const [expandedFichas, setExpandedFichas] = useState<Set<string>>(new Set())
 
+
   const openImagesModal = (ficha: FichaExtendida) => {
     let antesUrl = ficha.antes_url ? getSecureImageUrl(ficha.antes_url) : '';
     let despuesUrl = ficha.despues_url ? getSecureImageUrl(ficha.despues_url) : '';
@@ -123,12 +120,10 @@ export function ClientDetail({ client, onBack, onClientUpdated }: ClientDetailPr
 
     if (ficha.fotos) {
       if (ficha.fotos.antes && Array.isArray(ficha.fotos.antes) && ficha.fotos.antes.length > 0) {
-        // 🔥 ARREGLAR TODAS LAS URLs DE ANTES
         todasAntes = ficha.fotos.antes.map(url => getSecureImageUrl(url));
         antesUrl = todasAntes[0];
       }
       if (ficha.fotos.despues && Array.isArray(ficha.fotos.despues) && ficha.fotos.despues.length > 0) {
-        // 🔥 ARREGLAR TODAS LAS URLs DE DESPUÉS
         todasDespues = ficha.fotos.despues.map(url => getSecureImageUrl(url));
         despuesUrl = todasDespues[0];
       }
@@ -148,6 +143,14 @@ export function ClientDetail({ client, onBack, onClientUpdated }: ClientDetailPr
     setSelectedImages({})
   }
 
+  const openPDFModal = (ficha: FichaExtendida, fichaId: string) => {
+    setShowPDFModal({ show: true, ficha, fichaId });
+  }
+
+  const closePDFModal = () => {
+    setShowPDFModal({ show: false, ficha: null, fichaId: null });
+  }
+
   const handleEditClick = () => {
     setShowEditModal(true)
   }
@@ -158,11 +161,99 @@ export function ClientDetail({ client, onBack, onClientUpdated }: ClientDetailPr
     }
   }
 
-  // 🔥 SOLUCIÓN DEFINITIVA - CONVERSIÓN MANUAL SIN PROBLEMAS DE ZONA HORARIA
-  const formatFechaCorregida = (fecha: string) => {
-    if (!fecha) return '';
+  // 🔥 FUNCIÓN PARA DESCARGA DE PDF
+  const handleDownloadPDF = async (ficha: FichaExtendida, fichaId: string) => {
+    try {
+      setIsGeneratingPDF(fichaId);
 
-    console.log(`🔍 Procesando: ${fecha}`);
+      // 🔍 Obtener ID de cita desde diferentes fuentes posibles
+      const citaId = ficha.datos_especificos?.cita_id;
+      
+      if (!citaId) {
+        // Intentar buscar en la lista de citas del cliente
+        const citaEnHistorial = client.historialCitas?.find(
+          (cita: any) => cita.servicio === (ficha.servicio_nombre || ficha.servicio)
+        );
+        
+        if (citaEnHistorial?.datos_completos?._id) {
+          const idCita = citaEnHistorial.datos_completos._id;
+          await descargarPDFConCitaId(idCita);
+        } else {
+          alert('⚠️ No se encontró información de la cita asociada. Contacte al administrador.');
+        }
+      } else {
+        await descargarPDFConCitaId(citaId);
+      }
+
+    } catch (error) {
+      console.error('Error generando PDF:', error);
+      alert('❌ Error al generar el PDF. Por favor, intenta de nuevo.');
+    } finally {
+      setIsGeneratingPDF(null);
+    }
+  };
+
+  // Función auxiliar para descargar usando cita_id
+  const descargarPDFConCitaId = async (citaId: string) => {
+    const token = sessionStorage.getItem('access_token');
+    if (!token) throw new Error('Token no encontrado');
+
+    const response = await fetch(
+      `${API_BASE_URL}api/pdf/generar-pdf/${client.id}/${citaId}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/pdf'
+        }
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Error ${response.status}: ${errorText}`);
+    }
+
+    await descargarArchivo(response);
+  };
+
+  // Función genérica para descargar el archivo
+  const descargarArchivo = async (response: Response) => {
+    const blob = await response.blob();
+    
+    // Verificar que sea un PDF válido
+    if (blob.size === 0 || !blob.type.includes('pdf')) {
+      throw new Error('El archivo recibido no es un PDF válido');
+    }
+
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    
+    // Crear nombre descriptivo
+    const timestamp = new Date().toISOString().split('T')[0];
+    const nombreCliente = client.nombre.replace(/\s+/g, '_').toLowerCase();
+    const servicio = (showPDFModal.ficha?.servicio_nombre || 'servicio')
+      .replace(/\s+/g, '_')
+      .toLowerCase()
+      .substring(0, 30);
+    
+    link.download = `comprobante_${nombreCliente}_${servicio}_${timestamp}.pdf`;
+    
+    // Descargar
+    document.body.appendChild(link);
+    link.click();
+    
+    // Limpiar
+    setTimeout(() => {
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    }, 100);
+  };
+
+  // 🔥 SOLUCIÓN DEFINITIVA - CONVERSIÓN MANUAL SIN PROBLEMAS DE ZONA HORARIA
+  const formatFechaCorrecida = (fecha: string) => {
+    if (!fecha) return '';
 
     try {
       // Extraer solo la parte de fecha YYYY-MM-DD
@@ -174,14 +265,12 @@ export function ClientDetail({ client, onBack, onClientUpdated }: ClientDetailPr
       // Verificar formato
       const partes = datePart.split('-');
       if (partes.length !== 3) {
-        console.log(`⚠️ Formato no reconocido, devolviendo original: ${fecha}`);
         return fecha;
       }
 
       const [year, month, day] = partes;
 
       // 🔥 CONVERSIÓN MANUAL - 100% SEGURA
-      // Convertir a números
       const diaNum = parseInt(day, 10);
       const mesNum = parseInt(month, 10) - 1; // Meses 0-11
       const añoNum = parseInt(year, 10);
@@ -196,75 +285,13 @@ export function ClientDetail({ client, onBack, onClientUpdated }: ClientDetailPr
         'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
       // Formatear manualmente
-      const resultado = `${diaNum} ${meses[mesNum]} ${añoNum}`;
-
-      console.log(`✅ Conversión manual: ${datePart} → ${resultado}`);
-      return resultado;
+      return `${diaNum} ${meses[mesNum]} ${añoNum}`;
 
     } catch (error) {
-      console.error('Error en formatFechaCorregida:', error);
+      console.error('Error en formatFechaCorrecida:', error);
       return fecha;
     }
   };
-
-  const handleDownloadPDF = async (ficha: FichaExtendida, fichaId: string) => {
-    try {
-      setIsGeneratingPDF(fichaId);
-
-      // Extraer información de diagnóstico si existe
-      let diagnosticoInfo = '';
-      if (ficha.datos_especificos) {
-        const datos = ficha.datos_especificos;
-        diagnosticoInfo = `
-🧪 DIAGNÓSTICO DE RIZOTIPO:
-
-${ficha.respuestas?.map((r) => `${r.pregunta}: ${r.respuesta}`).join('\n') || 'Sin datos'}
-
-📋 RECOMENDACIONES PERSONALIZADAS:
-${datos.recomendaciones_personalizadas || 'Sin recomendaciones'}
-
-✂️ FRECUENCIA DE CORTE:
-${datos.frecuencia_corte || 'No especificada'}
-
-💆 TÉCNICAS DE ESTILIZADO:
-${datos.tecnicas_estilizado || 'No especificadas'}
-
-🧴 PRODUCTOS SUGERIDOS:
-${datos.productos_sugeridos || 'No especificados'}
-        `.trim();
-      }
-
-      const pdfData: FichaPDFData = {
-        cliente: {
-          nombre: client.nombre,
-          email: client.email || '',
-          telefono: client.telefono || ''
-        },
-        ficha: {
-          servicio: ficha.servicio_nombre || ficha.servicio || 'Servicio',
-          fecha: formatFechaCorregida(ficha.fecha_ficha),
-          sede: ficha.sede_nombre || ficha.sede || ficha.local || 'Sin sede',
-          estilista: ficha.profesional_nombre || ficha.estilista || 'Sin estilista',
-          notas_cliente: ficha.notas_cliente || diagnosticoInfo || '',
-          comentario_interno: ficha.comentario_interno || ficha.datos_especificos?.recomendaciones_personalizadas || '',
-          antes_url: ficha.antes_url ? getSecureImageUrl(ficha.antes_url) : '',
-          despues_url: ficha.despues_url ? getSecureImageUrl(ficha.despues_url) : '',
-          fotos: ficha.fotos ? {
-            antes: ficha.fotos.antes?.map(url => getSecureImageUrl(url)),
-            despues: ficha.fotos.despues?.map(url => getSecureImageUrl(url))
-          } : undefined
-        }
-      }
-
-      await generarPDFFicha(pdfData);
-
-    } catch (error) {
-      console.error('Error generando PDF:', error);
-      alert('Error al generar el PDF. Por favor, intenta de nuevo.');
-    } finally {
-      setIsGeneratingPDF(null);
-    }
-  }
 
   const toggleFichaExpansion = (fichaId: string) => {
     const newExpanded = new Set(expandedFichas);
@@ -287,7 +314,7 @@ ${datos.productos_sugeridos || 'No especificados'}
       case 'muy baja':
         return <Droplets className="h-3 w-3 text-blue-500" />;
       case 'lanoso / ulótrico':
-        return <Scissors className="h-3 w-3 text-purple-500" />; // Usamos Scissors en lugar de Hair
+        return <Scissors className="h-3 w-3 text-purple-500" />;
       default:
         return <Info className="h-3 w-3 text-gray-400" />;
     }
@@ -359,7 +386,6 @@ ${datos.productos_sugeridos || 'No especificados'}
                         alt="Antes del servicio"
                         className="h-36 w-full object-cover"
                         onError={(e) => {
-                          // 🔥 CORRECCIÓN: Usar placeholder local en base64
                           e.currentTarget.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjIwMCIgeT0iMTUwIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2QjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIwLjNlbSI+U2luIGltYWdlbjwvdGV4dD48L3N2Zz4=';
                         }}
                       />
@@ -381,7 +407,6 @@ ${datos.productos_sugeridos || 'No especificados'}
                         alt="Después del servicio"
                         className="h-36 w-full object-cover"
                         onError={(e) => {
-                          // 🔥 CORRECCIÓN: Usar placeholder local en base64
                           e.currentTarget.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjIwMCIgeT0iMTUwIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2QjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIwLjNlbSI+U2luIGltYWdlbjwvdGV4dD48L3N2Zz4=';
                         }}
                       />
@@ -419,6 +444,79 @@ ${datos.productos_sugeridos || 'No especificados'}
                   </Button>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE CONFIRMACIÓN PARA PDF */}
+      {showPDFModal.show && showPDFModal.ficha && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-md rounded-lg bg-white p-4 shadow-lg">
+            <div className="flex items-start gap-3">
+              <div className="rounded-full bg-blue-50 p-2">
+                <AlertCircle className="h-5 w-5 text-blue-600" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-semibold text-gray-900 mb-1">
+                  Generar Comprobante PDF
+                </h3>
+                <p className="text-xs text-gray-600 mb-3">
+                  Se generará un PDF profesional con todos los detalles del servicio:
+                </p>
+                <ul className="text-xs text-gray-600 space-y-1 mb-4">
+                  <li>• Información del cliente</li>
+                  <li>• Detalles del servicio</li>
+                  <li>• Diagnóstico técnico (si aplica)</li>
+                  <li>• Fotografías (si están disponibles)</li>
+                  <li>• Información financiera</li>
+                </ul>
+                
+                {/* Información específica de la ficha */}
+                <div className="mt-3 p-2 bg-gray-50 rounded text-xs">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <span className="font-medium">Servicio:</span>
+                      <p className="text-gray-600 truncate">{showPDFModal.ficha.servicio_nombre || showPDFModal.ficha.servicio}</p>
+                    </div>
+                    <div>
+                      <span className="font-medium">Fecha:</span>
+                      <p className="text-gray-600">{formatFechaCorrecida(showPDFModal.ficha.fecha_ficha)}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="mt-4 flex justify-end gap-2">
+              <Button
+                onClick={closePDFModal}
+                variant="outline"
+                size="sm"
+                className="text-xs"
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={() => {
+                  if (showPDFModal.ficha && showPDFModal.fichaId) {
+                    handleDownloadPDF(showPDFModal.ficha, showPDFModal.fichaId);
+                    closePDFModal();
+                  }
+                }}
+                disabled={isGeneratingPDF === showPDFModal.fichaId}
+                className="bg-gray-900 hover:bg-gray-800 text-xs text-white disabled:opacity-50"
+                size="sm"
+              >
+                {isGeneratingPDF === showPDFModal.fichaId ? (
+                  <>
+                    <div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent mr-2" />
+                    Generando...
+                  </>
+                ) : (
+                  'Generar PDF'
+                )}
+              </Button>
             </div>
           </div>
         </div>
@@ -481,7 +579,7 @@ ${datos.productos_sugeridos || 'No especificados'}
               <div className="space-y-3">
                 {(client.fichas as FichaExtendida[]).map((ficha) => {
                   const servicioNombre = ficha.servicio_nombre || ficha.servicio || 'Servicio'
-                  const estilistaNombre = ficha.profesional_nombre || ficha.estilista || 'Sin estilista'
+                  const profesionalNombre = ficha.profesional_nombre || 'Sin profesional'
                   const sedeNombre = ficha.sede_nombre || ficha.sede || ficha.local || 'Sin sede'
                   const tieneDiagnostico = ficha.datos_especificos || (ficha.respuestas && ficha.respuestas.length > 0)
                   const isExpanded = expandedFichas.has(ficha._id)
@@ -492,7 +590,6 @@ ${datos.productos_sugeridos || 'No especificados'}
                     (ficha.fotos?.antes && Array.isArray(ficha.fotos.antes) && ficha.fotos.antes.length > 0) ||
                     (ficha.fotos?.despues && Array.isArray(ficha.fotos.despues) && ficha.fotos.despues.length > 0);
 
-                  // 🔥 ARREGLAR LAS URLs DE LAS IMÁGENES
                   const primeraAntes = ficha.antes_url ? getSecureImageUrl(ficha.antes_url) : (ficha.fotos?.antes?.[0] ? getSecureImageUrl(ficha.fotos.antes[0]) : '');
                   const primeraDespues = ficha.despues_url ? getSecureImageUrl(ficha.despues_url) : (ficha.fotos?.despues?.[0] ? getSecureImageUrl(ficha.fotos.despues[0]) : '');
 
@@ -515,7 +612,7 @@ ${datos.productos_sugeridos || 'No especificados'}
                           <div className="flex items-center gap-3 text-xs text-gray-500">
                             <div className="flex items-center gap-1">
                               <Calendar className="h-3 w-3" />
-                              {formatFechaCorregida(ficha.fecha_ficha)}
+                              {formatFechaCorrecida(ficha.fecha_ficha)}
                             </div>
                             <div className="flex items-center gap-1">
                               <MapPin className="h-3 w-3" />
@@ -525,7 +622,7 @@ ${datos.productos_sugeridos || 'No especificados'}
                         </div>
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => handleDownloadPDF(ficha, ficha._id)}
+                            onClick={() => openPDFModal(ficha, ficha._id)}
                             disabled={isGeneratingPDF === ficha._id}
                             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-gray-900 text-white rounded hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             title="Descargar PDF"
@@ -560,7 +657,7 @@ ${datos.productos_sugeridos || 'No especificados'}
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 text-xs text-gray-600">
                             <User className="h-3 w-3" />
-                            {estilistaNombre}
+                            {profesionalNombre}
                           </div>
                           {ficha.notas_cliente && ficha.notas_cliente.trim() !== '' && (
                             <div className="flex items-start gap-2 text-xs">
@@ -583,7 +680,6 @@ ${datos.productos_sugeridos || 'No especificados'}
                                       alt="Antes"
                                       className="h-full w-full object-cover"
                                       onError={(e) => {
-                                        // 🔥 CORRECCIÓN: Usar placeholder local en base64
                                         e.currentTarget.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjEwMCIgeT0iNzUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxMiIgZmlsbD0iIzZCNzI4MCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9IjAuM2VtIj5BbnRlczwvdGV4dD48L3N2Zz4=';
                                       }}
                                     />
@@ -602,7 +698,6 @@ ${datos.productos_sugeridos || 'No especificados'}
                                       alt="Después"
                                       className="h-full w-full object-cover"
                                       onError={(e) => {
-                                        // 🔥 CORRECCIÓN: Usar placeholder local en base64
                                         e.currentTarget.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjEwMCIgeT0iNzUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxMiIgZmlsbD0iIzZCNzI4MCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9IjAuM2VtIj5EZXNwdWVzPC90ZXh0Pjwvc3ZnPg==';
                                       }}
                                     />
@@ -808,8 +903,7 @@ ${datos.productos_sugeridos || 'No especificados'}
                         <tr key={index} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50/50">
                           <td className="px-3 py-2 text-gray-700 text-sm">{producto.producto}</td>
                           <td className="px-3 py-2 text-gray-500 text-sm">
-                            {/* 🔥 AQUÍ DEBES LLAMAR A formatFechaCorregida */}
-                            {formatFechaCorregida(producto.fecha)}
+                            {formatFechaCorrecida(producto.fecha)}
                           </td>
                           <td className="px-3 py-2">
                             <span className={`px-2 py-0.5 rounded text-xs ${producto.estado_pago === 'pagado'
