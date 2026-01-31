@@ -169,6 +169,86 @@ const fixS3Url = (url: string): string => {
 
 export const clientesService = {
 
+  async getAllClientes(token: string, limite: number = 500): Promise<Cliente[]> {
+    try {
+      console.log(`📋 Cargando TODOS los clientes...`);
+
+      // Primera petición para obtener metadata
+      const primeraRespuesta = await fetch(`${API_BASE_URL}clientes/todos?limite=${limite}&pagina=1`, {
+        method: 'GET',
+        headers: {
+          'accept': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!primeraRespuesta.ok) {
+        const errorText = await primeraRespuesta.text();
+        console.error(`❌ Error ${primeraRespuesta.status} en /clientes/todos:`, errorText);
+        throw new Error(`Error al obtener clientes: ${primeraRespuesta.status} ${primeraRespuesta.statusText}`);
+      }
+
+      const primeraData = await primeraRespuesta.json();
+      
+      // Extraer clientes de la primera página
+      let todosLosClientesRaw: any[] = [];
+      
+      if (primeraData.clientes && Array.isArray(primeraData.clientes)) {
+        todosLosClientesRaw = [...primeraData.clientes];
+      } else if (Array.isArray(primeraData)) {
+        todosLosClientesRaw = [...primeraData];
+      }
+
+      // Obtener metadata
+      const metadata = primeraData.metadata;
+      const totalPaginas = metadata?.total_paginas || 1;
+      const totalClientes = metadata?.total || todosLosClientesRaw.length;
+
+      console.log(`📊 Total: ${totalClientes} clientes en ${totalPaginas} páginas`);
+
+      // Si hay más de una página, obtener el resto en paralelo
+      if (totalPaginas > 1) {
+        console.log(`🚀 Descargando ${totalPaginas - 1} páginas adicionales en paralelo...`);
+        
+        const promesas = [];
+        for (let p = 2; p <= totalPaginas; p++) {
+          promesas.push(
+            fetch(`${API_BASE_URL}clientes/todos?limite=${limite}&pagina=${p}`, {
+              method: 'GET',
+              headers: {
+                'accept': 'application/json',
+                'Authorization': `Bearer ${token}`
+              }
+            })
+            .then(async (res) => {
+              if (!res.ok) {
+                console.error(`❌ Error en página ${p}: ${res.status}`);
+                return { clientes: [] };
+              }
+              const data = await res.json();
+              return data;
+            })
+          );
+        }
+
+        // Ejecutar todas las peticiones en paralelo
+        const resultados = await Promise.all(promesas);
+
+        // Combinar todos los clientes
+        resultados.forEach((data) => {
+          if (data.clientes && Array.isArray(data.clientes)) {
+            todosLosClientesRaw = [...todosLosClientesRaw, ...data.clientes];
+          } else if (Array.isArray(data)) {
+            todosLosClientesRaw = [...todosLosClientesRaw, ...data];
+          }
+        });
+      }
+
+      console.log(`✅ Total de clientes obtenidos: ${todosLosClientesRaw.length}`);
+
+      // Transformar la respuesta al formato Cliente
+      return todosLosClientesRaw.map((cliente: any) => ({
+
   async getAllClientes(token: string, pagina: number = 1, limite: number = 500): Promise<Cliente[]> {
     try {
       console.log(`📋 Obteniendo todos los clientes (pagina=${pagina}, limite=${limite})`);
@@ -234,6 +314,7 @@ export const clientesService = {
       throw error;
     }
   },
+
 
   async getClienteById(token: string, clienteId: string): Promise<Cliente> {
     const response = await fetch(`${API_BASE_URL}clientes/${clienteId}`, {

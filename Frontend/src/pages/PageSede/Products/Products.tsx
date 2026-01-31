@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { Search, Package, AlertTriangle, BarChart3, Loader2, Filter, ChevronRight, TrendingUp, TrendingDown, Box } from "lucide-react"
 import { Search, Package, AlertTriangle, BarChart3, Loader2, Filter, ChevronRight, TrendingUp, TrendingDown, Box, Edit2, Save, X } from "lucide-react"
 import { Button } from "../../../components/ui/button"
 import { Input } from "../../../components/ui/input"
@@ -21,6 +22,32 @@ export function ProductsList() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [categorias, setCategorias] = useState<string[]>([])
+  
+  // Usar el AuthContext en lugar de sessionStorage
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth()
+  
+  // Obtener datos de la sede desde el AuthContext
+  // También mantenemos compatibilidad con sessionStorage como fallback
+  const sedeId = user?.sede_id || sessionStorage.getItem("beaux-sede_id")
+  const nombreLocal = user?.nombre_local || sessionStorage.getItem("beaux-nombre_local")
+
+  // Cargar inventario
+  useEffect(() => {
+    if (!authLoading && sedeId) {
+      cargarInventario()
+    }
+  }, [showLowStock, authLoading, sedeId])
+
+  // Mostrar mensaje si no está autenticado
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      setError("Debes iniciar sesión para acceder al inventario")
+      setIsLoading(false)
+    }
+  }, [authLoading, isAuthenticated])
+
+  // Extraer categorías únicas
+  useEffect(() => {
 
   // Estados para edición de stock
   const [productoEditando, setProductoEditando] = useState<string | null>(null)
@@ -63,6 +90,7 @@ export function ProductsList() {
     try {
       setIsLoading(true)
       setError(null)
+      
 
       // Verificar que tenemos los datos necesarios
       if (!sedeId) {
@@ -79,6 +107,9 @@ export function ProductsList() {
         user?.token || sessionStorage.getItem("access_token"),
         sedeId
       )
+      
+      setProductos(inventario)
+      
 
       setProductos(inventario)
 
@@ -97,6 +128,14 @@ export function ProductsList() {
     // Filtro por término de búsqueda
     if (searchTerm) {
       const termino = searchTerm.toLowerCase()
+      const cumpleBusqueda = 
+        producto.nombre.toLowerCase().includes(termino) ||
+        producto.producto_id.toLowerCase().includes(termino) ||
+        producto.producto_codigo.toLowerCase().includes(termino)
+      
+      if (!cumpleBusqueda) return false
+    }
+    
       const cumpleBusqueda =
         producto.nombre.toLowerCase().includes(termino) ||
         producto.producto_id.toLowerCase().includes(termino) ||
@@ -109,6 +148,7 @@ export function ProductsList() {
     if (selectedCategoria !== "all" && producto.categoria !== selectedCategoria) {
       return false
     }
+    
 
     return true
   })
@@ -120,6 +160,7 @@ export function ProductsList() {
     const productosSinStock = productos.filter(p => p.stock_actual === 0).length
     const totalStock = productos.reduce((sum, p) => sum + p.stock_actual, 0)
     const stockPromedio = productos.length > 0 ? Math.round(totalStock / productos.length) : 0
+    
 
     return {
       totalProductos,
@@ -129,6 +170,9 @@ export function ProductsList() {
       stockPromedio
     }
   }
+
+  const stats = calcularEstadisticas()
+
 
   const stats = calcularEstadisticas()
 
@@ -221,6 +265,7 @@ export function ProductsList() {
           <AlertTriangle className="h-12 w-12 text-red-500 mb-4" />
           <h2 className="text-xl font-semibold text-gray-900 mb-2">Acceso no autorizado</h2>
           <p className="text-gray-600 mb-4">Debes iniciar sesión para acceder a esta página</p>
+          <Button 
           <Button
             onClick={() => window.location.href = "/login"} // Ajusta la ruta según tu aplicación
             className="bg-blue-600 hover:bg-blue-700"
@@ -238,6 +283,7 @@ export function ProductsList() {
       <div className="flex-1">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* Header */}
+          
 
           <div className="mb-8">
             <div className="flex items-center justify-between">
@@ -256,6 +302,7 @@ export function ProductsList() {
                       Gestión de productos y control de stock
                     </p>
                   </div>
+                  
 
                 </div>
               </div>
@@ -278,6 +325,13 @@ export function ProductsList() {
                   <Badge variant="outline" className="text-xs">
                     {productos.length} productos
                   </Badge>
+                  <Badge 
+                    variant="outline" 
+                    className={`text-xs ${
+                      isAuthenticated 
+                        ? "border-green-200 bg-green-50 text-green-700" 
+                        : "border-gray-200"
+                    }`}
                   <Badge
                     variant="outline"
                     className={`text-xs ${isAuthenticated
@@ -306,6 +360,22 @@ export function ProductsList() {
                     disabled={isLoading}
                   />
                 </div>
+                
+
+          {/* Filtros */}
+          <Card className="mb-6 border-gray-200">
+            <CardContent className="pt-6">
+              <div className="flex flex-col lg:flex-row gap-4">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <Input
+                    placeholder="Buscar productos por nombre, ID o código..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10 border-gray-300 focus:border-gray-400 focus:ring-gray-400"
+                    disabled={isLoading}
+                  />
+                </div>
 
                 <div className="flex gap-3">
                   <Select value={selectedCategoria} onValueChange={setSelectedCategoria} disabled={isLoading}>
@@ -319,6 +389,7 @@ export function ProductsList() {
                       ))}
                     </SelectContent>
                   </Select>
+                  
 
                   <Button
                     variant={showLowStock ? "default" : "outline"}
@@ -353,6 +424,7 @@ export function ProductsList() {
                 </div>
               </CardContent>
             </Card>
+            
 
             <Card className="border-gray-200 hover:border-gray-300 transition-colors">
               <CardContent className="pt-6">
@@ -370,6 +442,7 @@ export function ProductsList() {
                 </div>
               </CardContent>
             </Card>
+            
 
             <Card className="border-gray-200 hover:border-gray-300 transition-colors">
               <CardContent className="pt-6">
@@ -390,6 +463,7 @@ export function ProductsList() {
                 </div>
               </CardContent>
             </Card>
+            
 
             <Card className="border-gray-200 hover:border-gray-300 transition-colors">
               <CardContent className="pt-6">
@@ -422,6 +496,20 @@ export function ProductsList() {
           )}
 
           {error && !isLoading && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+              <div className="flex items-start">
+                <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5 mr-3" />
+                <div className="flex-1">
+                  <p className="text-red-700 font-medium">{error}</p>
+                  <p className="text-sm text-red-600 mt-1">Verifica tu conexión e intenta nuevamente</p>
+                </div>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={cargarInventario}
+                  className="border-red-300 text-red-700 hover:bg-red-50"
+                >
+                  Reintentar
             <div className="bg-red-50 border border-red-200 rounded-lg p-6 mb-6">
               <div className="flex items-start">
                 <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5 mr-3" />
@@ -469,6 +557,7 @@ export function ProductsList() {
                   </Badge>
                 </div>
               </CardHeader>
+              
 
               <CardContent className="pt-6">
                 {productosFiltrados.length === 0 ? (
@@ -477,6 +566,12 @@ export function ProductsList() {
                       <Package className="h-8 w-8 text-gray-400" />
                     </div>
                     <h3 className="text-lg font-medium text-gray-900 mb-2">
+                      {productos.length === 0 
+                        ? "No hay productos en el inventario" 
+                        : "No se encontraron productos"}
+                    </h3>
+                    <p className="text-gray-600 max-w-sm mx-auto">
+                      {productos.length === 0 
                       {productos.length === 0
                         ? "No hay productos en el inventario"
                         : "No se encontraron productos"}
@@ -516,6 +611,26 @@ export function ProductsList() {
                               </div>
                             </div>
                           </div>
+                          
+                          <div className="flex flex-col sm:items-end gap-3 mt-4 sm:mt-0">
+                            <div className="flex items-center gap-4">
+                              <div className="text-right">
+                                <p className="text-lg font-bold text-gray-900">{producto.stock_actual}</p>
+                                <p className="text-xs text-gray-500">Stock actual</p>
+                              </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-2">
+                              <Badge className={`${getStockColor(producto.stock_actual, producto.stock_minimo)} text-xs font-medium px-2 py-1`}>
+                                {producto.stock_actual === 0 
+                                  ? "Sin Stock" 
+                                  : producto.stock_actual <= producto.stock_minimo 
+                                    ? "Bajo Stock" 
+                                    : "Disponible"}
+                              </Badge>
+                              <span className="text-xs text-gray-500">
+                                Actualizado: {new Date(producto.fecha_ultima_actualizacion).toLocaleDateString("es-ES")}
+                              </span>
 
                           <div className="flex flex-col sm:items-end gap-3 mt-4 sm:mt-0">
                             <div className="flex items-center gap-4">
@@ -626,11 +741,13 @@ export function ProductsList() {
                     {stats.productosSinStock > 0 && (
                       <span className="text-red-600">{stats.productosSinStock} productos sin stock</span>
                     )}
+                    {(stats.productosBajoStock === 0 && stats.productosSinStock === 0) && 
                     {(stats.productosBajoStock === 0 && stats.productosSinStock === 0) &&
                       <span className="text-emerald-600">Todo el inventario en niveles óptimos</span>
                     }
                   </p>
                 </div>
+                
 
                 <div className="flex items-center gap-2 text-sm text-gray-500">
                   <span>Total de productos:</span>

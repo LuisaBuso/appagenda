@@ -232,12 +232,14 @@ export function FichaCuidadoPostColor({ cita, datosIniciales, onGuardar, onSubmi
       const fichaData = {
         // Campos REQUERIDOS
         cliente_id: cita.cliente.cliente_id,
+        servicio_id: cita.servicios?.[0]?.servicio_id || "",
         servicio_id: cita.servicio.servicio_id,
         profesional_id: estilistaData.id,
         sede_id: cita.sede?.sede_id || 'sede_default',
         tipo_ficha: "CUIDADO_POST_COLOR",
 
         // Información básica
+        servicio_nombre: cita.servicios?.map((s: any) => s.nombre).join(', ') || "",
         servicio_nombre: cita.servicio.nombre || "",
         profesional_nombre: estilistaData.nombre,
         profesional_email: estilistaData.email,
@@ -252,7 +254,7 @@ export function FichaCuidadoPostColor({ cita, datosIniciales, onGuardar, onSubmi
         telefono: cita.cliente.telefono || "",
 
         // Información financiera
-        precio: cita.servicio.precio || 0,
+        precio: cita.precio_total || cita.servicios?.reduce((sum: number, s: any) => sum + (s.precio || 0), 0) || 0,
         estado: "completado",
         estado_pago: "pagado",
 
@@ -277,6 +279,7 @@ export function FichaCuidadoPostColor({ cita, datosIniciales, onGuardar, onSubmi
           respondido_por: estilistaData.nombre,
           respondido_por_id: estilistaData.id
         })),
+        descripcion_servicio: `Recomendaciones de cuidado post color para ${cita.servicios?.map((s: any) => s.nombre).join(', ') || 'Sin servicio'} - Realizado por ${estilistaData.nombre}`,
         descripcion_servicio: `Recomendaciones de cuidado post color para ${cita.servicio.nombre} - Realizado por ${estilistaData.nombre}`,
 
         // Fotos (URLs vacías porque el backend las subirá a S3)
@@ -464,7 +467,7 @@ export function FichaCuidadoPostColor({ cita, datosIniciales, onGuardar, onSubmi
         <h3 className="font-semibold mb-2">Información del servicio</h3>
         <div className="grid grid-cols-2 gap-2">
           <p><strong>Cliente:</strong> {cita.cliente.nombre} {cita.cliente.apellido}</p>
-          <p><strong>Servicio:</strong> {cita.servicio.nombre}</p>
+          <p><strong>Servicio(s):</strong> {cita.servicios?.map((s: any) => s.nombre).join(', ') || 'Sin servicio'}</p>
           <p><strong>Fecha:</strong> {cita.fecha}</p>
           <p><strong>Hora:</strong> {cita.hora_inicio}</p>
         </div>

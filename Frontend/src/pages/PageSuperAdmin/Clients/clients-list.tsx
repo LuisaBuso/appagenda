@@ -25,6 +25,8 @@ interface ClientsListProps {
   sedes?: Sede[]
   onExport?: () => void
   itemsPerPage?: number
+  searchValue: string
+  onSearch: (value: string) => void
 }
 
 export function ClientsList({ 
@@ -34,6 +36,8 @@ export function ClientsList({
   error, 
   onRetry,
   onSedeChange,
+  searchValue,
+  onSearch,
   selectedSede = "all",
   sedes = [],
   onExport,
@@ -45,6 +49,11 @@ export function ClientsList({
   // Filtrado de clientes
   const filteredClientes = useMemo(() => {
     return clientes.filter(cliente =>
+      cliente.nombre.toLowerCase().includes(searchValue.toLowerCase()) ||
+      cliente.email.toLowerCase().includes(searchValue.toLowerCase()) ||
+      cliente.telefono.toLowerCase().includes(searchValue.toLowerCase())
+    )
+  }, [clientes, searchValue])
       cliente.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
       cliente.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
       cliente.telefono.toLowerCase().includes(searchTerm.toLowerCase())
@@ -129,6 +138,7 @@ export function ClientsList({
             <h1 className="text-2xl font-bold text-gray-900">Clientes</h1>
             <p className="text-sm text-gray-600 mt-1">
               {filteredClientes.length} cliente{filteredClientes.length !== 1 ? 's' : ''} encontrado{filteredClientes.length !== 1 ? 's' : ''}
+              {searchValue && ` para "${searchValue}"`}
               {searchTerm && ` para "${searchTerm}"`}
             </p>
           </div>
@@ -161,6 +171,11 @@ export function ClientsList({
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <Input
               placeholder="Buscar por nombre, email o teléfono..."
+              value={searchValue}                         // 👈 viene del padre
+              onChange={(e) => {
+              onSearch(e.target.value)                  // 👈 debounce vive arriba
+              setCurrentPage(1)
+            }}
               value={searchTerm}
               onChange={handleSearchChange}
               className="pl-10 h-10 bg-white"
@@ -198,11 +213,13 @@ export function ClientsList({
             <div className="text-center px-8">
               <User className="h-12 w-12 text-gray-300 mx-auto mb-4" />
               <p className="text-lg font-medium text-gray-900 mb-1">
+                {searchValue || selectedSede !== "all" 
                 {searchTerm || selectedSede !== "all" 
                   ? "No se encontraron clientes" 
                   : "No hay clientes registrados"}
               </p>
               <p className="text-sm text-gray-600 mb-6 max-w-sm">
+                {searchValue || selectedSede !== "all"
                 {searchTerm || selectedSede !== "all"
                   ? "Ajusta los términos de búsqueda o el filtro de sede"
                   : "Comienza agregando tu primer cliente a la plataforma"}
@@ -275,6 +292,7 @@ export function ClientsList({
                         <td className="px-6 py-4">
                           <div className="text-gray-900">
                             {cliente.sede_id 
+                              ? sedes.find(s => s.sede_id === cliente.sede_id)?.nombre || cliente.sede_id 
                               ? sedes.find(s => s.sede_id === cliente.sede_id)?.nombre || 'Sede asignada'
                               : 'Sin sede asignada'}
                           </div>

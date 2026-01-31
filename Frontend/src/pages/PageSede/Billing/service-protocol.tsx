@@ -47,8 +47,29 @@ interface Appointment {
   hora_fin: string
   servicio: string
   servicio_nombre?: string
+  // 🆕 Agregar esto:
+  servicios?: Array<{
+    servicio_id: string
+    nombre: string
+    precio: number
+    precio_personalizado?: boolean
+  }>
+  precio_total?: number // 🆕 Total calculado del backend
   estilista?: string
   profesional_nombre?: string
+  productos?: Array<{
+    producto_id: string
+    nombre: string
+    cantidad: number
+    precio_unitario: number
+    subtotal: number
+    moneda: string
+    comision_porcentaje: number
+    comision_valor: number
+    agregador_por: string
+    agregado_por_rol: string
+    profesional_id: string
+  }>
   estado: string
   sede_id: string
   valor_total?: number
@@ -402,9 +423,13 @@ export function ServiceProtocol({
   }
 
   const calculateAppointmentTotal = () => {
-    const servicioTotal = selectedAppointment?.valor_total || 0
-    const productosTotal = calculateProductsTotal()
-    return servicioTotal + productosTotal
+  // Calcular total de servicios (precio_total o suma de servicios individuales)
+  const servicioTotal = selectedAppointment?.precio_total || 
+    selectedAppointment?.valor_total || 
+    (selectedAppointment?.servicios?.reduce((sum: number, s: any) => sum + (s.precio || 0), 0) || 0)
+  
+  const productosTotal = calculateProductsTotal()
+  return servicioTotal + productosTotal
   }
 
   const handleFacturarCita = async () => {
@@ -423,11 +448,15 @@ export function ServiceProtocol({
         return
       }
 
+      const serviciosTexto = selectedAppointment.servicios && Array.isArray(selectedAppointment.servicios)
+      ? selectedAppointment.servicios.map((s: any) => s.nombre).join(', ')
+      : nombreServicio
+
       // Confirmar con el usuario
       const confirmMessage =
         `¿Estás seguro de facturar esta cita?\n\n` +
         `👤 Cliente: ${nombreCliente}\n` +
-        `✂️ Servicio: ${nombreServicio}\n` +
+        `✂️ Servicio: ${serviciosTexto}\n` +
         `💰 Total: $${formatMoney(calculateAppointmentTotal())}\n\n` +
         `📦 Productos incluidos: ${selectedProducts.length}` +
         (selectedProducts.length > 0 ?
@@ -448,7 +477,7 @@ export function ServiceProtocol({
 
       // Llamar a la API de facturación
       const response = await fetch(
-        `${API_BASE_URL}api/billing/quotes/facturar/${selectedAppointment._id}`,
+        `${API_BASE_URL}api/billing/quotes/facturar/${selectedAppointment._id}?tipo=cita`,
         {
           method: 'POST',
           headers: {
@@ -624,7 +653,24 @@ export function ServiceProtocol({
             </div>
             <div className="flex items-center gap-2 text-sm text-gray-700">
               <Scissors className="h-4 w-4" />
+              <div className="flex-1">
+                {selectedAppointment.servicios && Array.isArray(selectedAppointment.servicios) && selectedAppointment.servicios.length > 0 ? (
+                  <div className="space-y-1">
+                    {selectedAppointment.servicios.map((servicio: any, index: number) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <span>{servicio.nombre}</span>
+                        {selectedAppointment.servicios!.length > 1 && (
+                          <Badge variant="outline" className="text-xs">
+                            ${formatMoney(servicio.precio)}
+                          </Badge>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    ) : (
               <span>{nombreServicio}</span>
+              )}
+              </div>
             </div>
             {selectedAppointment.valor_total !== undefined && (
               <div className="flex items-center gap-2 text-sm text-gray-700">
@@ -903,12 +949,31 @@ export function ServiceProtocol({
                   <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
                     <h4 className="font-semibold mb-3">Resumen de Facturación</h4>
                     <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-700">Servicio:</span>
-                        <span className="font-medium">
-                          ${formatMoney(selectedAppointment.valor_total || 0)}
-                        </span>
+                      {/* Mostrar servicios individuales si hay múltiples */}
+                      {selectedAppointment.servicios && Array.isArray(selectedAppointment.servicios) && selectedAppointment.servicios.length > 1 ? (
+                        <>
+                          <div className="text-sm font-medium text-gray-700 mb-2">Servicios:</div>
+                          {selectedAppointment.servicios.map((servicio: any, index: number) => (
+                            <div key={index} className="flex justify-between text-sm pl-2">
+                              <span className="text-gray-600">{servicio.nombre}:</span>
+                              <span className="font-medium">${formatMoney(servicio.precio || 0)}</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between text-sm font-semibold pt-1 border-t border-gray-200">
+                          <span className="text-gray-700">Subtotal servicios:</span>
+                          <span className="font-medium">
+                            ${formatMoney(selectedAppointment.valor_total || 0)}
+                          </span>
                       </div>
+                        </>
+                      ) : (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-700">Servicio:</span>
+                          <span className="font-medium">
+                            ${formatMoney(selectedAppointment.precio_total || selectedAppointment.valor_total || 0)}
+                          </span>
+                        </div>
+                      )}
                       {selectedProducts.length > 0 && (
                         <div className="flex justify-between text-sm">
                           <span className="text-gray-700">Productos:</span>

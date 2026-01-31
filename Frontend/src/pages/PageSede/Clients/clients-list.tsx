@@ -32,6 +32,7 @@ interface ClientsListProps {
   isLoading?: boolean
   onPageChange?: (page: number, filtro?: string) => void
   onSearch?: (filtro: string) => void
+  searchValue: string
 }
 
 export function ClientsList({ 
@@ -42,6 +43,13 @@ export function ClientsList({
   error, 
   isLoading = false,
   onPageChange,
+  onSearch,
+  searchValue
+}: ClientsListProps) {
+
+  const clearSearch = () => {
+  onSearch?.("")
+}
   onSearch
 }: ClientsListProps) {
   const [searchTerm, setSearchTerm] = useState("")
@@ -79,6 +87,8 @@ export function ClientsList({
   // Manejar cambio de página
   const handlePageChange = (page: number) => {
     if (onPageChange) {
+      onPageChange(page, searchValue
+)
       onPageChange(page, searchTerm)
     }
   }
@@ -109,6 +119,7 @@ export function ClientsList({
           <p className="text-xs text-gray-500 mb-3">{error}</p>
           {onPageChange && (
             <Button 
+              onClick={() => onPageChange(1, searchValue)}
               onClick={() => onPageChange(1, searchTerm)}
               variant="outline"
               className="text-xs border-gray-300 text-gray-700 hover:bg-gray-50"
@@ -150,6 +161,12 @@ export function ClientsList({
             <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
             <Input
               placeholder="Buscar por nombre, email, teléfono o cédula..."
+              value={searchValue}
+              onChange={(e) => onSearch?.(e.target.value)}
+              className="pl-9 h-8 text-sm border-gray-300"
+              disabled={isLoading}
+            />
+            {searchValue && (
               value={searchTerm}
               onChange={(e) => handleSearch(e.target.value)}
               className="pl-9 h-8 text-sm border-gray-300"
@@ -168,6 +185,10 @@ export function ClientsList({
         </div>
 
         {/* Badges de filtros activos */}
+        {searchValue && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            <Badge variant="secondary" className="text-xs">
+              Buscando: "{searchValue}"
         {searchTerm && (
           <div className="mt-2 flex flex-wrap gap-1">
             <Badge variant="secondary" className="text-xs">
@@ -198,6 +219,12 @@ export function ClientsList({
             <div className="text-center">
               <User className="h-8 w-8 text-gray-300 mx-auto mb-2" />
               <p className="text-sm text-gray-600 mb-1">
+                {searchValue ? "No se encontraron resultados" : "No hay clientes"}
+              </p>
+              <p className="text-xs text-gray-500">
+                {searchValue ? "Ajusta tu búsqueda" : "Agrega tu primer cliente"}
+              </p>
+              {!searchValue && (
                 {searchTerm ? "No se encontraron resultados" : "No hay clientes"}
               </p>
               <p className="text-xs text-gray-500">
