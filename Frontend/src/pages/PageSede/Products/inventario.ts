@@ -33,13 +33,13 @@ export class InventarioService {
 
   // Obtener inventario de una sede específica
   async getInventarioBySede(
-    sede_id: string, 
+    sede_id: string,
     stockBajo: boolean = false,
     token: string | null
   ): Promise<InventarioProducto[]> {
     try {
       const url = new URL(`${API_BASE_URL}inventary/inventarios/inventarios/`);
-      
+
       // Agregar parámetros a la URL
       url.searchParams.append('sede_id', sede_id);
       if (stockBajo) {
@@ -57,7 +57,7 @@ export class InventarioService {
 
       const data: InventarioProducto[] = await response.json();
       return data;
-      
+
     } catch (error) {
       console.error("Error obteniendo inventario de la sede:", error);
       throw error;
@@ -74,7 +74,7 @@ export class InventarioService {
       // Usar el token y sede_id proporcionados, o intentar obtenerlos de sessionStorage
       const actualToken = token || sessionStorage.getItem("access_token");
       const actualSedeId = sede_id || sessionStorage.getItem("beaux-sede_id");
-      
+
       if (!actualSedeId) {
         throw new Error("No se encontró sede_id");
       }
@@ -84,43 +84,61 @@ export class InventarioService {
       }
 
       return await this.getInventarioBySede(actualSedeId, stockBajo, actualToken);
-      
+
     } catch (error) {
       console.error("Error obteniendo inventario del usuario:", error);
       throw error;
     }
   }
 
-  // Actualizar stock de un producto
-  async actualizarStock(
-    productoId: string, 
-    nuevoStock: number,
-    token?: string | null,
-    sede_id?: string | null
-  ): Promise<boolean> {
+  // Ajuste de stock: backend espera cantidad_ajuste (delta = nuevoValor - valorActual).
+  // PATCH .../inventary/inventarios/inventarios/{inventario_id}/ajustar
+  async ajustarInventario(
+    inventarioId: string,
+    cantidadAjuste: number,
+    token?: string | null
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
     try {
       const actualToken = token || sessionStorage.getItem("access_token");
-      const actualSedeId = sede_id || sessionStorage.getItem("beaux-sede_id");
-      
-      if (!actualSedeId) {
-        throw new Error("No se encontró sede_id");
+
+      if (!actualToken) {
+        throw new Error("No se encontró token de autenticación");
       }
 
-      const response = await fetch(`${API_BASE_URL}inventary/inventarios/actualizar-stock/`, {
-        method: "POST",
-        headers: this.getHeaders(actualToken),
-        body: JSON.stringify({
-          producto_id: productoId,
-          sede_id: actualSedeId,
-          nuevo_stock: nuevoStock,
-        }),
-      });
+      const response = await fetch(
+        `${API_BASE_URL}inventary/inventarios/inventarios/${inventarioId}/ajustar`,
+        {
+          method: "PATCH",
+          headers: this.getHeaders(actualToken),
+          body: JSON.stringify({
+            cantidad_ajuste: cantidadAjuste
+          }),
+        }
+      );
 
-      return response.ok;
-      
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: Array.isArray(data.detail)
+            ? data.detail.map((e: any) => e.msg).join(", ")
+            : data.detail || "No se pudo ajustar el inventario"
+
+        };
+      }
+
+      return {
+        success: true,
+        message: data.msg || "Inventario ajustado correctamente"
+      };
+
     } catch (error) {
-      console.error("Error actualizando stock:", error);
-      return false;
+      console.error("Error ajustando inventario:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Error desconocido"
+      };
     }
   }
 
@@ -133,29 +151,29 @@ export class InventarioService {
     try {
       // Obtener todos los productos del inventario
       let productos = await this.getInventarioUsuario(
-        filtros.stockBajo, 
-        token, 
+        filtros.stockBajo,
+        token,
         sede_id
       );
-      
+
       // Aplicar filtros
       if (filtros.searchTerm) {
         const searchLower = filtros.searchTerm.toLowerCase();
-        productos = productos.filter(producto => 
+        productos = productos.filter(producto =>
           producto.nombre.toLowerCase().includes(searchLower) ||
           producto.producto_id.toLowerCase().includes(searchLower) ||
           producto.producto_codigo.toLowerCase().includes(searchLower)
         );
       }
-      
+
       if (filtros.categoria && filtros.categoria !== "all") {
-        productos = productos.filter(producto => 
+        productos = productos.filter(producto =>
           producto.categoria === filtros.categoria
         );
       }
-      
+
       return productos;
-      
+
     } catch (error) {
       console.error("Error buscando productos:", error);
       throw error;

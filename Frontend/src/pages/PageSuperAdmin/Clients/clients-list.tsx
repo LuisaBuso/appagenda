@@ -275,7 +275,7 @@ export function ClientsList({
                         <td className="px-6 py-4">
                           <div className="text-gray-900">
                             {cliente.sede_id 
-                              ? sedes.find(s => s.sede_id === cliente.sede_id)?.nombre || cliente.sede_id 
+                              ? sedes.find(s => s.sede_id === cliente.sede_id)?.nombre || 'Sede asignada'
                               : 'Sin sede asignada'}
                           </div>
                         </td>
