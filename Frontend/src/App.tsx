@@ -14,17 +14,19 @@ import SuperComisiones from "./pages/PageSuperAdmin/Comisiones/Comisiones";
 import SuperStylist from "./pages/PageSuperAdmin/Styslit/Sytlist";
 import SuperClients from "./pages/PageSuperAdmin/Clients/Clients";
 import SuperPay from "./pages/PageSuperAdmin/Appoinment/PaymentMethods/PaymentMethods"
+import SuperInvoices from "./pages/PageSuperAdmin/Sales-invoiced/Sales-invoiced"
 
 /* --- Sede Pages --- */
 import SedeDashboard from "./pages/PageSede/Dashboard/Dashboard";
 import SedePerformance from "./pages/PageSede/Perfomance/Perfomance";
 import SedeAppointment from "./pages/PageSede/Appoinment/Appointment";
-import SedeProducts from "./pages/PageSede/Products/Products";
+import { ProductsList } from "./pages/PageSede/Products/Products";
 import SedeClients from "./pages/PageSede/Clients/Clients";
 import SedeBilling from "./pages/PageSede/Billing/Billing";
 import SedeServices from './pages/PageSede/Services/Services';
 import SedeStylists from './pages/PageSede/Styslit/Sytlist';
 import SedeCommissions from './pages/PageSede/Comisiones/Comisiones'
+import SedeInvoices from "./pages/PageSede/Sales-invoiced/Sales-invoiced"
 
 /* --- Stylist Pages --- */
 import StylistAppointment from "./pages/PageStylist/Appoinment/Appointment";
@@ -75,6 +77,14 @@ function App() {
               element={
                 <PrivateRoute allowedRoles={["super_admin"]}>
                   <SuperDashboard />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/superadmin/sales-invoices"
+              element={
+                <PrivateRoute allowedRoles={["super_admin"]}>
+                  <SuperInvoices />
                 </PrivateRoute>
               }
             />
@@ -162,6 +172,14 @@ function App() {
               }
             />
             <Route
+              path="/sede/sales-invoiced"
+              element={
+                <PrivateRoute allowedRoles={["admin_sede"]}>
+                  <SedeInvoices />
+                </PrivateRoute>
+              }
+            />
+            <Route
               path="/sede/commissions"
               element={
                 <PrivateRoute allowedRoles={["admin_sede"]}>
@@ -197,7 +215,7 @@ function App() {
               path="/sede/products"
               element={
                 <PrivateRoute allowedRoles={["admin_sede"]}>
-                  <SedeProducts />
+                  <ProductsList />
                 </PrivateRoute>
               }
             />

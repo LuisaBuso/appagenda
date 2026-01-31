@@ -14,6 +14,43 @@ interface AppointmentsListProps {
   onBloqueoEliminado?: () => void;
 }
 
+// 🔥 HELPER: Obtener nombres de servicios
+const obtenerNombresServicios = (cita: any): string => {
+  // Si tiene array de servicios (NUEVO FORMATO)
+  if (cita.servicios && Array.isArray(cita.servicios) && cita.servicios.length > 0) {
+    return cita.servicios.map((s: any) => s.nombre).join(', ');
+  }
+  
+  // Si tiene servicio único (FORMATO ANTIGUO)
+  if (cita.servicio?.nombre) {
+    return cita.servicio.nombre;
+  }
+  
+  return 'Sin servicio';
+};
+
+// 🔥 HELPER: Calcular precio total
+const calcularPrecioTotal = (cita: any): number => {
+  // Si tiene precio_total directo del backend
+  if (cita.precio_total) {
+    return cita.precio_total;
+  }
+  
+  // Si tiene array de servicios
+  if (cita.servicios && Array.isArray(cita.servicios) && cita.servicios.length > 0) {
+    return cita.servicios.reduce((total: number, servicio: any) => {
+      return total + (servicio.precio || 0);
+    }, 0);
+  }
+  
+  // Si tiene servicio único
+  if (cita.servicio?.precio) {
+    return cita.servicio.precio;
+  }
+  
+  return 0;
+};
+
 export function AppointmentsList({ 
   appointments, 
   bloqueos, 
@@ -25,14 +62,12 @@ export function AppointmentsList({
   const [bloqueoAEliminar, setBloqueoAEliminar] = useState<Bloqueo | null>(null);
   const [eliminando, setEliminando] = useState(false);
 
-  // Función para obtener token
   const getAuthToken = () => {
     return localStorage.getItem('access_token') || 
            sessionStorage.getItem('access_token') || 
            '';
   };
 
-  // Función para eliminar un bloqueo
   const handleEliminarBloqueo = async (bloqueo: Bloqueo) => {
     if (!bloqueo._id) {
       console.error("No se puede eliminar: bloqueo sin ID");
@@ -71,7 +106,6 @@ export function AppointmentsList({
     }
   };
 
-  // Función para determinar el estado de la cita
   const getEstadoCita = (cita: Cita) => {
     if (cita.estado) {
       const estadoNormalizado = cita.estado.toLowerCase().trim();
@@ -130,7 +164,6 @@ export function AppointmentsList({
       }
     }
     
-    // Calcular por horario si no hay estado definido
     try {
       const ahora = new Date();
       const fechaCita = new Date(cita.fecha);
@@ -176,7 +209,6 @@ export function AppointmentsList({
     }
   };
 
-  // Combinar citas y bloqueos
   const elementosCombinados = [
     ...appointments.map(cita => ({ 
       type: 'cita', 
@@ -214,7 +246,6 @@ export function AppointmentsList({
 
   return (
     <div className="space-y-1.5">
-      {/* Indicador compacto de bloqueos */}
       {bloqueos.length > 0 && (
         <div className="text-xs text-gray-500 mb-2 px-1 flex items-center gap-1">
           <Ban className="h-3 w-3" />
@@ -232,15 +263,13 @@ export function AppointmentsList({
           const IconComponent = estadoInfo.icon;
           const nombreCliente = appointment.cliente?.nombre || "Cliente";
           const apellidoCliente = appointment.cliente?.apellido || "";
-          const nombreServicio = appointment.servicio?.nombre || "Servicio";
           
-          // Obtener el precio
-          const getPrecio = () => {
-            const citaAny = appointment as any;
-            return citaAny.valor_total || citaAny.total || appointment.servicio?.precio || '0';
-          };
+          // 🔥 CAMBIO CRÍTICO: Usar helper para obtener TODOS los servicios
+          const nombresServicios = obtenerNombresServicios(appointment);
+          const precioTotal = calcularPrecioTotal(appointment);
           
-          const precio = getPrecio();
+          // 🔥 Contar cantidad de servicios
+          const cantidadServicios = appointment.servicios?.length || 1;
 
           return (
             <div
@@ -255,13 +284,22 @@ export function AppointmentsList({
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between mb-1">
-                    <h3 className="font-medium text-gray-900 text-sm truncate">
-                      {nombreServicio}
-                    </h3>
-                    {precio > 0 && (
+                    {/* 🔥 MOSTRAR SERVICIOS CON BADGE SI HAY MÚLTIPLES */}
+                    <div className="flex items-center gap-1 flex-1">
+                      <h3 className="font-medium text-gray-900 text-sm line-clamp-2">
+                        {nombresServicios}
+                      </h3>
+                      {cantidadServicios > 1 && (
+                        <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[10px] font-semibold shrink-0">
+                          {cantidadServicios}
+                        </span>
+                      )}
+                    </div>
+                    
+                    {precioTotal > 0 && (
                       <div className="text-xs text-gray-600 font-medium flex items-center gap-1 shrink-0 ml-2">
                         <Tag className="h-3 w-3" />
-                        <span>${precio}</span>
+                        <span>${precioTotal.toLocaleString()}</span>
                       </div>
                     )}
                   </div>
@@ -286,7 +324,7 @@ export function AppointmentsList({
             </div>
           );
         } else {
-          // BLOQUEO - Diseño minimalista
+          // BLOQUEO
           const bloqueo = elemento.data as Bloqueo;
           
           return (
@@ -327,49 +365,6 @@ export function AppointmentsList({
           );
         }
       })}
-
-      {/* Modal de confirmación minimalista */}
-      {bloqueoAEliminar && !window.confirm && (
-        <div className="fixed inset-0 bg-black bg-opacity-20 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded border border-gray-300 p-5 max-w-sm w-full">
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="font-semibold text-gray-900">Eliminar bloqueo</h3>
-              <button 
-                onClick={() => setBloqueoAEliminar(null)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            
-            <div className="mb-4">
-              <p className="text-gray-700 text-sm mb-2">
-                <span className="font-medium">Horario:</span> {bloqueoAEliminar.hora_inicio} - {bloqueoAEliminar.hora_fin}
-              </p>
-              <p className="text-gray-600 text-sm">
-                <span className="font-medium">Motivo:</span> {bloqueoAEliminar.motivo}
-              </p>
-            </div>
-            
-            <div className="flex gap-2">
-              <button
-                onClick={() => setBloqueoAEliminar(null)}
-                className="flex-1 py-2 border border-gray-300 rounded text-gray-700 text-sm hover:bg-gray-50"
-                disabled={eliminando}
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => handleEliminarBloqueo(bloqueoAEliminar)}
-                className="flex-1 py-2 bg-gray-800 text-white rounded text-sm hover:bg-gray-900 disabled:bg-gray-400"
-                disabled={eliminando}
-              >
-                {eliminando ? "Eliminando..." : "Eliminar"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

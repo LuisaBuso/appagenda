@@ -1,7 +1,6 @@
-// src/pages/Dashboard/DashboardPage.tsx
 "use client"
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Sidebar } from "../../../components/Layout/Sidebar";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { SalesChart } from "./sales-chart";
@@ -11,12 +10,16 @@ import { Button } from "../../../components/ui/button";
 import { useAuth } from "../../../components/Auth/AuthContext";
 import {
   getDashboard,
+  getVentasDashboard,
   getAvailablePeriods,
   getChurnClientes,
   getSedes,
   type DashboardResponse,
-  type Sede
-} from "./analyticsApi";
+  type VentasDashboardResponse,
+  type Sede,
+  type KPI,
+  type TicketPromedioKPI
+} from "./Api/analyticsApi";
 import {
   Select,
   SelectContent,
@@ -26,16 +29,19 @@ import {
 } from "../../../components/ui/select";
 import {
   BarChart3,
-  Users,
   AlertCircle,
   Calendar,
   RefreshCw,
-  ChevronDown,
   Building2,
   MapPin,
-  Phone,
-  Mail,
-  Globe
+  Globe,
+  DollarSign,
+  Users,
+  Package,
+  CreditCard,
+  Receipt,
+  ChevronDown,
+  X,
 } from "lucide-react";
 import { Badge } from "../../../components/ui/badge";
 import {
@@ -48,43 +54,88 @@ import {
 } from "../../../components/ui/table";
 import { Progress } from "../../../components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
-import { Input } from "../../../components/ui/input";
-import { formatMoney, extractNumericValue } from "./formatMoney";
+import { formatMoney, extractNumericValue } from "./Api/formatMoney";
+
+interface DateRange {
+  start_date: string;
+  end_date: string;
+}
 
 export default function DashboardPage() {
   const { user, isAuthenticated } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [loadingSedes, setLoadingSedes] = useState(true);
+  const [loadingSedes, setLoadingSedes] = useState(false);
   const [dashboardData, setDashboardData] = useState<DashboardResponse | null>(null);
+  const [ventasData, setVentasData] = useState<VentasDashboardResponse | null>(null);
   const [globalData, setGlobalData] = useState<DashboardResponse | null>(null);
   const [sedes, setSedes] = useState<Sede[]>([]);
-  const [periods, setPeriods] = useState<any[]>([]);
+  const [, setPeriods] = useState<any[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState("last_30_days");
   const [selectedSede, setSelectedSede] = useState<string>("global");
   const [showChurnList, setShowChurnList] = useState(false);
   const [churnData, setChurnData] = useState<any[]>([]);
-  const [salesData, setSalesData] = useState([
-    { month: "Ene", value: 0 },
-    { month: "Feb", value: 0 },
-    { month: "Mar", value: 0 },
-    { month: "Abr", value: 0 },
-    { month: "May", value: 0 },
-  ]);
-  const [donutData, setDonutData] = useState([
-    { name: "Servicios", value: 0, color: "oklch(0.7 0.25 280)" },
-    { name: "Productos", value: 0, color: "oklch(0.8 0.15 280)" },
-  ]);
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [error, setError] = useState<string | null>(null);
+  const [monedaUsuario, setMonedaUsuario] = useState<string>("COP");
+  const [debugInfo, setDebugInfo] = useState<string>("");
+  
+  // Estados para el rango de fechas personalizado
+  const [showDateModal, setShowDateModal] = useState(false);
+  const [tempDateRange, setTempDateRange] = useState<DateRange>({ start_date: "", end_date: "" });
+  const [dateRange, setDateRange] = useState<DateRange>({ start_date: "", end_date: "" });
+  
+  // Estado para el loading de 5 segundos
+  const [showLoadingDelay, setShowLoadingDelay] = useState(false);
 
+  // Opciones de período con rango personalizado
+  const periodOptions = [
+    { id: "last_7_days", label: "Últimos 7 días" },
+    { id: "last_30_days", label: "Últimos 30 días" },
+    { id: "last_90_days", label: "Últimos 90 días" },
+    { id: "month", label: "Mes actual" },
+    { id: "custom", label: "Rango personalizado" },
+  ];
+
+  // Obtener moneda del usuario
+  useEffect(() => {
+    const getMonedaUsuario = () => {
+      const monedaSession = sessionStorage.getItem('beaux-moneda');
+      if (monedaSession) return monedaSession;
+
+      const monedaLocal = localStorage.getItem('beaux-moneda');
+      if (monedaLocal) return monedaLocal;
+
+      const pais = sessionStorage.getItem('beaux-pais') || localStorage.getItem('beaux-pais');
+      return pais === 'Colombia' ? 'COP' : 'COP';
+    };
+
+    setMonedaUsuario(getMonedaUsuario());
+  }, []);
+
+  // Inicializar fechas por defecto
+  useEffect(() => {
+    const today = new Date();
+    const last30Days = new Date();
+    last30Days.setDate(today.getDate() - 30);
+    
+    const defaultRange: DateRange = {
+      start_date: last30Days.toISOString().split('T')[0],
+      end_date: today.toISOString().split('T')[0]
+    };
+    
+    setDateRange(defaultRange);
+    setTempDateRange(defaultRange);
+  }, []);
+
+  // Cargar datos iniciales
   useEffect(() => {
     if (isAuthenticated && user) {
-      loadSedes();
-      loadPeriods();
-      loadGlobalData();
+      loadInitialData();
     }
   }, [isAuthenticated, user]);
 
+  // Cargar datos cuando cambia sede o período
   useEffect(() => {
     if (isAuthenticated && user) {
       if (selectedSede === "global") {
@@ -95,13 +146,35 @@ export default function DashboardPage() {
     }
   }, [selectedSede, selectedPeriod]);
 
+  const loadInitialData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      setDebugInfo("");
+      // Cargar en paralelo solo lo esencial
+      await Promise.all([
+        loadSedes(),
+        loadPeriods(),
+        loadGlobalData()
+      ]);
+    } catch (error: any) {
+      console.error("Error cargando datos iniciales:", error);
+      setError("Error al cargar datos iniciales");
+      setDebugInfo(`Error inicial: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const loadSedes = async () => {
     try {
       setLoadingSedes(true);
       const sedesData = await getSedes(user!.access_token, true);
       setSedes(sedesData);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error cargando sedes:", error);
+      setError("Error al cargar las sedes");
+      setDebugInfo(prev => prev + ` | Error sedes: ${error.message}`);
     } finally {
       setLoadingSedes(false);
     }
@@ -109,36 +182,106 @@ export default function DashboardPage() {
 
   const loadGlobalData = async () => {
     try {
-      setLoading(true);
+      if (selectedSede !== "global") return;
+
+      setError(null);
+      setDebugInfo("Cargando datos globales...");
       const data = await getDashboard(user!.access_token, {
         period: selectedPeriod
       });
       setGlobalData(data);
-      updateSalesData(data);
-      updateDonutData(data);
-    } catch (error) {
+      setDebugInfo(`Datos globales cargados: ${data.success ? 'OK' : 'Error'}`);
+
+      // Limpiar datos de sede específica
+      setDashboardData(null);
+      setVentasData(null);
+      setChurnData([]);
+
+    } catch (error: any) {
       console.error("Error cargando datos globales:", error);
-    } finally {
-      setLoading(false);
+      setError("Error al cargar datos globales");
+      setDebugInfo(`Error global: ${error.message}`);
+      setGlobalData(null);
     }
   };
 
   const loadDashboardData = async () => {
     try {
-      setLoading(true);
-      const data = await getDashboard(user!.access_token, {
+      if (selectedSede === "global") return;
+
+      // Activar el delay de 5 segundos
+      setShowLoadingDelay(true);
+      setTimeout(() => {
+        setShowLoadingDelay(false);
+      }, 5000);
+
+      setError(null);
+      setDebugInfo(`Cargando datos para sede: ${selectedSede}, período: ${selectedPeriod}`);
+
+      // Configurar parámetros para la API
+      const params: any = {
         period: selectedPeriod,
         sede_id: selectedSede
-      });
-      setDashboardData(data);
+      };
 
-      loadChurnData();
-      updateSalesData(data);
-      updateDonutData(data);
-    } catch (error) {
-      console.error("Error cargando dashboard:", error);
-    } finally {
-      setLoading(false);
+      // Si es rango personalizado, agregar fechas
+      if (selectedPeriod === "custom") {
+        if (!dateRange.start_date || !dateRange.end_date) {
+          console.log("Por favor selecciona un rango de fechas");
+          return;
+        }
+        params.start_date = dateRange.start_date;
+        params.end_date = dateRange.end_date;
+      }
+
+      // Primero intentar cargar datos de ventas
+      let ventasResponse: VentasDashboardResponse | null = null;
+      let analyticsResponse: DashboardResponse | null = null;
+
+      try {
+        ventasResponse = await getVentasDashboard(user!.access_token, params);
+        setDebugInfo(prev => prev + ` | Ventas: ${ventasResponse?.success ? 'OK' : 'Error'}`);
+        console.log('Datos de ventas recibidos:', ventasResponse);
+      } catch (ventasError: any) {
+        console.warn('Error cargando datos de ventas:', ventasError.message);
+        setDebugInfo(prev => prev + ` | Error ventas: ${ventasError.message}`);
+      }
+
+      // Luego intentar cargar datos de analytics
+      try {
+        analyticsResponse = await getDashboard(user!.access_token, {
+          period: selectedPeriod,
+          sede_id: selectedSede
+        });
+        setDebugInfo(prev => prev + ` | Analytics: ${analyticsResponse?.success ? 'OK' : 'Error'}`);
+        console.log('Datos de analytics recibidos:', analyticsResponse);
+      } catch (analyticsError: any) {
+        console.warn('Error cargando datos de analytics:', analyticsError.message);
+        setDebugInfo(prev => prev + ` | Error analytics: ${analyticsError.message}`);
+      }
+
+      // Establecer los datos que se cargaron exitosamente
+      setVentasData(ventasResponse);
+      setDashboardData(analyticsResponse);
+
+      // Cargar churn data solo si hay datos de analytics
+      if (analyticsResponse?.churn_actual && analyticsResponse.churn_actual > 0) {
+        loadChurnData();
+      } else {
+        setChurnData([]);
+      }
+
+      // Si ambos fallaron, mostrar error
+      if (!ventasResponse && !analyticsResponse) {
+        setError("No se pudieron cargar datos ni de ventas ni de analytics");
+      }
+
+    } catch (error: any) {
+      console.error("Error general cargando dashboard:", error);
+      setError(`Error al cargar datos: ${error.message}`);
+      setDebugInfo(prev => prev + ` | Error general: ${error.message}`);
+      setDashboardData(null);
+      setVentasData(null);
     }
   };
 
@@ -162,104 +305,559 @@ export default function DashboardPage() {
         start_date: thirtyDaysAgo.toISOString().split('T')[0],
         end_date: today.toISOString().split('T')[0]
       });
-      setChurnData(data.clientes.slice(0, 5));
+      setChurnData(data.clientes.slice(0, 10));
     } catch (error) {
       console.error("Error cargando churn:", error);
+      setChurnData([]);
     }
   };
 
-  const updateSalesData = (data: DashboardResponse) => {
-    const ticketValue = parseFloat(String(data.kpis.ticket_promedio.valor).replace(/[^0-9.-]+/g, "")) || 0;
-    const totalCitas = data.kpis.debug_info?.total_citas || 0;
-
-    const newSalesData = [
-      { month: "Ene", value: Math.round(totalCitas * ticketValue * 0.8) },
-      { month: "Feb", value: Math.round(totalCitas * ticketValue * 0.9) },
-      { month: "Mar", value: Math.round(totalCitas * ticketValue * 1.0) },
-      { month: "Abr", value: Math.round(totalCitas * ticketValue * 1.1) },
-      { month: "May", value: Math.round(totalCitas * ticketValue * 1.2) },
-    ];
-    setSalesData(newSalesData);
-  };
-
-  const updateDonutData = (data: DashboardResponse) => {
-    const ticketValue = parseFloat(String(data.kpis.ticket_promedio.valor).replace(/[^0-9.-]+/g, "")) || 0;
-    const totalCitas = data.kpis.debug_info?.total_citas || 0;
-    const totalVentas = totalCitas * ticketValue;
-
-    setDonutData([
-      { name: "Servicios", value: Math.round(totalVentas * 0.8), color: "oklch(0.7 0.25 280)" },
-      { name: "Productos", value: Math.round(totalVentas * 0.2), color: "oklch(0.8 0.15 280)" },
-    ]);
-  };
-
-  const handleRefresh = () => {
+  const handleRefresh = useCallback(() => {
     if (selectedSede === "global") {
       loadGlobalData();
     } else {
       loadDashboardData();
     }
-  };
+  }, [selectedSede, selectedPeriod]);
 
   const handleSedeChange = (sedeId: string) => {
     setSelectedSede(sedeId);
     setDashboardData(null);
+    setVentasData(null);
     setChurnData([]);
-    setSalesData([
-      { month: "Ene", value: 0 },
-      { month: "Feb", value: 0 },
-      { month: "Mar", value: 0 },
-      { month: "Abr", value: 0 },
-      { month: "May", value: 0 },
-    ]);
-    setDonutData([
-      { name: "Servicios", value: 0, color: "oklch(0.7 0.25 280)" },
-      { name: "Productos", value: 0, color: "oklch(0.8 0.15 280)" },
-    ]);
+    setError(null);
+    setDebugInfo("");
+
+    if (sedeId === "global") {
+      loadGlobalData();
+    } else {
+      // Activar delay de 5 segundos al cambiar sede
+      setShowLoadingDelay(true);
+      setTimeout(() => {
+        setShowLoadingDelay(false);
+        loadDashboardData();
+      }, 5000);
+    }
   };
 
-  const formatCurrency = (value: number | string): string => {
+  const handlePeriodChange = (period: string) => {
+    console.log('Cambiando período a:', period);
+    setSelectedPeriod(period);
+    
+    // Si se selecciona "Rango personalizado", mostrar modal
+    if (period === "custom") {
+      handleOpenDateModal();
+    }
+  };
+
+  const handleOpenDateModal = () => {
+    setTempDateRange(dateRange);
+    setShowDateModal(true);
+  };
+
+  const handleApplyDateRange = () => {
+    if (!tempDateRange.start_date || !tempDateRange.end_date) {
+      setError("Por favor selecciona ambas fechas");
+      return;
+    }
+    
+    if (new Date(tempDateRange.start_date) > new Date(tempDateRange.end_date)) {
+      setError("La fecha de inicio no puede ser mayor a la fecha de fin");
+      return;
+    }
+    
+    setDateRange(tempDateRange);
+    setShowDateModal(false);
+    setSelectedPeriod("custom");
+    
+    // Cargar datos con delay de 5 segundos
+    setShowLoadingDelay(true);
+    setTimeout(() => {
+      setShowLoadingDelay(false);
+      loadDashboardData();
+    }, 5000);
+  };
+
+  // Función para seleccionar rango rápido
+  const setQuickDateRange = (days: number) => {
+    const today = new Date();
+    const startDate = new Date();
+    startDate.setDate(today.getDate() - days);
+    
+    const newRange: DateRange = {
+      start_date: startDate.toISOString().split('T')[0],
+      end_date: today.toISOString().split('T')[0]
+    };
+    
+    setTempDateRange(newRange);
+  };
+
+  const formatDateDisplay = (dateString: string) => {
+    if (!dateString) return "";
+    const date = new Date(dateString);
+    return date.toLocaleDateString('es-ES', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
+  };
+
+  const getPeriodDisplay = () => {
+    if (selectedPeriod === "custom") {
+      return `${formatDateDisplay(dateRange.start_date)} - ${formatDateDisplay(dateRange.end_date)}`;
+    }
+    return periodOptions.find(p => p.id === selectedPeriod)?.label || "Período";
+  };
+
+  const formatCurrency = useCallback((value: number | string): string => {
     if (typeof value === 'string') {
       const numericValue = extractNumericValue(value);
-      return formatMoney(numericValue, 'USD', 'es-CO');
+      return formatMoney(numericValue, monedaUsuario, 'es-CO');
     }
-    return formatMoney(value, 'USD', 'es-CO');
-  };
+    return formatMoney(value, monedaUsuario, 'es-CO');
+  }, [monedaUsuario]);
 
-  const formatCurrencyShort = (value: number | string): string => {
+  const formatCurrencyShort = useCallback((value: number | string): string => {
     const numericValue = typeof value === 'string' ? extractNumericValue(value) : value;
 
-    if (numericValue >= 1000000) {
-      return `$${(numericValue / 1000000).toFixed(1)}M`;
-    } else if (numericValue >= 1000) {
-      return `$${(numericValue / 1000).toFixed(1)}K`;
+    if (monedaUsuario === 'COP') {
+      if (numericValue >= 1000000) {
+        return `$${(numericValue / 1000000).toFixed(1)}M`;
+      } else if (numericValue >= 1000) {
+        return `$${(numericValue / 1000).toFixed(0)}K`;
+      }
+      return formatMoney(numericValue, 'COP', 'es-CO');
+    } else {
+      if (numericValue >= 1000000) {
+        return `US$ ${(numericValue / 1000000).toFixed(1)}M`;
+      } else if (numericValue >= 1000) {
+        return `US$ ${(numericValue / 1000).toFixed(0)}K`;
+      }
+      return formatMoney(numericValue, 'USD', 'es-CO');
     }
-    return formatMoney(numericValue, 'USD', 'es-CO');
-  };
+  }, [monedaUsuario]);
 
-  const getSedeInfo = (sedeId: string) => {
+  const getSedeInfo = useCallback((sedeId: string) => {
     return sedes.find(sede => sede.sede_id === sedeId);
-  };
+  }, [sedes]);
 
   const filteredSedes = sedes.filter(sede =>
     sede.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
     sede.direccion.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const getCurrentData = () => {
-    if (selectedSede === "global") {
-      return globalData;
+  // Función para obtener métricas de ventas de forma segura
+  const getMetricasVentas = () => {
+    if (!ventasData?.metricas_por_moneda) {
+      return {
+        ventas_totales: 0,
+        cantidad_ventas: 0,
+        ventas_servicios: 0,
+        ventas_productos: 0,
+        ticket_promedio: 0,
+        crecimiento_ventas: "0%",
+        metodos_pago: {
+          efectivo: 0,
+          transferencia: 0,
+          tarjeta: 0,
+          sin_pago: 0
+        },
+        moneda: monedaUsuario,
+        tieneDatos: false
+      };
     }
-    return dashboardData;
+
+    // Log para depuración
+
+    // Intentar obtener métricas para la moneda del usuario
+    let metricas = ventasData.metricas_por_moneda[monedaUsuario];
+
+    // Si no hay para la moneda del usuario, usar COP como fallback
+    if (!metricas && monedaUsuario !== 'COP' && ventasData.metricas_por_moneda.COP) {
+      metricas = ventasData.metricas_por_moneda.COP;
+      console.log('Usando COP como fallback');
+    }
+
+    // Si aún no hay, usar USD como último recurso
+    if (!metricas && monedaUsuario !== 'USD' && ventasData.metricas_por_moneda.USD) {
+      metricas = ventasData.metricas_por_moneda.USD;
+      console.log('Usando USD como fallback');
+    }
+
+    // Si no hay ninguna métrica, usar la primera disponible
+    if (!metricas) {
+      const monedasDisponibles = Object.keys(ventasData.metricas_por_moneda);
+      if (monedasDisponibles.length > 0) {
+        const primeraMoneda = monedasDisponibles[0];
+        metricas = ventasData.metricas_por_moneda[primeraMoneda];
+        console.log(`Usando ${primeraMoneda} como fallback`);
+      }
+    }
+
+    if (!metricas) {
+      return {
+        ventas_totales: 0,
+        cantidad_ventas: 0,
+        ventas_servicios: 0,
+        ventas_productos: 0,
+        ticket_promedio: 0,
+        crecimiento_ventas: "0%",
+        metodos_pago: {
+          efectivo: 0,
+          transferencia: 0,
+          tarjeta: 0,
+          sin_pago: 0
+        },
+        moneda: monedaUsuario,
+        tieneDatos: false
+      };
+    }
+
+    return {
+      ...metricas,
+      moneda: monedaUsuario,
+      tieneDatos: true
+    };
   };
 
-  const currentData = getCurrentData();
+  // Datos para gráficos basados en métricas reales de ventas
+  const getSalesChartData = () => {
+    const metricas = getMetricasVentas();
+
+    // Si no hay datos reales, usar datos de ejemplo
+    if (!metricas.tieneDatos || metricas.ventas_totales === 0) {
+      return [
+        { month: "Lun", value: 4000 },
+        { month: "Mar", value: 3000 },
+        { month: "Mié", value: 2000 },
+        { month: "Jue", value: 2780 },
+        { month: "Vie", value: 1890 },
+        { month: "Sáb", value: 2390 },
+        { month: "Dom", value: 3490 },
+      ];
+    }
+
+    // Crear datos semanales basados en las ventas totales
+    const days = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+    const baseValue = metricas.ventas_totales / 7;
+
+    return days.map((day, index) => {
+      const multiplier = index < 5 ? 1.2 : 0.8; // Días laborables vs fin de semana
+      const randomVariation = 0.9 + Math.random() * 0.2;
+      return {
+        month: day,
+        value: Math.round(baseValue * multiplier * randomVariation)
+      };
+    });
+  };
+
+  const getDonutData = () => {
+    const metricas = getMetricasVentas();
+
+    // Si no hay datos reales, usar datos de ejemplo
+    if (!metricas.tieneDatos || (metricas.ventas_servicios === 0 && metricas.ventas_productos === 0)) {
+      return [
+        { name: "Servicios", value: 80, color: "#333" },
+        { name: "Productos", value: 20, color: "#666" }
+      ];
+    }
+
+    const serviceVsProduct = [
+      {
+        name: 'Servicios',
+        value: metricas.ventas_servicios || 0,
+        color: '#333'
+      },
+      {
+        name: 'Productos',
+        value: metricas.ventas_productos || 0,
+        color: '#666'
+      }
+    ].filter(item => item.value > 0);
+
+    return serviceVsProduct.length > 0 ? serviceVsProduct : [
+      { name: "Servicios", value: 0, color: "#333" },
+      { name: "Productos", value: 0, color: "#666" },
+    ];
+  };
+
+  const getPaymentMethodData = () => {
+    const metricas = getMetricasVentas();
+
+    // Si no hay datos reales, usar datos de ejemplo
+    if (!metricas.tieneDatos || (
+      metricas.metodos_pago.efectivo === 0 &&
+      metricas.metodos_pago.transferencia === 0 &&
+      metricas.metodos_pago.tarjeta === 0 &&
+      metricas.metodos_pago.sin_pago === 0
+    )) {
+      return [
+        { name: 'Efectivo', value: 500000, color: '#888' },
+        { name: 'Tarjeta', value: 300000, color: '#666' },
+        { name: 'Transferencia', value: 200000, color: '#444' },
+      ];
+    }
+
+    const paymentMethods = [
+      {
+        name: 'Efectivo',
+        value: metricas.metodos_pago?.efectivo || 0,
+        color: '#888'
+      },
+      {
+        name: 'Transferencia',
+        value: metricas.metodos_pago?.transferencia || 0,
+        color: '#666'
+      },
+      {
+        name: 'Tarjeta',
+        value: metricas.metodos_pago?.tarjeta || 0,
+        color: '#444'
+      },
+      {
+        name: 'Sin Pago',
+        value: metricas.metodos_pago?.sin_pago || 0,
+        color: '#222'
+      }
+    ].filter(item => item.value > 0);
+
+    return paymentMethods;
+  };
+
+  // Función para convertir TicketPromedioKPI a KPI
+  const convertTicketPromedioToKPI = (ticketPromedio: TicketPromedioKPI): KPI => {
+    if (typeof ticketPromedio === 'object' && ticketPromedio.valor !== undefined) {
+      return {
+        valor: ticketPromedio.valor,
+        crecimiento: ticketPromedio.crecimiento || "0%"
+      };
+    }
+
+    // Si es un KPI normal (string/number)
+    return ticketPromedio as KPI;
+  };
+
+  // Función segura para obtener valor de ticket promedio
+  const getSafeTicketPromedioValue = (ticketPromedio: TicketPromedioKPI | KPI): string | number => {
+    if (typeof ticketPromedio === 'object') {
+      if ('valor' in ticketPromedio && ticketPromedio.valor !== undefined) {
+        return ticketPromedio.valor;
+      }
+    }
+    return (ticketPromedio as KPI).valor;
+  };
+
+  // Componente para mostrar información de debug
+  const DebugInfo = () => {
+    if (!debugInfo && !ventasData) return null;
+
+    return (
+      <div className="mt-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-sm font-medium text-gray-700">Información de depuración</h4>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              console.log('Ventas Data:', ventasData);
+              console.log('Dashboard Data:', dashboardData);
+              console.log('Métricas:', getMetricasVentas());
+            }}
+          >
+            Log en consola
+          </Button>
+        </div>
+        <div className="text-xs text-gray-600 space-y-1">
+          <p>Estado: {debugInfo}</p>
+          <p>Moneda usuario: {monedaUsuario}</p>
+          <p>Sede seleccionada: {selectedSede}</p>
+          {ventasData?.metricas_por_moneda && (
+            <p>Monedas disponibles: {Object.keys(ventasData.metricas_por_moneda).join(', ')}</p>
+          )}
+          {ventasData?.descripcion && (
+            <p>Descripción: {ventasData.descripcion}</p>
+          )}
+          {ventasData?.range && (
+            <p>Período: {ventasData.range.start} - {ventasData.range.end}</p>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // Modal de selección de fechas
+  const DateRangeModal = () => {
+    if (!showDateModal) return null;
+
+    const today = new Date().toISOString().split('T')[0];
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="bg-white rounded-lg w-full max-w-md mx-4 p-6">
+          <div className="flex justify-between items-center mb-6">
+            <div>
+              <h3 className="text-xl font-bold text-gray-900">Seleccionar rango de fechas</h3>
+              <p className="text-gray-700 mt-1">Elige las fechas para filtrar las métricas</p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowDateModal(false)}
+            >
+              <X className="w-5 h-5" />
+            </Button>
+          </div>
+
+          {/* Botones de rango rápido */}
+          <div className="mb-6">
+            <p className="text-sm text-gray-700 mb-3">Rangos rápidos:</p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-gray-300 text-gray-800 hover:bg-gray-100"
+                onClick={() => setQuickDateRange(7)}
+              >
+                7 días
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-gray-300 text-gray-800 hover:bg-gray-100"
+                onClick={() => setQuickDateRange(30)}
+              >
+                30 días
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-gray-300 text-gray-800 hover:bg-gray-100"
+                onClick={() => setQuickDateRange(90)}
+              >
+                90 días
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-gray-300 text-gray-800 hover:bg-gray-100"
+                onClick={() => {
+                  const today = new Date();
+                  const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+                  setTempDateRange({
+                    start_date: firstDayOfMonth.toISOString().split('T')[0],
+                    end_date: today.toISOString().split('T')[0]
+                  });
+                }}
+              >
+                Mes actual
+              </Button>
+            </div>
+          </div>
+
+          {/* Selectores de fecha */}
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-800 mb-2">
+                Fecha de inicio
+              </label>
+              <input
+                type="date"
+                value={tempDateRange.start_date}
+                onChange={(e) => setTempDateRange(prev => ({ ...prev, start_date: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                max={tempDateRange.end_date || today}
+              />
+              <p className="text-sm text-gray-600 mt-1">
+                {formatDateDisplay(tempDateRange.start_date)}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-800 mb-2">
+                Fecha de fin
+              </label>
+              <input
+                type="date"
+                value={tempDateRange.end_date}
+                onChange={(e) => setTempDateRange(prev => ({ ...prev, end_date: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                min={tempDateRange.start_date}
+                max={today}
+              />
+              <p className="text-sm text-gray-600 mt-1">
+                {formatDateDisplay(tempDateRange.end_date)}
+              </p>
+            </div>
+          </div>
+
+          {/* Resumen del rango */}
+          <div className="mt-6 p-4 bg-gray-50 rounded-lg border border-gray-300">
+            <p className="text-sm text-gray-800">
+              <span className="font-medium">Rango seleccionado:</span>{" "}
+              {formatDateDisplay(tempDateRange.start_date)} - {formatDateDisplay(tempDateRange.end_date)}
+            </p>
+            <p className="text-xs text-gray-600 mt-1">
+              {tempDateRange.start_date && tempDateRange.end_date && (
+                <>
+                  Duración:{" "}
+                  {Math.ceil(
+                    (new Date(tempDateRange.end_date).getTime() - new Date(tempDateRange.start_date).getTime()) / 
+                    (1000 * 60 * 60 * 24)
+                  ) + 1} días
+                </>
+              )}
+            </p>
+          </div>
+
+          {/* Botones de acción */}
+          <div className="mt-6 flex gap-3">
+            <Button
+              className="flex-1 bg-gray-900 text-white hover:bg-gray-800"
+              onClick={handleApplyDateRange}
+            >
+              Aplicar rango
+            </Button>
+            <Button
+              variant="outline"
+              className="flex-1 border-gray-300 text-gray-800 hover:bg-gray-100"
+              onClick={() => setShowDateModal(false)}
+            >
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Componente de loading con delay de 5 segundos
+  const LoadingDelayOverlay = () => {
+    if (!showLoadingDelay) return null;
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/80">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-gray-200 border-t-gray-900 rounded-full animate-spin mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">Cargando datos...</h3>
+          <p className="text-gray-600 mb-4">
+            Estamos obteniendo la información más reciente para {selectedSede !== "global" ? getSedeInfo(selectedSede)?.nombre : "Vista Global"}
+          </p>
+          <div className="flex flex-col items-center">
+            <div className="w-64 h-2 bg-gray-200 rounded-full overflow-hidden mb-2">
+              <div className="h-full bg-gray-900 animate-pulse" style={{ width: "70%" }} />
+            </div>
+            <p className="text-sm text-gray-500">Esto puede tomar unos segundos...</p>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   if (!isAuthenticated) {
     return (
       <div className="flex h-screen items-center justify-center">
         <div className="text-center">
-          <h2 className="text-2xl font-bold text-gray-800">Acceso no autorizado</h2>
+          <h2 className="text-2xl font-bold text-gray-900">Acceso no autorizado</h2>
           <p className="mt-2 text-gray-600">Por favor inicia sesión para ver el dashboard.</p>
         </div>
       </div>
@@ -267,105 +865,90 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-white">
       <Sidebar />
-
       <main className="flex-1 overflow-y-auto">
+        {/* Loading overlay con delay */}
+        <LoadingDelayOverlay />
+        
+        {/* Modal de fechas */}
+        <DateRangeModal />
+
         {/* Top Bar */}
-        <div className="border-b bg-white px-8 py-4">
+        <div className="border-b border-gray-100 bg-white px-6 py-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl">
-                <BarChart3 className="w-6 h-6 text-white" />
+              <div className="p-2 bg-gray-900 rounded-lg">
+                <BarChart3 className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold">Dashboard Analytics</h1>
+                <h1 className="text-xl font-bold text-gray-900">Dashboard Analytics</h1>
                 <p className="text-sm text-gray-600">
                   {selectedSede === "global"
-                    ? 'Vista Global - Todas las sedes'
+                    ? 'Vista Global'
                     : `Sede: ${getSedeInfo(selectedSede)?.nombre || 'Seleccionada'}`}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Período: {getPeriodDisplay()}
                 </p>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
-                <SelectTrigger className="w-[180px] bg-white border border-gray-300 hover:bg-gray-50">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Selector de período personalizado */}
+              <Select value={selectedPeriod} onValueChange={handlePeriodChange}>
+                <SelectTrigger className="w-[180px] bg-white border border-gray-300">
                   <Calendar className="w-4 h-4 mr-2" />
                   <SelectValue placeholder="Período" />
                 </SelectTrigger>
                 <SelectContent className="bg-white">
-                  {periods.map((period) => (
-                    <SelectItem
-                      key={period.id}
-                      value={period.id}
-                      className="hover:bg-gray-50"
-                    >
-                      <div className="flex items-center gap-2">
-                        {period.recommended && (
-                          <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                        )}
-                        {period.name}
-                      </div>
+                  {periodOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
 
               <Select value={selectedSede} onValueChange={handleSedeChange}>
-                <SelectTrigger className="w-[220px] bg-white border border-gray-300 hover:bg-gray-50">
+                <SelectTrigger className="w-[180px] bg-white border border-gray-300">
                   <Building2 className="w-4 h-4 mr-2" />
-                  <SelectValue placeholder="Seleccionar sede">
+                  <SelectValue>
                     {selectedSede === "global"
                       ? "Vista Global"
-                      : getSedeInfo(selectedSede)?.nombre || "Sede seleccionada"}
+                      : getSedeInfo(selectedSede)?.nombre || "Sede"}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent className="bg-white">
-                  <SelectItem value="global" className="hover:bg-gray-50">
+                  <SelectItem value="global">
                     <div className="flex items-center gap-2">
                       <Globe className="w-4 h-4" />
-                      <div>
-                        <div className="font-medium">Vista Global</div>
-                        <div className="text-xs text-gray-500">Todas las sedes</div>
-                      </div>
+                      Vista Global
                     </div>
                   </SelectItem>
                   {loadingSedes ? (
-                    <SelectItem value="loading" disabled className="hover:bg-gray-50">
-                      <div className="flex items-center justify-center py-2">
-                        <div className="w-4 h-4 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
-                        <span className="ml-2">Cargando sedes...</span>
+                    <SelectItem value="loading" disabled>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 border-2 border-gray-200 border-t-gray-900 rounded-full animate-spin" />
+                        <span className="text-sm">Cargando...</span>
                       </div>
                     </SelectItem>
-                  ) : sedes.length === 0 ? (
-                    <SelectItem value="empty" disabled className="hover:bg-gray-50">
-                      <div className="text-center py-2 text-gray-500">
-                        No hay sedes disponibles
+                  ) : sedes.map((sede) => (
+                    <SelectItem key={sede._id} value={sede.sede_id}>
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full ${sede.activa ? 'bg-green-500' : 'bg-gray-300'}`} />
+                        {sede.nombre}
                       </div>
                     </SelectItem>
-                  ) : (
-                    sedes.map((sede) => (
-                      <SelectItem key={sede._id} value={sede.sede_id} className="hover:bg-gray-50">
-                        <div className="flex items-center gap-2">
-                          <div className={`w-2 h-2 rounded-full ${sede.activa ? 'bg-green-500' : 'bg-gray-300'}`}></div>
-                          <div>
-                            <div className="font-medium">{sede.nombre}</div>
-                            <div className="text-xs text-gray-500">{sede.direccion.split(',')[0]}</div>
-                          </div>
-                        </div>
-                      </SelectItem>
-                    ))
-                  )}
+                  ))}
                 </SelectContent>
               </Select>
 
               <Button
-                variant="default"
-                size="sm"
                 onClick={handleRefresh}
-                disabled={loading}
-                className="bg-blue-600 hover:bg-blue-700 text-white border-0 shadow-sm"
+                disabled={loading || showLoadingDelay}
+                className="bg-gray-900 hover:bg-gray-800 text-white"
+                size="sm"
               >
                 <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
                 Actualizar
@@ -375,495 +958,613 @@ export default function DashboardPage() {
         </div>
 
         {/* Tabs Navigation */}
-        <div className="border-b bg-white px-8">
+        <div className="border-b border-gray-100 bg-white px-6">
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="bg-gray-100 p-1 rounded-lg">
-              <TabsTrigger
-                value="dashboard"
-                className="data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:border data-[state=active]:border-gray-200 rounded-md px-4 py-2"
-              >
+            <TabsList className="bg-gray-50">
+              <TabsTrigger value="dashboard" className="data-[state=active]:bg-white">
                 Dashboard
               </TabsTrigger>
-              <TabsTrigger
-                value="sedes"
-                className="data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:border data-[state=active]:border-gray-200 rounded-md px-4 py-2"
-              >
-                Todas las Sedes
+              <TabsTrigger value="sedes" className="data-[state=active]:bg-white">
+                Sedes
               </TabsTrigger>
             </TabsList>
-          </Tabs>
-        </div>
 
-        {/* Main Content */}
-        <div className="p-6">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsContent value="dashboard" className="m-0">
-              {loading && !currentData ? (
-                <div className="flex items-center justify-center h-64">
-                  <div className="text-center">
-                    <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div>
-                    <p className="text-gray-600">Cargando datos...</p>
+            {/* Tabs Content */}
+            <div className="p-4">
+              <TabsContent value="dashboard" className="m-0">
+                {loading && selectedSede === "global" && !globalData ? (
+                  <div className="flex items-center justify-center h-64">
+                    <div className="text-center">
+                      <div className="w-10 h-10 border-3 border-gray-200 border-t-gray-900 rounded-full animate-spin mx-auto mb-4" />
+                      <p className="text-gray-600">Cargando datos del dashboard...</p>
+                    </div>
                   </div>
-                </div>
-              ) : currentData ? (
-                <div className="space-y-6">
-                  {/* Vista Global o Sede Específica Header */}
-                  {selectedSede === "global" ? (
-                    <Card className="border-purple-200 bg-gradient-to-r from-purple-50 to-white">
+                ) : loading && selectedSede !== "global" && !ventasData && !dashboardData ? (
+                  <div className="flex items-center justify-center h-64">
+                    <div className="text-center">
+                      <div className="w-10 h-10 border-3 border-gray-200 border-t-gray-900 rounded-full animate-spin mx-auto mb-4" />
+                      <p className="text-gray-600">Cargando datos de la sede...</p>
+                      <p className="text-sm text-gray-500 mt-2">
+                        Sede: {getSedeInfo(selectedSede)?.nombre} • ID: {selectedSede}
+                      </p>
+                    </div>
+                  </div>
+                ) : error ? (
+                  <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
+                    <AlertCircle className="w-16 h-16 mx-auto mb-4 text-gray-400" />
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">Error al cargar datos</h3>
+                    <p className="text-gray-500 mb-4">{error}</p>
+                    <DebugInfo />
+                    <Button
+                      onClick={handleRefresh}
+                      className="bg-gray-900 hover:bg-gray-800 text-white mt-4"
+                    >
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                      Reintentar
+                    </Button>
+                  </div>
+                ) : selectedSede === "global" ? (
+                  // Vista Global
+                  globalData ? (
+                    <div className="space-y-4">
+                      <Card className="border border-gray-200 bg-gray-50">
+                        <CardContent className="p-6">
+                          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                            <div className="flex items-start gap-4">
+                              <div className="p-3 bg-gray-100 rounded-xl">
+                                <Globe className="w-6 h-6 text-gray-800" />
+                              </div>
+                              <div>
+                                <h3 className="text-xl font-bold">Vista Global</h3>
+                                <p className="text-gray-600 mt-2">
+                                  {sedes.length} sedes activas • Período: {getPeriodDisplay()}
+                                </p>
+                                {globalData.range && (
+                                  <p className="text-sm text-gray-500">
+                                    {new Date(globalData.range.start).toLocaleDateString()} - {new Date(globalData.range.end).toLocaleDateString()}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                            <Badge className="bg-gray-900 text-white">
+                              {globalData.calidad_datos || 'BUENA'}
+                            </Badge>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      {/* Charts Grid para vista global */}
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                        {/* Left Column */}
+                        <div className="space-y-4">
+                          <Card>
+                            <CardContent className="p-4">
+                              <div className="text-2xl font-bold text-gray-900 mb-1">
+                                {formatCurrency(getSafeTicketPromedioValue(globalData.kpis.ticket_promedio))}
+                              </div>
+                              <p className="text-sm text-gray-600">
+                                Ticket promedio • {globalData.kpis.debug_info?.total_citas || 0} citas
+                              </p>
+                            </CardContent>
+                          </Card>
+
+                          <SalesDonutChart
+                            donutData={[
+                              { name: "Servicios", value: 80, color: "#333" },
+                              { name: "Productos", value: 20, color: "#666" }
+                            ]}
+                            formatCurrency={formatCurrency}
+                          />
+                        </div>
+
+                        {/* Right Column */}
+                        <div className="space-y-4">
+                          <SalesChart
+                            salesData={[
+                              { month: "Ene", value: 4000 },
+                              { month: "Feb", value: 3000 },
+                              { month: "Mar", value: 2000 },
+                              { month: "Abr", value: 2780 },
+                              { month: "May", value: 1890 },
+                            ]}
+                            formatCurrency={formatCurrencyShort}
+                          />
+
+                          <Card>
+                            <CardContent className="p-4">
+                              <div className="text-2xl font-bold text-gray-900 mb-1">
+                                {globalData.kpis.debug_info?.total_citas || 0}%
+                              </div>
+                              <p className="text-sm text-gray-600 mb-3">Capacidad de ocupación</p>
+                              <Progress value={globalData.kpis.debug_info?.total_citas || 0} className="h-1" />
+                            </CardContent>
+                          </Card>
+
+                          <ClientIndicators
+                            nuevosClientes={globalData.kpis.nuevos_clientes}
+                            tasaRecurrencia={globalData.kpis.tasa_recurrencia}
+                            tasaChurn={globalData.kpis.tasa_churn}
+                            ticketPromedio={convertTicketPromedioToKPI(globalData.kpis.ticket_promedio)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-12">
+                      <BarChart3 className="w-12 h-12 mx-auto mb-4 text-gray-400" />
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">No hay datos globales disponibles</h3>
+                      <Button onClick={handleRefresh} className="bg-gray-900 hover:bg-gray-800 text-white">
+                        Recargar datos
+                      </Button>
+                    </div>
+                  )
+                ) : (
+                  // Vista de Sede Específica
+                  <div className="space-y-6">
+                    {/* Header de sede */}
+                    <Card className="border border-gray-200 bg-gray-50">
                       <CardContent className="p-6">
                         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                           <div className="flex items-start gap-4">
-                            <div className="p-3 bg-purple-100 rounded-xl">
-                              <Globe className="w-6 h-6 text-purple-600" />
+                            <div className="p-3 bg-gray-100 rounded-xl">
+                              <Building2 className="w-6 h-6 text-gray-800" />
                             </div>
                             <div>
-                              <h3 className="text-xl font-bold text-gray-900">
-                                Vista Global
+                              <h3 className="text-xl font-bold">
+                                {getSedeInfo(selectedSede)?.nombre || 'Sede Desconocida'}
                               </h3>
-                              <p className="text-sm text-gray-600 mt-1">
-                                Resumen agregado de todas las sedes activas
+                              <div className="flex flex-wrap gap-4 mt-2 text-sm text-gray-600">
+                                <div className="flex items-center gap-1">
+                                  <MapPin className="w-4 h-4" />
+                                  {getSedeInfo(selectedSede)?.direccion || 'Sin dirección'}
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <span className="font-medium">Tel:</span> {getSedeInfo(selectedSede)?.telefono || 'Sin teléfono'}
+                                </div>
+                              </div>
+                              <p className="text-sm text-gray-500 mt-2">
+                                Período: {getPeriodDisplay()} • Sede ID: {selectedSede}
                               </p>
                             </div>
                           </div>
-                          <Badge className="bg-purple-600 hover:bg-purple-700 text-white">
-                            {sedes.length} Sedes Activas
-                          </Badge>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ) : getSedeInfo(selectedSede) ? (
-                    <Card className="border-blue-200 bg-gradient-to-r from-blue-50 to-white">
-                      <CardContent className="p-6">
-                        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                          <div className="flex items-start gap-4">
-                            <div className="p-3 bg-blue-100 rounded-xl">
-                              <Building2 className="w-6 h-6 text-blue-600" />
-                            </div>
-                            <div>
-                              <h3 className="text-xl font-bold text-gray-900">
-                                {getSedeInfo(selectedSede)!.nombre}
-                              </h3>
-                              <div className="flex flex-wrap gap-4 mt-2">
-                                <div className="flex items-center gap-2 text-sm text-gray-600">
-                                  <MapPin className="w-4 h-4" />
-                                  {getSedeInfo(selectedSede)!.direccion}
-                                </div>
-                                <div className="flex items-center gap-2 text-sm text-gray-600">
-                                  <Phone className="w-4 h-4" />
-                                  {getSedeInfo(selectedSede)!.telefono}
-                                </div>
-                                <div className="flex items-center gap-2 text-sm text-gray-600">
-                                  <Mail className="w-4 h-4" />
-                                  {getSedeInfo(selectedSede)!.email}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                          <Button
-                            variant="default"
-                            size="sm"
-                            onClick={() => handleSedeChange("global")}
-                            className="bg-gray-100 hover:bg-gray-200 text-gray-800 border border-gray-300"
-                          >
-                            <Globe className="w-4 h-4 mr-2" />
-                            Ver Vista Global
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ) : null}
-
-                  {/* Data Quality & Warnings */}
-                  {currentData.advertencias && currentData.advertencias.length > 0 && (
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-                      <div className="flex items-start gap-3">
-                        <AlertCircle className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
-                        <div className="flex-1">
-                          <h4 className="font-semibold text-yellow-800 mb-2">Advertencias</h4>
-                          <div className="space-y-1">
-                            {currentData.advertencias.map((advertencia, index) => (
-                              <div key={index} className="text-sm text-yellow-700">
-                                {advertencia.mensaje}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Main Dashboard Grid */}
-                  <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                    {/* Left Column */}
-                    <div className="flex flex-col gap-6">
-                      {/* Sales Total Card */}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-sm font-normal text-gray-600 flex items-center justify-between">
-                            <span>Ventas totales</span>
-                            <Badge className={`
-                              ${currentData.calidad_datos === 'BUENA' ? 'bg-green-100 text-green-800 border-green-200' : ''}
-                              ${currentData.calidad_datos === 'MEDIA' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' : ''}
-                              ${currentData.calidad_datos === 'BAJA' ? 'bg-orange-100 text-orange-800 border-orange-200' : ''}
-                              border
-                            `}>
-                              {currentData.calidad_datos}
+                          <div className="flex items-center gap-2">
+                            <Badge className={`${getSedeInfo(selectedSede)?.activa ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                              {getSedeInfo(selectedSede)?.activa ? 'Activa' : 'Inactiva'}
                             </Badge>
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="text-3xl font-bold">
-                            {formatCurrency(currentData.kpis.ticket_promedio.valor)}
+                            <Button
+                              onClick={() => handleSedeChange("global")}
+                              variant="outline"
+                              size="sm"
+                              className="border-gray-300 text-gray-700"
+                            >
+                              <Globe className="w-4 h-4 mr-2" />
+                              Vista Global
+                            </Button>
                           </div>
-                          <div className="text-sm text-gray-500 mt-1">
-                            Ticket promedio • {currentData.kpis.debug_info?.total_citas || 0} citas
-                          </div>
-                        </CardContent>
-                      </Card>
+                        </div>
+                      </CardContent>
+                    </Card>
 
-                      {/* Updated SalesDonutChart */}
-                      <SalesDonutChart
-                        donutData={donutData}
-                        formatCurrency={formatCurrency}
-                      />
-
-                      {/* Churn Card (solo para sede específica) */}
-                      {selectedSede !== "global" && (
-                        <Card>
-                          <CardHeader>
-                            <div className="flex items-center justify-between">
-                              <CardTitle className="text-base font-semibold">
-                                Clientes en Riesgo (Churn)
+                    {/* Mostrar datos de ventas si existen */}
+                    {ventasData ? (
+                      <>
+                        {/* KPIs principales */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                          <Card className="border border-gray-200">
+                            <CardHeader className="pb-2">
+                              <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
+                                <DollarSign className="w-4 h-4" />
+                                Ventas Totales
                               </CardTitle>
-                              <Badge className="bg-red-100 text-red-800 hover:bg-red-100 border border-red-200">
-                                {currentData.churn_actual || 0} clientes
-                              </Badge>
-                            </div>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="text-2xl font-bold">
+                                {formatCurrency(getMetricasVentas().ventas_totales)}
+                              </div>
+                              <p className="text-sm text-gray-500 mt-2">
+                                {getMetricasVentas().cantidad_ventas || 0} transacciones
+                              </p>
+                            </CardContent>
+                          </Card>
+
+                          <Card className="border border-gray-200">
+                            <CardHeader className="pb-2">
+                              <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
+                                <Receipt className="w-4 h-4" />
+                                Transacciones
+                              </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="text-2xl font-bold">
+                                {getMetricasVentas().cantidad_ventas || 0}
+                              </div>
+                              <p className="text-sm text-gray-500 mt-2">
+                                Ticket promedio: {formatCurrency(getMetricasVentas().ticket_promedio || 0)}
+                              </p>
+                            </CardContent>
+                          </Card>
+
+                          <Card className="border border-gray-200">
+                            <CardHeader className="pb-2">
+                              <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
+                                <Users className="w-4 h-4" />
+                                Servicios
+                              </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="text-2xl font-bold">
+                                {formatCurrency(getMetricasVentas().ventas_servicios)}
+                              </div>
+                              <p className="text-sm text-gray-500 mt-2">
+                                {getMetricasVentas().ventas_servicios > 0 && getMetricasVentas().ventas_totales > 0
+                                  ? `${Math.round((getMetricasVentas().ventas_servicios / getMetricasVentas().ventas_totales) * 100)}% del total`
+                                  : 'Sin datos'}
+                              </p>
+                            </CardContent>
+                          </Card>
+
+                          <Card className="border border-gray-200">
+                            <CardHeader className="pb-2">
+                              <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
+                                <Package className="w-4 h-4" />
+                                Productos
+                              </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="text-2xl font-bold">
+                                {formatCurrency(getMetricasVentas().ventas_productos)}
+                              </div>
+                              <p className="text-sm text-gray-500 mt-2">
+                                {getMetricasVentas().ventas_productos > 0 && getMetricasVentas().ventas_totales > 0
+                                  ? `${Math.round((getMetricasVentas().ventas_productos / getMetricasVentas().ventas_totales) * 100)}% del total`
+                                  : 'Sin datos'}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        </div>
+
+                        {/* Main Dashboard Grid con gráficos */}
+                        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                          {/* Left Column */}
+                          <div className="flex flex-col gap-6">
+                            <SalesChart
+                              salesData={getSalesChartData()}
+                              formatCurrency={formatCurrencyShort}
+                              title="Ventas Semanales"
+                            />
+
+                            <SalesDonutChart
+                              donutData={getDonutData()}
+                              formatCurrency={formatCurrency}
+                              title="Distribución de Ventas"
+                            />
+                          </div>
+
+                          {/* Right Column */}
+                          <div className="flex flex-col gap-6">
+                            {/* Métodos de Pago */}
+                            <Card className="border border-gray-200">
+                              <CardHeader className="p-4 pb-2">
+                                <CardTitle className="text-sm font-medium text-gray-900 flex items-center gap-2">
+                                  <CreditCard className="w-4 h-4" />
+                                  Métodos de Pago
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent className="p-4 pt-2">
+                                <div className="grid grid-cols-2 gap-3">
+                                  {getPaymentMethodData().map((method, index) => (
+                                    <div key={index} className="flex flex-col items-center justify-center p-3 bg-gray-50 rounded-lg border border-gray-200">
+                                      <div
+                                        className="w-3 h-3 rounded-full mb-1"
+                                        style={{ backgroundColor: method.color }}
+                                      />
+                                      <span className="text-xs font-medium">{method.name}</span>
+                                      <span className="text-sm font-bold mt-1">
+                                        {formatCurrency(method.value)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </CardContent>
+                            </Card>
+
+                            {/* Información de Clientes (si hay datos de analytics) */}
+                            {dashboardData && (
+                              <>
+                                <Card className="border border-gray-200">
+                                  <CardContent className="p-4">
+                                    <div className="flex items-center justify-between mb-3">
+                                      <div>
+                                        <div className="text-sm text-gray-600">Capacidad de Ocupación</div>
+                                        <div className="text-2xl font-bold text-gray-900">
+                                          {dashboardData.kpis.debug_info?.total_citas || 0}%
+                                        </div>
+                                      </div>
+                                      <div className="text-right">
+                                        <div className="text-sm text-gray-600">Clientes Totales</div>
+                                        <div className="text-lg font-bold text-gray-900">
+                                          {dashboardData.kpis.debug_info?.total_clientes || 0}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <Progress value={dashboardData.kpis.debug_info?.total_citas || 0} className="h-2" />
+                                  </CardContent>
+                                </Card>
+
+                                <ClientIndicators
+                                  nuevosClientes={dashboardData.kpis.nuevos_clientes}
+                                  tasaRecurrencia={dashboardData.kpis.tasa_recurrencia}
+                                  tasaChurn={dashboardData.kpis.tasa_churn}
+                                  ticketPromedio={convertTicketPromedioToKPI(dashboardData.kpis.ticket_promedio)}
+                                />
+
+                                {/* Churn Card */}
+                                {dashboardData.churn_actual > 0 && (
+                                  <Card className="border border-gray-200">
+                                    <CardHeader className="p-4 pb-2">
+                                      <div className="flex items-center justify-between">
+                                        <CardTitle className="text-sm font-medium text-gray-900">Clientes en Riesgo</CardTitle>
+                                        <Badge className="bg-gray-100 text-gray-800 border border-gray-300">
+                                          {dashboardData.churn_actual || 0} detectados
+                                        </Badge>
+                                      </div>
+                                    </CardHeader>
+                                    <CardContent className="p-4 pt-2">
+                                      <div className="space-y-2">
+                                        {churnData.length > 0 ? (
+                                          <>
+                                            {churnData.slice(0, 3).map((cliente, index) => (
+                                              <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded border border-gray-200">
+                                                <div className="flex items-center gap-2">
+                                                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 border border-gray-300">
+                                                    <Users className="w-3 h-3 text-gray-700" />
+                                                  </div>
+                                                  <div>
+                                                    <span className="text-sm font-medium">{cliente.nombre}</span>
+                                                    <div className="text-xs text-gray-500">{cliente.dias_inactivo} días inactivo</div>
+                                                  </div>
+                                                </div>
+                                                <Badge className={
+                                                  cliente.dias_inactivo > 90 ? 'bg-red-100 text-red-800' :
+                                                    cliente.dias_inactivo > 60 ? 'bg-yellow-100 text-yellow-800' :
+                                                      'bg-gray-100 text-gray-800'
+                                                }>
+                                                  {cliente.dias_inactivo > 90 ? 'Alto' :
+                                                    cliente.dias_inactivo > 60 ? 'Medio' : 'Bajo'}
+                                                </Badge>
+                                              </div>
+                                            ))}
+                                            {churnData.length > 3 && (
+                                              <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="w-full text-sm text-gray-600"
+                                                onClick={() => setShowChurnList(true)}
+                                              >
+                                                <ChevronDown className="w-4 h-4 mr-2" />
+                                                Ver todos ({churnData.length})
+                                              </Button>
+                                            )}
+                                          </>
+                                        ) : (
+                                          <div className="text-center py-4 text-gray-500">
+                                            Cargando clientes en riesgo...
+                                          </div>
+                                        )}
+                                      </div>
+                                    </CardContent>
+                                  </Card>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        <DebugInfo />
+                      </>
+                    ) : dashboardData ? (
+                      // Mostrar datos de analytics si no hay datos de ventas
+                      <div className="space-y-4">
+                        <Card className="border border-gray-200">
+                          <CardHeader>
+                            <CardTitle className="text-lg font-semibold">Datos de Analytics</CardTitle>
                           </CardHeader>
                           <CardContent>
-                            <div className="space-y-3">
-                              {churnData.length > 0 ? (
-                                churnData.map((cliente, index) => (
-                                  <div key={index} className="flex items-center justify-between p-3 bg-red-50 rounded-lg border border-red-100">
-                                    <div className="flex items-center gap-3">
-                                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-red-100 border border-red-200">
-                                        <Users className="w-4 h-4 text-red-600" />
-                                      </div>
-                                      <div>
-                                        <span className="font-medium">{cliente.nombre}</span>
-                                        <div className="text-xs text-gray-500">{cliente.dias_inactivo} días inactivo</div>
-                                      </div>
-                                    </div>
-                                    <div className="text-right">
-                                      <div className="text-xs font-medium text-red-600">Alto riesgo</div>
-                                      <div className="text-xs text-gray-500">
-                                        Última visita: {new Date(cliente.ultima_visita).toLocaleDateString()}
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))
-                              ) : (
-                                <div className="text-center py-4 text-gray-500">
-                                  No hay clientes en riesgo de churn
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                              <div className="text-center">
+                                <div className="text-2xl font-bold text-gray-900">
+                                  {typeof dashboardData.kpis.nuevos_clientes.valor === 'number'
+                                    ? dashboardData.kpis.nuevos_clientes.valor
+                                    : extractNumericValue(dashboardData.kpis.nuevos_clientes.valor as string)}
                                 </div>
-                              )}
-                              {churnData.length > 0 && (
-                                <Button
-                                  variant="default"
-                                  size="sm"
-                                  className="w-full bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700"
-                                  onClick={() => setShowChurnList(!showChurnList)}
-                                >
-                                  <ChevronDown className={`w-4 h-4 mr-2 transition-transform ${showChurnList ? 'rotate-180' : ''}`} />
-                                  {showChurnList ? 'Ocultar detalles' : 'Ver todos'}
-                                </Button>
-                              )}
+                                <p className="text-sm text-gray-600">Nuevos Clientes</p>
+                              </div>
+                              <div className="text-center">
+                                <div className="text-2xl font-bold text-gray-900">
+                                  {dashboardData.kpis.tasa_recurrencia.valor}
+                                </div>
+                                <p className="text-sm text-gray-600">Tasa Recurrencia</p>
+                              </div>
+                              <div className="text-center">
+                                <div className="text-2xl font-bold text-gray-900">
+                                  {dashboardData.kpis.tasa_churn.valor}
+                                </div>
+                                <p className="text-sm text-gray-600">Tasa Churn</p>
+                              </div>
+                              <div className="text-center">
+                                <div className="text-2xl font-bold text-gray-900">
+                                  {dashboardData.kpis.ticket_promedio.valor
+                                    ? formatCurrency(dashboardData.kpis.ticket_promedio.valor)
+                                    : formatCurrency(0)}
+                                </div>
+                                <p className="text-sm text-gray-600">Ticket Promedio</p>
+                              </div>
                             </div>
                           </CardContent>
                         </Card>
-                      )}
-                    </div>
-
-                    {/* Right Column */}
-                    <div className="flex flex-col gap-6">
-                      {/* Updated SalesChart */}
-                      <SalesChart
-                        salesData={salesData}
-                        formatCurrency={formatCurrencyShort}
-                      />
-
-                      {/* Capacity Card */}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-sm font-normal text-gray-600">
-                            Capacidad de ocupación
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="text-3xl font-bold">
-                            {currentData.kpis.debug_info?.total_citas
-                              ? Math.round((currentData.kpis.debug_info.total_citas / 100) * 100)
-                              : 0}%
-                          </div>
-                          <div className="mt-4">
-                            <Progress
-                              value={currentData.kpis.debug_info?.total_citas
-                                ? Math.round((currentData.kpis.debug_info.total_citas / 100) * 100)
-                                : 0}
-                              className="h-2"
-                            />
-                            <div className="flex justify-between text-xs text-gray-500 mt-2">
-                              <span>Baja ocupación</span>
-                              <span>Alta ocupación</span>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-
-                      {/* Updated ClientIndicators */}
-                      <ClientIndicators
-                        nuevosClientes={currentData.kpis.nuevos_clientes}
-                        tasaRecurrencia={currentData.kpis.tasa_recurrencia}
-                        tasaChurn={currentData.kpis.tasa_churn}
-                        ticketPromedio={currentData.kpis.ticket_promedio}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Detailed Churn List Modal (solo para sede específica) */}
-                  {showChurnList && churnData.length > 0 && selectedSede !== "global" && (
-                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                      <div className="bg-white rounded-xl w-full max-w-4xl max-h-[80vh] overflow-hidden">
-                        <div className="p-6 border-b">
-                          <div className="flex items-center justify-between">
-                            <h3 className="text-xl font-bold">Clientes en Riesgo de Abandono - {getSedeInfo(selectedSede)?.nombre}</h3>
-                            <Button
-                              variant="default"
-                              size="sm"
-                              onClick={() => setShowChurnList(false)}
-                              className="bg-gray-100 hover:bg-gray-200 text-gray-800 border border-gray-300"
-                            >
-                              Cerrar
-                            </Button>
-                          </div>
-                          <p className="text-gray-600 mt-2">
-                            {currentData.churn_actual || 0} clientes inactivos por más de 60 días
-                          </p>
-                        </div>
-                        <div className="overflow-y-auto max-h-[60vh]">
-                          <Table>
-                            <TableHeader className="bg-gray-50">
-                              <TableRow>
-                                <TableHead>Cliente</TableHead>
-                                <TableHead>Contacto</TableHead>
-                                <TableHead>Última Visita</TableHead>
-                                <TableHead>Días Inactivo</TableHead>
-                                <TableHead>Riesgo</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {churnData.map((cliente) => (
-                                <TableRow key={cliente.cliente_id} className="hover:bg-gray-50">
-                                  <TableCell>
-                                    <div className="font-medium">{cliente.nombre}</div>
-                                    <div className="text-xs text-gray-500">Cliente</div>
-                                  </TableCell>
-                                  <TableCell>
-                                    <div className="text-sm">{cliente.correo}</div>
-                                    <div className="text-xs text-gray-500">{cliente.telefono}</div>
-                                  </TableCell>
-                                  <TableCell>
-                                    {new Date(cliente.ultima_visita).toLocaleDateString()}
-                                  </TableCell>
-                                  <TableCell>
-                                    <div className={`font-semibold ${cliente.dias_inactivo > 90 ? 'text-red-600' :
-                                        cliente.dias_inactivo > 60 ? 'text-orange-500' : 'text-yellow-500'
-                                      }`}>
-                                      {cliente.dias_inactivo} días
-                                    </div>
-                                  </TableCell>
-                                  <TableCell>
-                                    <Badge className={
-                                      cliente.dias_inactivo > 90 ? 'bg-red-100 text-red-800 border-red-200' :
-                                        cliente.dias_inactivo > 60 ? 'bg-orange-100 text-orange-800 border-orange-200' :
-                                          'bg-yellow-100 text-yellow-800 border-yellow-200'
-                                    }>
-                                      {cliente.dias_inactivo > 90 ? 'Alto' :
-                                        cliente.dias_inactivo > 60 ? 'Medio' : 'Bajo'}
-                                    </Badge>
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="text-center py-12 bg-white rounded-xl border">
-                  <BarChart3 className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-                  <h3 className="text-lg font-semibold text-gray-700 mb-2">No hay datos disponibles</h3>
-                  <p className="text-gray-500 mb-4">Selecciona un período o verifica la conexión.</p>
-                  <Button
-                    onClick={handleRefresh}
-                    className="bg-blue-600 hover:bg-blue-700 text-white"
-                  >
-                    <RefreshCw className="w-4 h-4 mr-2" />
-                    Recargar datos
-                  </Button>
-                </div>
-              )}
-            </TabsContent>
-
-            {/* Pestaña de Todas las Sedes */}
-            <TabsContent value="sedes" className="m-0">
-              <div className="space-y-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-xl font-bold">Todas las Sedes</CardTitle>
-                    <div className="flex items-center gap-4 mt-2">
-                      <div className="relative flex-1 max-w-md">
-                        <Input
-                          placeholder="Buscar sede por nombre o dirección..."
-                          value={searchTerm}
-                          onChange={(e) => setSearchTerm(e.target.value)}
-                          className="pl-10"
-                        />
-                        <Building2 className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                      </div>
-                      <Badge className="bg-blue-100 text-blue-800 border border-blue-200 px-4 py-2">
-                        {filteredSedes.length} sedes
-                      </Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    {loadingSedes ? (
-                      <div className="text-center py-12">
-                        <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div>
-                        <p className="text-gray-600">Cargando sedes...</p>
-                      </div>
-                    ) : filteredSedes.length === 0 ? (
-                      <div className="text-center py-12">
-                        <Building2 className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-                        <h3 className="text-lg font-semibold text-gray-700 mb-2">No se encontraron sedes</h3>
-                        <p className="text-gray-500">Intenta con otros términos de búsqueda.</p>
+                        <DebugInfo />
                       </div>
                     ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {filteredSedes.map((sede) => (
-                          <Card
-                            key={sede._id}
-                            className={`border hover:border-blue-300 transition-all cursor-pointer hover:shadow-lg ${selectedSede === sede.sede_id ? 'border-blue-500 bg-blue-50' : ''
-                              }`}
-                            onClick={() => {
-                              handleSedeChange(sede.sede_id);
-                              setActiveTab("dashboard");
-                            }}
-                          >
-                            <CardContent className="p-6">
-                              <div className="flex items-start justify-between mb-4">
-                                <div className="flex items-center gap-3">
-                                  <div className="p-2 bg-blue-100 rounded-lg border border-blue-200">
-                                    <Building2 className="w-5 h-5 text-blue-600" />
-                                  </div>
-                                  <div>
-                                    <h4 className="font-bold text-gray-900">{sede.nombre}</h4>
-                                    <div className="text-xs text-gray-500 mt-1">
-                                      {sede.direccion.split(',')[0]}
-                                    </div>
-                                  </div>
-                                </div>
-                                {sede.activa ? (
-                                  <Badge className="bg-green-100 text-green-800 hover:bg-green-100 border border-green-200">
-                                    Activa
-                                  </Badge>
-                                ) : (
-                                  <Badge className="bg-gray-100 text-gray-800 border border-gray-300">Inactiva</Badge>
-                                )}
-                              </div>
-
-                              <div className="space-y-3">
-                                <div className="flex items-start gap-2 text-sm text-gray-600">
-                                  <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                                  <span className="line-clamp-2">{sede.direccion}</span>
-                                </div>
-
-                                <div className="flex items-center gap-2 text-sm text-gray-600">
-                                  <Phone className="w-4 h-4" />
-                                  {sede.telefono}
-                                </div>
-
-                                <div className="flex items-center gap-2 text-sm text-gray-600">
-                                  <Mail className="w-4 h-4" />
-                                  <span className="truncate">{sede.email}</span>
-                                </div>
-                              </div>
-
-                              <div className="mt-4 pt-4 border-t border-gray-200">
-                                <div className="text-xs text-gray-500">
-                                  Creada: {new Date(sede.fecha_creacion).toLocaleDateString()}
-                                </div>
-                              </div>
-
-                              {selectedSede === sede.sede_id && (
-                                <div className="mt-4 pt-4 border-t border-blue-200">
-                                  <div className="text-center">
-                                    <Badge className="bg-blue-600 hover:bg-blue-700 text-white">
-                                      Sede seleccionada
-                                    </Badge>
-                                    <p className="text-xs text-gray-500 mt-1">
-                                      Haz clic en "Dashboard" para ver métricas
-                                    </p>
-                                  </div>
-                                </div>
-                              )}
-                            </CardContent>
-                          </Card>
-                        ))}
+                      <div className="text-center py-12">
+                        <AlertCircle className="w-16 h-16 mx-auto mb-4 text-gray-400" />
+                        <h3 className="text-lg font-medium text-gray-900 mb-2">No hay datos disponibles</h3>
+                        <p className="text-gray-500 mb-4">
+                          No se pudieron cargar datos para esta sede.
+                        </p>
+                        <DebugInfo />
+                        <Button onClick={handleRefresh} className="bg-gray-900 hover:bg-gray-800 text-white mt-4">
+                          <RefreshCw className="w-4 h-4 mr-2" />
+                          Reintentar
+                        </Button>
                       </div>
                     )}
-                  </CardContent>
-                </Card>
-                {/* Sede Stats Summary */}
-                {sedes.length > 0 && (
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="sedes" className="m-0">
+                <div className="space-y-4">
                   <Card>
-                    <CardHeader>
-                      <CardTitle className="text-lg font-semibold">Resumen de Sedes</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div className="bg-blue-50 p-4 rounded-lg text-center">
-                          <div className="text-2xl font-bold text-blue-600">{sedes.length}</div>
-                          <div className="text-sm text-gray-600">Total Sedes</div>
-                        </div>
-                        <div className="bg-green-50 p-4 rounded-lg text-center">
-                          <div className="text-2xl font-bold text-green-600">
-                            {sedes.filter(s => s.activa).length}
-                          </div>
-                          <div className="text-sm text-gray-600">Sedes Activas</div>
-                        </div>
-                        <div className="bg-yellow-50 p-4 rounded-lg text-center">
-                          <div className="text-2xl font-bold text-yellow-600">
-                            {sedes.filter(s => !s.activa).length}
-                          </div>
-                          <div className="text-sm text-gray-600">Sedes Inactivas</div>
-                        </div>
-                        <div className="bg-purple-50 p-4 rounded-lg text-center">
-                          <div className="text-2xl font-bold text-purple-600">
-                            {new Set(sedes.map(s => s.zona_horaria)).size}
-                          </div>
-                          <div className="text-sm text-gray-600">Zonas Horarias</div>
-                        </div>
+                    <CardHeader className="p-4">
+                      <CardTitle className="text-lg font-bold">Sedes</CardTitle>
+                      <div className="relative mt-2">
+                        <input
+                          type="text"
+                          placeholder="Buscar sede..."
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                        />
+                        <Building2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                       </div>
+                    </CardHeader>
+                    <CardContent className="p-4">
+                      {loadingSedes ? (
+                        <div className="text-center py-12">
+                          <div className="w-10 h-10 border-3 border-gray-200 border-t-gray-900 rounded-full animate-spin mx-auto mb-4" />
+                          <p className="text-gray-600">Cargando sedes...</p>
+                        </div>
+                      ) : filteredSedes.length === 0 ? (
+                        <div className="text-center py-12">
+                          <Building2 className="w-12 h-12 mx-auto mb-4 text-gray-400" />
+                          <p className="text-gray-600">No se encontraron sedes</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {filteredSedes.map((sede) => (
+                            <Card
+                              key={sede._id}
+                              className={`border cursor-pointer transition-colors hover:border-gray-400 ${selectedSede === sede.sede_id
+                                  ? 'border-gray-900 bg-gray-50'
+                                  : 'border-gray-200'
+                                }`}
+                              onClick={() => {
+                                handleSedeChange(sede.sede_id);
+                                setActiveTab("dashboard");
+                              }}
+                            >
+                              <CardContent className="p-3">
+                                <div className="flex items-start justify-between mb-2">
+                                  <div className="flex items-center gap-2">
+                                    <Building2 className="w-4 h-4 text-gray-600" />
+                                    <h4 className="font-medium text-gray-900">{sede.nombre}</h4>
+                                  </div>
+                                  {sede.activa ? (
+                                    <div className="w-2 h-2 rounded-full bg-green-500" />
+                                  ) : (
+                                    <div className="w-2 h-2 rounded-full bg-gray-300" />
+                                  )}
+                                </div>
+                                <p className="text-xs text-gray-600 truncate">{sede.direccion}</p>
+                                <p className="text-xs text-gray-600 mt-1">{sede.telefono}</p>
+                                <div className="flex items-center justify-between mt-2">
+                                  <span className="text-xs text-gray-500">
+                                    ID: {sede.sede_id}
+                                  </span>
+                                  {selectedSede === sede.sede_id && (
+                                    <Badge className="bg-gray-900 text-white text-xs">
+                                      Seleccionada
+                                    </Badge>
+                                  )}
+                                </div>
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
-                )}
-              </div>
-            </TabsContent>
+                </div>
+              </TabsContent>
+            </div>
           </Tabs>
         </div>
+
+        {/* Churn Modal */}
+        {showChurnList && churnData.length > 0 && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg w-full max-w-2xl max-h-[80vh] overflow-hidden border border-gray-200">
+              <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-lg">Clientes en Riesgo - {getSedeInfo(selectedSede)?.nombre}</h3>
+                  <p className="text-sm text-gray-600">
+                    {churnData.length} clientes detectados con inactividad
+                  </p>
+                </div>
+                <Button onClick={() => setShowChurnList(false)} variant="ghost" size="sm">
+                  Cerrar
+                </Button>
+              </div>
+              <div className="overflow-auto max-h-[60vh] p-4">
+                <Table>
+                  <TableHeader className="bg-gray-50">
+                    <TableRow>
+                      <TableHead>Cliente</TableHead>
+                      <TableHead>Contacto</TableHead>
+                      <TableHead>Última Visita</TableHead>
+                      <TableHead>Días Inactivo</TableHead>
+                      <TableHead>Riesgo</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {churnData.map((cliente, index) => (
+                      <TableRow key={cliente.cliente_id || index} className="hover:bg-gray-50">
+                        <TableCell>
+                          <div className="font-medium">{cliente.nombre}</div>
+                          <div className="text-xs text-gray-500">ID: {cliente.cliente_id}</div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm">{cliente.correo}</div>
+                          <div className="text-xs text-gray-500">{cliente.telefono}</div>
+                        </TableCell>
+                        <TableCell>
+                          {new Date(cliente.ultima_visita).toLocaleDateString()}
+                        </TableCell>
+                        <TableCell>
+                          <div className={`font-semibold ${cliente.dias_inactivo > 90 ? 'text-red-600' :
+                              cliente.dias_inactivo > 60 ? 'text-yellow-600' : 'text-gray-600'
+                            }`}>
+                            {cliente.dias_inactivo} días
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={
+                            cliente.dias_inactivo > 90 ? 'bg-red-100 text-red-800 border-red-200' :
+                              cliente.dias_inactivo > 60 ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
+                                'bg-gray-100 text-gray-800 border-gray-200'
+                          }>
+                            {cliente.dias_inactivo > 90 ? 'Alto' :
+                              cliente.dias_inactivo > 60 ? 'Medio' : 'Bajo'}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

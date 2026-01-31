@@ -28,51 +28,54 @@ export async function getCitas(params?: { sede_id?: string; profesional_id?: str
 }
 
 export async function crearCita(data: any, token: string) {
-  // 🔥 Asegurar que todos los campos numéricos sean números
+  // ⭐ PREPARAR DATOS SEGÚN EL NUEVO FORMATO DEL BACKEND
   const citaData = {
+    // IDs principales
     sede_id: data.sede_id,
     profesional_id: data.profesional_id,
-    servicio_id: data.servicio_id,
     cliente_id: data.cliente_id,
+    
+    // ⭐ SERVICIOS (ARRAY) - NUEVO FORMATO
+    servicios: data.servicios || [],  // ✅ ESTO ES LO QUE FALTABA
+    
+    // Fecha y hora
     fecha: data.fecha,
     hora_inicio: data.hora_inicio,
     hora_fin: data.hora_fin,
-    estado: data.estado || "confirmada",
-
-    // 🔥 CAMPOS DE PAGO (¡IMPORTANTE!)
-    metodo_pago: data.metodo_pago || "efectivo",
+    
+    // Pago
+    metodo_pago_inicial: data.metodo_pago || data.metodo_pago_inicial || "sin_pago",
     abono: Number(data.abono) || 0,
-    valor_total: Number(data.valor_total) || 0,
-    saldo_pendiente: Number(data.saldo_pendiente) || 0,
-    estado_pago: data.estado_pago || "pendiente",
-    moneda: data.moneda || "USD",
-
-    // Campos denormalizados
-    cliente_nombre: data.cliente_nombre || "",
-    cliente_email: data.cliente_email || "",
-    cliente_telefono: data.cliente_telefono || "",
-    servicio_nombre: data.servicio_nombre || "",
-    servicio_duracion: Number(data.servicio_duracion) || 60,
-    profesional_nombre: data.profesional_nombre || "",
-    profesional_email: data.profesional_email || "",
-    sede_nombre: data.sede_nombre || "",
-    sede_direccion: data.sede_direccion || "",
-    sede_telefono: data.sede_telefono || "",
-
-    // Otros
-    notas: data.notas || "",
-    creada_por: data.creada_por || "sistema"
+    
+    // Opcional
+    notas: data.notas || ""
   };
 
-  console.log("📤 Enviando datos COMPLETOS de cita al backend:", {
-    ...citaData,
-    resumen_pago: {
-      abono: citaData.abono,
-      total: citaData.valor_total,
-      saldo: citaData.saldo_pendiente,
-      estado: citaData.estado_pago
+  // 🔥 VALIDACIÓN - VERIFICAR QUE SERVICIOS NO ESTÉ VACÍO
+  if (!citaData.servicios || citaData.servicios.length === 0) {
+    console.error('❌ ERROR: servicios está vacío o no existe');
+    console.error('📦 data recibido:', data);
+    throw new Error('Debe incluir al menos un servicio');
+  }
+
+  // 🔥 VALIDACIÓN - VERIFICAR FORMATO DE SERVICIOS
+  for (const servicio of citaData.servicios) {
+    if (!servicio.servicio_id) {
+      console.error('❌ ERROR: servicio sin servicio_id:', servicio);
+      throw new Error('Cada servicio debe tener un servicio_id');
     }
-  });
+    // precio_personalizado puede ser null o number
+    if (servicio.precio_personalizado !== null && typeof servicio.precio_personalizado !== 'number') {
+      console.error('❌ ERROR: precio_personalizado debe ser null o number:', servicio);
+      throw new Error('precio_personalizado debe ser null o un número');
+    }
+  }
+
+  console.log("═══════════════════════════════════");
+  console.log("📤 Enviando cita al backend:");
+  console.log("📋 Servicios:", JSON.stringify(citaData.servicios, null, 2));
+  console.log("📦 Payload completo:", JSON.stringify(citaData, null, 2));
+  console.log("═══════════════════════════════════");
 
   try {
     const res = await fetch(`${API_BASE_URL}scheduling/quotes/`, {
@@ -87,7 +90,7 @@ export async function crearCita(data: any, token: string) {
 
     if (!res.ok) {
       const errorText = await res.text();
-      console.error('❌ Error response:', errorText);
+      console.error('❌ Error response del backend:', errorText);
 
       let errorData;
       try {
@@ -96,12 +99,18 @@ export async function crearCita(data: any, token: string) {
         errorData = { detail: errorText || "Error al crear cita" };
       }
 
-      // 🔥 MEJOR MANEJO DE ERRORES DE VALIDACIÓN
+      // 🔥 MANEJO DE ERRORES DE VALIDACIÓN DE PYDANTIC
       if (errorData.detail && Array.isArray(errorData.detail)) {
-        // Es un error de validación de Pydantic
         const firstError = errorData.detail[0];
         const field = firstError.loc[firstError.loc.length - 1];
         const message = firstError.msg;
+
+        // 🔥 ERROR ESPECÍFICO PARA SERVICIOS
+        if (field === 'servicios') {
+          console.error('❌ Error en servicios:', firstError);
+          console.error('📦 Servicios enviados:', citaData.servicios);
+          throw new Error(`Error en servicios: ${message}`);
+        }
 
         if (field === 'fecha') {
           throw new Error(`Error en la fecha: ${message}. Fecha enviada: ${data.fecha}`);
@@ -113,23 +122,21 @@ export async function crearCita(data: any, token: string) {
 
         // 🔥 MANEJO MEJORADO DE ERRORES
         if (errorDetail.includes("no tiene horario asignado")) {
-          throw new Error("El estilista no tiene horario configurado para este día. Contacta al administrador.");
+          throw new Error("El estilista no tiene horario configurado para este día.");
         } else if (errorDetail.includes("fuera del horario laboral")) {
           throw new Error("La cita está fuera del horario laboral del estilista.");
         } else if (errorDetail.includes("ya tiene una cita")) {
           throw new Error("El estilista ya tiene una cita programada en ese horario.");
         } else if (errorDetail.includes("bloqueado")) {
           throw new Error("El horario está bloqueado. Selecciona otro horario.");
-        } else if (errorDetail.includes("profesional_id")) {
-          throw new Error("Error con el ID del profesional. Verifica los datos del estilista.");
         } else if (errorDetail.includes("Cliente no encontrado")) {
-          throw new Error("El cliente no existe en el sistema. Verifica los datos del cliente.");
+          throw new Error("El cliente no existe en el sistema.");
         } else if (errorDetail.includes("Servicio no encontrado")) {
-          throw new Error("El servicio no existe. Verifica los datos del servicio.");
+          throw new Error("El servicio no existe.");
         } else if (errorDetail.includes("Profesional no encontrado")) {
-          throw new Error("El estilista no existe. Verifica los datos del estilista.");
+          throw new Error("El estilista no existe.");
         } else if (errorDetail.includes("Sede no encontrada")) {
-          throw new Error("La sede no existe. Verifica los datos de la sede.");
+          throw new Error("La sede no existe.");
         } else {
           throw new Error(errorDetail);
         }

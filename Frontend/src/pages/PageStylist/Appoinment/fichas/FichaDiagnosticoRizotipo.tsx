@@ -184,6 +184,47 @@ export function FichaDiagnosticoRizotipo({ cita, datosIniciales, onGuardar, onSu
         throw new Error('No hay token de autenticación');
       }
 
+      // Función para obtener datos del estilista desde sessionStorage
+      const getEstilistaData = () => {
+        try {
+          const estilistaNombre = sessionStorage.getItem('beaux-name') || "Estilista";
+          const estilistaEmail = sessionStorage.getItem('beaux-email') || "";
+          // Usar el estilista_id de la cita que es el ID real en la base de datos
+          const estilistaId = cita.estilista_id; // ← CORRECCIÓN AQUÍ
+          const estilistaRole = sessionStorage.getItem('beaux-role') || "estilista";
+
+          // Formatear el nombre si viene como email
+          let nombreFormateado = estilistaNombre;
+          if (estilistaNombre.includes('@')) {
+            const namePart = estilistaNombre.split('@')[0];
+            nombreFormateado = namePart
+              .replace(/[._]/g, ' ')
+              .split(' ')
+              .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+              .join(' ');
+          }
+
+          return {
+            nombre: nombreFormateado,
+            email: estilistaEmail,
+            id: estilistaId, // ← ID REAL del profesional
+            role: estilistaRole
+          };
+        } catch (error) {
+          console.error('Error obteniendo datos del estilista:', error);
+          return {
+            nombre: "Estilista",
+            email: "",
+            id: cita.estilista_id,
+            role: "estilista"
+          };
+        }
+      };
+
+      // Obtener datos del estilista actual
+      const estilistaData = getEstilistaData();
+      console.log('📋 Datos del estilista:', estilistaData);
+
       // 1. Crear FormData
       const formDataToSend = new FormData();
 
@@ -200,14 +241,15 @@ export function FichaDiagnosticoRizotipo({ cita, datosIniciales, onGuardar, onSu
       const fichaData = {
         // Campos REQUERIDOS
         cliente_id: cita.cliente.cliente_id,
-        servicio_id: cita.servicio.servicio_id,
-        profesional_id: cita.estilista_id,
+        servicio_id: cita.servicios?.[0]?.servicio_id || "",
+        profesional_id: estilistaData.id, // ← ESTE ES EL ID CORRECTO
         sede_id: cita.sede?.sede_id || 'sede_default',
         tipo_ficha: "DIAGNOSTICO_RIZOTIPO",
 
         // Información básica
-        servicio_nombre: cita.servicio.nombre || "",
-        profesional_nombre: "Estilista",
+        servicio_nombre: cita.servicios?.map((s: any) => s.nombre).join(', ') || "",
+        profesional_nombre: estilistaData.nombre,
+        profesional_email: estilistaData.email, // ← Puedes agregar el email también
         fecha_ficha: new Date().toISOString(),
         fecha_reserva: cita.fecha || "",
 
@@ -219,7 +261,7 @@ export function FichaDiagnosticoRizotipo({ cita, datosIniciales, onGuardar, onSu
         telefono: cita.cliente.telefono || "",
 
         // Información financiera
-        precio: cita.servicio.precio || 0,
+        precio: cita.precio_total || cita.servicios?.reduce((sum: number, s: any) => sum + (s.precio || 0), 0) || 0,
         estado: "completado",
         estado_pago: "pagado",
 
@@ -228,6 +270,9 @@ export function FichaDiagnosticoRizotipo({ cita, datosIniciales, onGuardar, onSu
           cita_id: cita.cita_id,
           firma_profesional: formData.firma_profesional,
           fecha_firma: new Date().toISOString(),
+          profesional_firmante: estilistaData.nombre,
+          profesional_firmante_id: estilistaData.id,
+          profesional_firmante_email: estilistaData.email,
           plasticidad: formData.plasticidad,
           permeabilidad: formData.permeabilidad,
           porosidad: formData.porosidad,
@@ -248,52 +293,68 @@ export function FichaDiagnosticoRizotipo({ cita, datosIniciales, onGuardar, onSu
             pregunta_id: 1,
             pregunta: "Plasticidad",
             respuesta: formData.plasticidad,
-            observaciones: ""
+            observaciones: "",
+            respondido_por: estilistaData.nombre,
+            respondido_por_id: estilistaData.id
           },
           {
             pregunta_id: 2,
             pregunta: "Permeabilidad",
             respuesta: formData.permeabilidad,
-            observaciones: ""
+            observaciones: "",
+            respondido_por: estilistaData.nombre,
+            respondido_por_id: estilistaData.id
           },
           {
             pregunta_id: 3,
             pregunta: "Porosidad",
             respuesta: formData.porosidad,
-            observaciones: ""
+            observaciones: "",
+            respondido_por: estilistaData.nombre,
+            respondido_por_id: estilistaData.id
           },
           {
             pregunta_id: 4,
             pregunta: "Exterior Lipídico",
             respuesta: formData.exterior_lipidico,
-            observaciones: ""
+            observaciones: "",
+            respondido_por: estilistaData.nombre,
+            respondido_por_id: estilistaData.id
           },
           {
             pregunta_id: 5,
             pregunta: "Densidad",
             respuesta: formData.densidad,
-            observaciones: ""
+            observaciones: "",
+            respondido_por: estilistaData.nombre,
+            respondido_por_id: estilistaData.id
           },
           {
             pregunta_id: 6,
             pregunta: "Oleosidad",
             respuesta: formData.oleosidad,
-            observaciones: ""
+            observaciones: "",
+            respondido_por: estilistaData.nombre,
+            respondido_por_id: estilistaData.id
           },
           {
             pregunta_id: 7,
             pregunta: "Grosor",
             respuesta: formData.grosor,
-            observaciones: ""
+            observaciones: "",
+            respondido_por: estilistaData.nombre,
+            respondido_por_id: estilistaData.id
           },
           {
             pregunta_id: 8,
             pregunta: "Textura",
             respuesta: formData.textura,
-            observaciones: ""
+            observaciones: "",
+            respondido_por: estilistaData.nombre,
+            respondido_por_id: estilistaData.id
           }
         ],
-        descripcion_servicio: `Diagnóstico rizotipo para ${cita.servicio.nombre}`,
+        descripcion_servicio: `Diagnóstico rizotipo para ${cita.servicios?.map((s: any) => s.nombre).join(', ') || 'Sin servicio'} - Realizado por ${estilistaData.nombre}`,
 
         // Fotos (URLs vacías porque el backend las subirá a S3)
         fotos_antes: [],
@@ -306,6 +367,7 @@ export function FichaDiagnosticoRizotipo({ cita, datosIniciales, onGuardar, onSu
 
       // 4. Debug info
       console.log("📤 Enviando datos de ficha DIAGNOSTICO_RIZOTIPO:", fichaData);
+      console.log("👤 Estilista que crea la ficha:", estilistaData);
 
       // 5. Agregar el campo 'data' como string JSON
       formDataToSend.append('data', JSON.stringify(fichaData));
@@ -352,7 +414,7 @@ export function FichaDiagnosticoRizotipo({ cita, datosIniciales, onGuardar, onSu
         localStorage.removeItem(`ficha_diagnostico_rizotipo_${cita.cita_id}`);
 
         // Notificar éxito
-        alert('✅ Ficha de Diagnóstico Rizotipo creada exitosamente');
+        alert(`✅ Ficha de Diagnóstico Rizotipo creada exitosamente por ${estilistaData.nombre}`);
         onSubmit(data);
       } else {
         throw new Error(data.message || 'Error al crear la ficha');
@@ -477,7 +539,7 @@ export function FichaDiagnosticoRizotipo({ cita, datosIniciales, onGuardar, onSu
         <h3 className="font-semibold mb-2">Información del servicio</h3>
         <div className="grid grid-cols-2 gap-2">
           <p><strong>Cliente:</strong> {cita.cliente.nombre} {cita.cliente.apellido}</p>
-          <p><strong>Servicio:</strong> {cita.servicio.nombre}</p>
+          <p><strong>Servicio(s):</strong> {cita.servicios?.map((s: any) => s.nombre).join(', ') || 'Sin servicio'}</p>
           <p><strong>Fecha:</strong> {cita.fecha}</p>
           <p><strong>Hora:</strong> {cita.hora_inicio}</p>
         </div>
@@ -695,7 +757,6 @@ export function FichaDiagnosticoRizotipo({ cita, datosIniciales, onGuardar, onSu
         </label>
       </div>
 
-      {/* FIRMA DEL PROFESIONAL - OBLIGATORIO */}
       {/* FIRMA DEL PROFESIONAL - OBLIGATORIO */}
       <div className="flex items-center space-x-2 p-4 border rounded-lg bg-blue-50">
         <input

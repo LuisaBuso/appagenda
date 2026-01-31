@@ -1490,7 +1490,7 @@ export function AttentionProtocol({
               <div>
                 <span className="font-medium text-gray-600">Servicio:</span>
                 <p className="font-semibold">
-                  {citaSeleccionada.servicio.nombre}
+                  {citaSeleccionada.servicios?.map((s: any) => s.nombre).join(', ') || citaSeleccionada.servicio?.nombre || 'Sin servicio'}
                 </p>
               </div>
               <div>
@@ -1663,7 +1663,8 @@ export function AttentionProtocol({
           <div>
             <h2 className="text-lg font-bold">Protocolo de atención</h2>
             <p className="text-sm text-gray-600 mt-1">
-              {citaSeleccionada.cliente.nombre} - {citaSeleccionada.servicio.nombre}
+              {citaSeleccionada.cliente.nombre} - {
+                citaSeleccionada.servicios?.map((s: any) => s.nombre).join(', ') ||  citaSeleccionada.servicio?.nombre || 'Sin servicio'}
             </p>
             <p className="text-xs text-gray-500">
               {citaSeleccionada.fecha} • {citaSeleccionada.hora_inicio} - {citaSeleccionada.hora_fin}

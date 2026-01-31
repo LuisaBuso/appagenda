@@ -1,4 +1,4 @@
-// src/components/EstilistaDashboard.tsx - VERSIÓN COMPLETA CON REFRESCO DE BLOQUEOS
+// src/components/EstilistaDashboard.tsx - VERSIÓN ACTUALIZADA
 "use client";
 
 import { useState, useEffect } from "react";
@@ -8,6 +8,41 @@ import { StylistStats } from './stylist-stats';
 import { AttentionProtocol } from './attention-protocol';
 import { Sidebar } from '../../../components/Layout/Sidebar';
 import { getBloqueosProfesional, Bloqueo } from '../../../components/Quotes/bloqueosApi';
+
+// ⭐ HELPER: Calcular precio total de una cita con múltiples servicios
+const calcularPrecioTotalCita = (cita: any): number => {
+  // Si tiene array de servicios (nuevo formato)
+  if (cita.servicios && Array.isArray(cita.servicios) && cita.servicios.length > 0) {
+    return cita.servicios.reduce((total: number, servicio: any) => {
+      return total + (servicio.precio || 0);
+    }, 0);
+  }
+  
+  // Si tiene servicio único (formato antiguo - compatibilidad)
+  if (cita.servicio?.precio) {
+    return cita.servicio.precio;
+  }
+  
+  // Si tiene precio_total directo
+  if (cita.precio_total) {
+    return cita.precio_total;
+  }
+  
+  return 0;
+};
+
+// ⭐ HELPER: Obtener nombres de servicios concatenados
+const obtenerNombresServicios = (cita: any): string => {
+  if (cita.servicios && Array.isArray(cita.servicios) && cita.servicios.length > 0) {
+    return cita.servicios.map((s: any) => s.nombre).join(', ');
+  }
+  
+  if (cita.servicio?.nombre) {
+    return cita.servicio.nombre;
+  }
+  
+  return 'Sin servicio';
+};
 
 export default function VistaEstilistaPage() {
   const { 
@@ -29,18 +64,24 @@ export default function VistaEstilistaPage() {
            '';
   };
 
+  useEffect(() => {
+    // 🔥 AUTO-SELECCIONAR FECHA DE LA PRIMERA CITA (solo para desarrollo)
+    if (citas.length > 0 && !fechaFiltro) {
+      const primeraFecha = citas[0].fecha.split('T')[0];
+      setFechaFiltro(primeraFecha);
+    }
+  }, [citas]);
+
   // Obtener ID del profesional desde las citas
   useEffect(() => {
     const obtenerProfesionalIdDeCitas = () => {
       if (citas && citas.length > 0) {
-        // Buscar la primera cita que tenga estilista_id
-        const primeraCitaConId = citas.find(cita => cita.estilista_id);
-        if (primeraCitaConId?.estilista_id) {
-          return primeraCitaConId.estilista_id;
+        const primeraCitaConId = citas.find(cita => cita.profesional_id);
+        if (primeraCitaConId?.profesional_id) {
+          return primeraCitaConId.profesional_id;
         }
       }
       
-      // Si no hay citas o no tienen estilista_id, buscar en localStorage/sessionStorage
       try {
         const userDataLS = localStorage.getItem('user');
         const userDataSS = sessionStorage.getItem('user');
@@ -52,7 +93,6 @@ export default function VistaEstilistaPage() {
           }
         }
         
-        // Fallback: buscar en campos individuales
         const profesionalIdLS = localStorage.getItem('beaux-profesional_id');
         const profesionalIdSS = sessionStorage.getItem('beaux-profesional_id');
         
@@ -60,7 +100,7 @@ export default function VistaEstilistaPage() {
           return profesionalIdLS || profesionalIdSS || "";
         }
         
-        console.warn("⚠️ No se encontró estilista_id en citas ni en storage");
+        console.warn("⚠️ No se encontró profesional_id");
         return "";
       } catch (error) {
         console.error('Error obteniendo profesional_id:', error);
@@ -72,31 +112,23 @@ export default function VistaEstilistaPage() {
     setProfesionalId(id);
   }, [citas]);
 
-  // Cargar bloqueos cuando tenemos el profesionalId
+  // Cargar bloqueos
   useEffect(() => {
     const cargarBloqueos = async () => {
-      if (!profesionalId) {
-        console.log("⏳ Esperando profesionalId para cargar bloqueos...");
-        return;
-      }
+      if (!profesionalId) return;
       
       try {
         const token = getAuthToken();
-        
         if (!token) {
-          console.warn("❌ No hay token para cargar bloqueos");
           setBloqueos([]);
           return;
         }
 
-        console.log(`🔍 Cargando bloqueos para profesional: ${profesionalId}`);
-        
         const bloqueosData = await getBloqueosProfesional(profesionalId, token);
         
         if (Array.isArray(bloqueosData)) {
           setBloqueos(bloqueosData);
         } else {
-          console.warn("⚠️ La respuesta de bloqueos no es un array:", bloqueosData);
           setBloqueos([]);
         }
       } catch (error) {
@@ -150,16 +182,17 @@ export default function VistaEstilistaPage() {
       })
     : bloqueos;
 
-  // Calcular estadísticas
+  // ⭐ CALCULAR ESTADÍSTICAS CON NUEVA LÓGICA
   const citasFiltradasCount = citasFiltradas.length;
   const serviciosCompletadosFiltrados = citasFiltradas.filter(cita => 
     estaCompletada(cita)
   ).length;
   
+  // ⭐ NUEVO: Calcular ventas usando helper que suma múltiples servicios
   const totalVentasFiltradas = citasFiltradas
     .filter(cita => estaCompletada(cita))
     .reduce((total, cita) => {
-      return total + (cita.servicio?.precio || 0);
+      return total + calcularPrecioTotalCita(cita);
     }, 0);
 
   // Manejar selección de fecha
@@ -244,7 +277,7 @@ export default function VistaEstilistaPage() {
             </div>
           </div>
 
-          {/* Sección de fecha */}
+          {/* Resto del código mobile igual... */}
           <div className="mb-4 bg-white border rounded p-3">
             <div className="flex items-center justify-between">
               <div>
@@ -272,10 +305,7 @@ export default function VistaEstilistaPage() {
             </div>
           </div>
 
-          {/* Contenido */}
           <div className="space-y-3">
-            
-            {/* LISTA DE CITAS Y BLOQUEOS */}
             <div className="bg-white border rounded p-3">
               <h3 className="font-medium text-sm mb-2 text-gray-900">Citas y Bloqueos</h3>
               <AppointmentsList 
@@ -288,7 +318,6 @@ export default function VistaEstilistaPage() {
               />
             </div>
 
-            {/* CALENDARIO */}
             <div className="bg-white border rounded p-3">
               <h3 className="font-medium text-sm mb-1.5 text-gray-900">Seleccionar fecha</h3>
               <p className="text-xs text-gray-500 mb-2">Elige un día para ver citas</p>
@@ -300,7 +329,6 @@ export default function VistaEstilistaPage() {
               </div>
             </div>
 
-            {/* VENTAS */}
             <div className="bg-white border rounded p-3">
               <h3 className="font-medium text-sm mb-2 text-gray-900">Resumen de Ventas</h3>
               <StylistStats 
@@ -313,9 +341,8 @@ export default function VistaEstilistaPage() {
           </div>
         </div>
 
-        {/* VERSIÓN DESKTOP */}
+        {/* VERSIÓN DESKTOP - Igual que mobile pero con layout diferente */}
         <div className="hidden lg:block">
-          {/* Header */}
           <div className="mb-6">
             <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
             <p className="text-sm text-gray-600 mt-1">
@@ -330,7 +357,6 @@ export default function VistaEstilistaPage() {
             </p>
           </div>
 
-          {/* Stats Cards */}
           <div className="mb-6 grid grid-cols-5 gap-4">
             <div className="rounded border bg-white p-4">
               <h3 className="text-sm font-medium mb-1.5 text-gray-900">
@@ -363,9 +389,7 @@ export default function VistaEstilistaPage() {
             </div>
           </div>
 
-          {/* Main Grid */}
           <div className="grid grid-cols-12 gap-4">
-            {/* CITAS Y BLOQUEOS */}
             <div className="col-span-3">
               <div className="rounded border bg-white p-3">
                 <h3 className="font-medium text-sm mb-3 text-gray-900">Citas y Bloqueos</h3>
@@ -380,7 +404,6 @@ export default function VistaEstilistaPage() {
               </div>
             </div>
 
-            {/* PROTOCOLO */}
             <div className="col-span-6">
               <div className="rounded border bg-white p-3">
                 <AttentionProtocol 
@@ -390,7 +413,6 @@ export default function VistaEstilistaPage() {
               </div>
             </div>
 
-            {/* VENTAS */}
             <div className="col-span-3">
               <div className="rounded border bg-white p-3">
                 <h3 className="font-medium text-sm mb-3 text-gray-900">Ventas</h3>
@@ -408,3 +430,6 @@ export default function VistaEstilistaPage() {
     </div>
   );
 }
+
+// ⭐ EXPORTAR HELPERS PARA USAR EN OTROS COMPONENTES
+export { calcularPrecioTotalCita, obtenerNombresServicios };

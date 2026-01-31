@@ -1,224 +1,511 @@
-import { useEffect, useState } from 'react';
-import { Sidebar } from '../../../components/Layout/Sidebar';
-import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
-import { Input } from '../../../components/ui/input';
-import { Badge } from '../../../components/ui/badge';
-import { Search } from 'lucide-react';
-import { API_BASE_URL } from '../../../types/config';
+"use client"
 
-// Elimina el import de useAuth si no funciona
-// import { useAuth } from '../../../contexts/AuthContext';
+import { useState, useEffect } from "react"
+import { Search, Package, AlertTriangle, BarChart3, Loader2, Filter, ChevronRight, TrendingUp, TrendingDown, Box } from "lucide-react"
+import { Button } from "../../../components/ui/button"
+import { Input } from "../../../components/ui/input"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../../../components/ui/card"
+import { Badge } from "../../../components/ui/badge"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select"
+import { Separator } from "../../../components/ui/separator"
+import { inventarioService } from "./inventario"
+import type { InventarioProducto } from "./inventario"
+import { Sidebar } from "../../../components/Layout/Sidebar"
+import { useAuth } from "../../../components/Auth/AuthContext" // Ajusta la ruta según tu estructura
 
-export default function Products() {
-  const [products, setProducts] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
+export function ProductsList() {
+  const [searchTerm, setSearchTerm] = useState("")
+  const [selectedCategoria, setSelectedCategoria] = useState("all")
+  const [showLowStock, setShowLowStock] = useState(false)
+  const [productos, setProductos] = useState<InventarioProducto[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [categorias, setCategorias] = useState<string[]>([])
   
-  // Obtener información del usuario directamente del localStorage/sessionStorage
-  const getUserInfoFromStorage = () => {
-    const email = localStorage.getItem('beaux-email') || sessionStorage.getItem('beaux-email');
-    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
-    const pais = localStorage.getItem('beaux-pais') || sessionStorage.getItem('beaux-pais');
+  // Usar el AuthContext en lugar de sessionStorage
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth()
+  
+  // Obtener datos de la sede desde el AuthContext
+  // También mantenemos compatibilidad con sessionStorage como fallback
+  const sedeId = user?.sede_id || sessionStorage.getItem("beaux-sede_id")
+  const nombreLocal = user?.nombre_local || sessionStorage.getItem("beaux-nombre_local")
+
+  // Cargar inventario
+  useEffect(() => {
+    if (!authLoading && sedeId) {
+      cargarInventario()
+    }
+  }, [showLowStock, authLoading, sedeId])
+
+  // Mostrar mensaje si no está autenticado
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      setError("Debes iniciar sesión para acceder al inventario")
+      setIsLoading(false)
+    }
+  }, [authLoading, isAuthenticated])
+
+  // Extraer categorías únicas
+  useEffect(() => {
+    if (productos.length > 0) {
+      const categoriasUnicas = Array.from(new Set(productos.map(p => p.categoria).filter(Boolean)))
+      setCategorias(categoriasUnicas)
+    }
+  }, [productos])
+
+  const cargarInventario = async () => {
+    try {
+      setIsLoading(true)
+      setError(null)
+      
+      // Verificar que tenemos los datos necesarios
+      if (!sedeId) {
+        throw new Error("No se encontró información de la sede")
+      }
+
+      if (!user?.token && !sessionStorage.getItem("access_token")) {
+        throw new Error("No hay token de autenticación disponible")
+      }
+
+      // Pasar el token y sede_id al servicio
+      const inventario = await inventarioService.getInventarioUsuario(
+        showLowStock,
+        user?.token || sessionStorage.getItem("access_token"),
+        sedeId
+      )
+      
+      setProductos(inventario)
+      
+    } catch (err) {
+      console.error("Error cargando inventario:", err)
+      const errorMessage = err instanceof Error ? err.message : "Error al cargar el inventario. Por favor, intenta nuevamente."
+      setError(errorMessage)
+      setProductos([])
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Filtrar productos
+  const productosFiltrados = productos.filter(producto => {
+    // Filtro por término de búsqueda
+    if (searchTerm) {
+      const termino = searchTerm.toLowerCase()
+      const cumpleBusqueda = 
+        producto.nombre.toLowerCase().includes(termino) ||
+        producto.producto_id.toLowerCase().includes(termino) ||
+        producto.producto_codigo.toLowerCase().includes(termino)
+      
+      if (!cumpleBusqueda) return false
+    }
+    
+    // Filtro por categoría
+    if (selectedCategoria !== "all" && producto.categoria !== selectedCategoria) {
+      return false
+    }
+    
+    return true
+  })
+
+  // Calcular estadísticas
+  const calcularEstadisticas = () => {
+    const totalProductos = productos.length
+    const productosBajoStock = productos.filter(p => p.stock_actual <= p.stock_minimo).length
+    const productosSinStock = productos.filter(p => p.stock_actual === 0).length
+    const totalStock = productos.reduce((sum, p) => sum + p.stock_actual, 0)
+    const stockPromedio = productos.length > 0 ? Math.round(totalStock / productos.length) : 0
     
     return {
-      email,
-      token,
-      pais: pais || undefined
-    };
-  };
-  
-  const userInfo = getUserInfoFromStorage();
-  const token = userInfo.token;
-  const pais = userInfo.pais;
-
-  // Función para determinar la moneda basada en el país del usuario
-  const getCurrencyForCountry = (pais?: string): string => {
-    if (!pais) return 'USD'; // Por defecto USD
-    
-    const countryCurrencyMap: Record<string, string> = {
-      'Colombia': 'COP',
-      'México': 'MXN',
-      'Mexico': 'MXN',
-      'Ecuador': 'USD',
-      'Perú': 'USD',
-      'Chile': 'USD',
-      'Argentina': 'USD',
-      'Estados Unidos': 'USD',
-      'United States': 'USD',
-      'USA': 'USD',
-    };
-    
-    return countryCurrencyMap[pais] || 'USD';
-  };
-
-  useEffect(() => {
-    const fetchProducts = async () => {
-      try {
-        // Verificar si hay token
-        if (!token) {
-          console.error("No hay token de autenticación disponible");
-          setLoading(false);
-          return;
-        }
-
-        // Determinar la moneda basada en el país
-        const moneda = getCurrencyForCountry(pais);
-        
-        // Construir la URL con el parámetro de moneda
-        const url = `${API_BASE_URL}inventary/product/productos/?moneda=${moneda}`;
-        
-        const res = await fetch(url, {
-          headers: {
-            'accept': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-        
-        if (!res.ok) {
-          throw new Error(`Error ${res.status}: ${res.statusText}`);
-        }
-        
-        const data = await res.json();
-        setProducts(data || []);
-      } catch (error) {
-        console.error("Error cargando productos", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchProducts();
-  }, [token, pais]);
-
-  const filteredProducts = products.filter((p) =>
-    p.nombre?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  // Función para formatear el precio según la moneda
-  const formatPrice = (product: any) => {
-    if (!product) return '$0';
-    
-    // Usar precio_local si existe (viene del backend con conversión)
-    const price = product.precio_local || product.precio || 0;
-    const currency = product.moneda_local || getCurrencyForCountry(pais) || 'USD';
-    
-    // Formatear según la moneda
-    switch (currency) {
-      case 'COP':
-        return `$${price.toLocaleString('es-CO')}`;
-      case 'MXN':
-        return `$${price.toLocaleString('es-MX')}`;
-      case 'USD':
-        return `$${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      default:
-        return `$${price.toLocaleString()}`;
+      totalProductos,
+      productosBajoStock,
+      productosSinStock,
+      totalStock,
+      stockPromedio
     }
-  };
+  }
 
-  // Función para obtener el símbolo de moneda
-  const getCurrencySymbol = (product: any) => {
-    const currency = product.moneda_local || getCurrencyForCountry(pais) || 'USD';
-    switch (currency) {
-      case 'COP': return 'COP';
-      case 'MXN': return 'MXN';
-      case 'USD': return 'USD';
-      default: return '';
-    }
-  };
+  const stats = calcularEstadisticas()
 
-  if (loading) return <div className="p-8">Loading products...</div>;
+  // Función para determinar el color del stock
+  const getStockColor = (stockActual: number, stockMinimo: number) => {
+    if (stockActual === 0) return "bg-red-50 text-red-700 border-red-100"
+    if (stockActual <= stockMinimo) return "bg-amber-50 text-amber-700 border-amber-100"
+    if (stockActual <= stockMinimo * 2) return "bg-blue-50 text-blue-700 border-blue-100"
+    return "bg-emerald-50 text-emerald-700 border-emerald-100"
+  }
+
+  // Mostrar loading mientras se verifica la autenticación
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen bg-gray-50">
+        <Sidebar />
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-gray-400 mb-4" />
+          <p className="text-gray-600 ml-2">Verificando autenticación...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Mostrar mensaje de error si no está autenticado
+  if (!isAuthenticated) {
+    return (
+      <div className="flex min-h-screen bg-gray-50">
+        <Sidebar />
+        <div className="flex-1 flex flex-col items-center justify-center">
+          <AlertTriangle className="h-12 w-12 text-red-500 mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Acceso no autorizado</h2>
+          <p className="text-gray-600 mb-4">Debes iniciar sesión para acceder a esta página</p>
+          <Button 
+            onClick={() => window.location.href = "/login"} // Ajusta la ruta según tu aplicación
+            className="bg-blue-600 hover:bg-blue-700"
+          >
+            Ir al inicio de sesión
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex min-h-screen bg-gray-50">
       <Sidebar />
-
-      <main className="flex-1 overflow-y-auto">
-        <div className="p-8">
+      <div className="flex-1">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          {/* Header */}
           
-          {/* HEADER */}
-          <div className="flex justify-between items-center mb-8">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Productos</h1>
-              <p className="text-gray-600 mt-2">
-                Administre los productos y el inventario de su salón
-                {pais && (
-                  <span className="ml-2 text-sm text-gray-500">
-                    (Prices in {getCurrencyForCountry(pais)} for {pais})
-                  </span>
-                )}
-              </p>
-            </div>
-
-          </div>
-
-          {/* SEARCH */}
-          <div className="mb-6">
-            <div className="relative max-w-md">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-              <Input
-                placeholder="Buscar "
-                className="pl-10 bg-white"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
+          <div className="mb-8">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
+                  <span>Dashboard</span>
+                  <ChevronRight className="h-3 w-3" />
+                  <span>Inventario</span>
+                  <ChevronRight className="h-3 w-3" />
+                  <span className="text-gray-700 font-medium">Productos</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h1 className="text-3xl font-bold text-gray-900">Inventario</h1>
+                    <p className="text-gray-600 mt-2">
+                      Gestión de productos y control de stock
+                    </p>
+                  </div>
+                  
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* TABLE */}
-          <Card className="bg-white shadow-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg font-semibold text-gray-900">
-                Productos
-              </CardTitle>
-            </CardHeader>
+          {/* Información de sede */}
+          {sedeId && nombreLocal && (
+            <div className="mb-6 p-4 bg-white rounded-lg border border-gray-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-gray-100 rounded-lg">
+                    <Box className="h-5 w-5 text-gray-700" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{nombreLocal}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Badge variant="outline" className="text-xs">
+                    {productos.length} productos
+                  </Badge>
+                  <Badge 
+                    variant="outline" 
+                    className={`text-xs ${
+                      isAuthenticated 
+                        ? "border-green-200 bg-green-50 text-green-700" 
+                        : "border-gray-200"
+                    }`}
+                  >
+                    {isAuthenticated ? "Conectado" : "Desconectado"}
+                  </Badge>
+                </div>
+              </div>
+            </div>
+          )}
 
-            <CardContent className="pt-0">
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-gray-200">
-                      <th className="text-left py-4 px-4 text-sm font-medium text-gray-700">Nombre</th>
-                      <th className="text-left py-4 px-4 text-sm font-medium text-gray-700">Categoria</th>
-                      <th className="text-left py-4 px-4 text-sm font-medium text-gray-700">Precio</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {filteredProducts.map((product: any, index: number) => (
-                      <tr key={index} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50">
-                        
-                        <td className="py-4 px-4">
-                          <span className="text-sm font-medium text-gray-900">{product.nombre}</span>
-
-                        </td>
-
-                        <td className="py-4 px-4">
-                          <Badge variant="outline" className="text-xs">
-                            {product.categoria}
-                          </Badge>
-                        </td>
-
-                        <td className="py-4 px-4">
-                          <div className="flex flex-col">
-                            <span className="text-sm font-medium text-gray-900">
-                              {formatPrice(product)}
-                            </span>
-                            <span className="text-xs text-gray-500">
-                              {getCurrencySymbol(product)}
-                            </span>
-                          </div>
-                        </td>
-
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          {/* Filtros */}
+          <Card className="mb-6 border-gray-200">
+            <CardContent className="pt-6">
+              <div className="flex flex-col lg:flex-row gap-4">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <Input
+                    placeholder="Buscar productos por nombre, ID o código..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10 border-gray-300 focus:border-gray-400 focus:ring-gray-400"
+                    disabled={isLoading}
+                  />
+                </div>
+                
+                <div className="flex gap-3">
+                  <Select value={selectedCategoria} onValueChange={setSelectedCategoria} disabled={isLoading}>
+                    <SelectTrigger className="w-full lg:w-48 border-gray-300">
+                      <SelectValue placeholder="Categoría" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas las categorías</SelectItem>
+                      {categorias.map((categoria, index) => (
+                        <SelectItem key={index} value={categoria}>{categoria}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  
+                  <Button
+                    variant={showLowStock ? "default" : "outline"}
+                    onClick={() => setShowLowStock(!showLowStock)}
+                    className={`border-gray-300 ${showLowStock ? "bg-amber-600 hover:bg-amber-700" : ""}`}
+                    disabled={isLoading}
+                  >
+                    <Filter className="h-4 w-4 mr-2" />
+                    {showLowStock ? "Mostrar Todo" : "Stock Bajo"}
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
 
+          {/* Estadísticas */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <Card className="border-gray-200 hover:border-gray-300 transition-colors">
+              <CardContent className="pt-6">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-600 mb-2">Total Productos</p>
+                    <p className="text-2xl font-bold text-gray-900">{stats.totalProductos}</p>
+                  </div>
+                  <div className="p-3 bg-blue-50 rounded-lg">
+                    <Package className="h-5 w-5 text-blue-600" />
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center text-xs text-gray-500">
+                  <TrendingUp className="h-3 w-3 text-green-500 mr-1" />
+                  <span>En inventario</span>
+                </div>
+              </CardContent>
+            </Card>
+            
+            <Card className="border-gray-200 hover:border-gray-300 transition-colors">
+              <CardContent className="pt-6">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-600 mb-2">Stock Total</p>
+                    <p className="text-2xl font-bold text-gray-900">{stats.totalStock}</p>
+                  </div>
+                  <div className="p-3 bg-emerald-50 rounded-lg">
+                    <BarChart3 className="h-5 w-5 text-emerald-600" />
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center text-xs text-gray-500">
+                  <span>Promedio: {stats.stockPromedio} por producto</span>
+                </div>
+              </CardContent>
+            </Card>
+            
+            <Card className="border-gray-200 hover:border-gray-300 transition-colors">
+              <CardContent className="pt-6">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-600 mb-2">Bajo Stock</p>
+                    <p className="text-2xl font-bold text-gray-900">{stats.productosBajoStock}</p>
+                  </div>
+                  <div className="p-3 bg-amber-50 rounded-lg">
+                    <AlertTriangle className="h-5 w-5 text-amber-600" />
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <div className="flex items-center text-xs text-gray-500">
+                    <TrendingDown className="h-3 w-3 text-amber-500 mr-1" />
+                    <span>{stats.totalProductos > 0 ? Math.round((stats.productosBajoStock / stats.totalProductos) * 100) : 0}% del inventario</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            
+            <Card className="border-gray-200 hover:border-gray-300 transition-colors">
+              <CardContent className="pt-6">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-600 mb-2">Sin Stock</p>
+                    <p className="text-2xl font-bold text-gray-900">{stats.productosSinStock}</p>
+                  </div>
+                  <div className="p-3 bg-red-50 rounded-lg">
+                    <AlertTriangle className="h-5 w-5 text-red-600" />
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <div className="flex items-center text-xs text-gray-500">
+                    <TrendingDown className="h-3 w-3 text-red-500 mr-1" />
+                    <span>Requieren atención inmediata</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Estado de carga/error */}
+          {isLoading && (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-gray-400 mb-4" />
+              <p className="text-gray-600">Cargando inventario...</p>
+              <p className="text-sm text-gray-500 mt-1">Obteniendo datos de productos</p>
+            </div>
+          )}
+
+          {error && !isLoading && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+              <div className="flex items-start">
+                <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5 mr-3" />
+                <div className="flex-1">
+                  <p className="text-red-700 font-medium">{error}</p>
+                  <p className="text-sm text-red-600 mt-1">Verifica tu conexión e intenta nuevamente</p>
+                </div>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={cargarInventario}
+                  className="border-red-300 text-red-700 hover:bg-red-50"
+                >
+                  Reintentar
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Tabla de Productos */}
+          {!isLoading && !error && (
+            <Card className="border-gray-200">
+              <CardHeader className="border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-lg font-semibold text-gray-900">
+                      Productos en Inventario
+                    </CardTitle>
+                    <CardDescription className="text-gray-600">
+                      Lista completa de productos con sus niveles de stock
+                    </CardDescription>
+                  </div>
+                  <Badge variant="outline" className="text-xs font-medium">
+                    {productosFiltrados.length} de {productos.length} productos
+                  </Badge>
+                </div>
+              </CardHeader>
+              
+              <CardContent className="pt-6">
+                {productosFiltrados.length === 0 ? (
+                  <div className="text-center py-12">
+                    <div className="mx-auto w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                      <Package className="h-8 w-8 text-gray-400" />
+                    </div>
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">
+                      {productos.length === 0 
+                        ? "No hay productos en el inventario" 
+                        : "No se encontraron productos"}
+                    </h3>
+                    <p className="text-gray-600 max-w-sm mx-auto">
+                      {productos.length === 0 
+                        ? "Aún no hay productos registrados en el inventario de esta sede."
+                        : "Intenta ajustar los filtros o cambiar los términos de búsqueda."}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {productosFiltrados.map((producto) => (
+                      <div key={producto._id} className="group">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 hover:bg-gray-50 transition-colors">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start gap-3">
+                              <div className="p-2 bg-gray-100 rounded-lg mt-1">
+                                <Package className="h-4 w-4 text-gray-600" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <h4 className="text-sm font-semibold text-gray-900 truncate">
+                                    {producto.nombre}
+                                  </h4>
+                                  <Badge variant="outline" className="text-xs">
+                                    {producto.producto_id}
+                                  </Badge>
+                                </div>
+                                <div className="flex items-center flex-wrap gap-3 text-xs text-gray-500">
+                                  <span>Código: {producto.producto_codigo}</span>
+                                  <span>•</span>
+                                  <span>Categoría: {producto.categoria || "Sin categoría"}</span>
+                                  <span>•</span>
+                                  <span>Mínimo: {producto.stock_minimo}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="flex flex-col sm:items-end gap-3 mt-4 sm:mt-0">
+                            <div className="flex items-center gap-4">
+                              <div className="text-right">
+                                <p className="text-lg font-bold text-gray-900">{producto.stock_actual}</p>
+                                <p className="text-xs text-gray-500">Stock actual</p>
+                              </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-2">
+                              <Badge className={`${getStockColor(producto.stock_actual, producto.stock_minimo)} text-xs font-medium px-2 py-1`}>
+                                {producto.stock_actual === 0 
+                                  ? "Sin Stock" 
+                                  : producto.stock_actual <= producto.stock_minimo 
+                                    ? "Bajo Stock" 
+                                    : "Disponible"}
+                              </Badge>
+                              <span className="text-xs text-gray-500">
+                                Actualizado: {new Date(producto.fecha_ultima_actualizacion).toLocaleDateString("es-ES")}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <Separator className="mt-4 last:hidden" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Resumen */}
+          {!isLoading && !error && productosFiltrados.length > 0 && (
+            <div className="mt-6 p-4 bg-white border border-gray-200 rounded-lg">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="text-sm text-gray-600">
+                  <p>
+                    <strong className="font-medium text-gray-900">Resumen del inventario:</strong>{" "}
+                    {stats.productosBajoStock > 0 && (
+                      <span className="text-amber-600">{stats.productosBajoStock} productos con stock bajo</span>
+                    )}
+                    {stats.productosBajoStock > 0 && stats.productosSinStock > 0 && ", "}
+                    {stats.productosSinStock > 0 && (
+                      <span className="text-red-600">{stats.productosSinStock} productos sin stock</span>
+                    )}
+                    {(stats.productosBajoStock === 0 && stats.productosSinStock === 0) && 
+                      <span className="text-emerald-600">Todo el inventario en niveles óptimos</span>
+                    }
+                  </p>
+                </div>
+                
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <span>Total de productos:</span>
+                  <span className="font-medium text-gray-900">{stats.totalProductos}</span>
+                  <span className="mx-2">•</span>
+                  <span>Stock total:</span>
+                  <span className="font-medium text-gray-900">{stats.totalStock}</span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-      </main>
+      </div>
     </div>
-  );
+  )
 }

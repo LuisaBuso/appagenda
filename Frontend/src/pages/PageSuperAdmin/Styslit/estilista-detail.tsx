@@ -1,6 +1,7 @@
 "use client"
 
-import { Edit, Trash2, Mail, Calendar, Building, Percent, Star, Clock } from 'lucide-react'
+import { Edit, Trash2, Mail, Calendar, Building, Percent, Star, Clock, User } from 'lucide-react'
+import { Button } from "../../../components/ui/button"
 import type { Estilista } from "../../../types/estilista"
 
 interface EstilistaDetailProps {
@@ -13,8 +14,14 @@ export function EstilistaDetail({ estilista, onEdit, onDelete }: EstilistaDetail
   // 🔥 CORREGIDO: Verificaciones de seguridad
   if (!estilista) {
     return (
-      <div className="flex h-full items-center justify-center text-gray-500">
-        No hay datos del estilista disponibles
+      <div className="flex h-full flex-col items-center justify-center p-8">
+        <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mb-4">
+          <User className="h-8 w-8 text-gray-400" />
+        </div>
+        <h3 className="text-lg font-medium text-gray-900 mb-2">No hay datos del estilista</h3>
+        <p className="text-sm text-gray-600 text-center max-w-sm">
+          Selecciona un estilista de la lista para ver sus detalles
+        </p>
       </div>
     )
   }
@@ -47,7 +54,7 @@ export function EstilistaDetail({ estilista, onEdit, onDelete }: EstilistaDetail
     try {
       return new Date(dateString).toLocaleDateString('es-ES', {
         year: 'numeric',
-        month: 'long',
+        month: 'short',
         day: 'numeric'
       })
     } catch {
@@ -57,48 +64,56 @@ export function EstilistaDetail({ estilista, onEdit, onDelete }: EstilistaDetail
 
   return (
     <div className="h-full overflow-y-auto bg-white">
-      {/* Header */}
-      <div className="border-b bg-gradient-to-r from-blue-50 to-indigo-50 p-6">
-        <div className="flex items-start justify-between">
+      {/* Header minimalista */}
+      <div className="border-b border-gray-100 p-6">
+        <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-4">
-            <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white text-xl font-bold shadow-lg">
+            <div className="w-14 h-14 bg-gray-900 rounded-full flex items-center justify-center text-white text-lg font-medium">
               {estilista.nombre ? estilista.nombre.charAt(0).toUpperCase() : 'E'}
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">
+              <h1 className="text-xl font-semibold text-gray-900">
                 {estilista.nombre || 'Nombre no disponible'}
               </h1>
-              <p className="text-gray-600 mt-1">
+              <p className="text-sm text-gray-600 mt-0.5">
                 {estilista.rol ? estilista.rol.charAt(0).toUpperCase() + estilista.rol.slice(1) : 'Rol no disponible'}
               </p>
             </div>
           </div>
 
           <div className="flex gap-2">
-            <button
-              onClick={handleEdit}
-              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-              <Edit className="h-4 w-4" />
-              Editar
-            </button>
-            <button
-              onClick={handleDelete}
-              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-            >
-              <Trash2 className="h-4 w-4" />
-              Eliminar
-            </button>
+            {onEdit && (
+              <Button
+                onClick={handleEdit}
+                variant="outline"
+                size="sm"
+                className="border-gray-300 text-gray-700 hover:bg-gray-50 hover:text-gray-900"
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                Editar
+              </Button>
+            )}
+            {onDelete && (
+              <Button
+                onClick={handleDelete}
+                variant="outline"
+                size="sm"
+                className="border-gray-300 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-300"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Eliminar
+              </Button>
+            )}
           </div>
         </div>
 
         {/* Estado */}
-        <div className="mt-4">
+        <div className="inline-flex">
           <span
-            className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
               estilista.activo
-                ? 'bg-green-100 text-green-800'
-                : 'bg-red-100 text-red-800'
+                ? 'bg-gray-100 text-gray-800'
+                : 'bg-gray-100 text-gray-500'
             }`}
           >
             {estilista.activo ? 'Activo' : 'Inactivo'}
@@ -106,43 +121,89 @@ export function EstilistaDetail({ estilista, onEdit, onDelete }: EstilistaDetail
         </div>
       </div>
 
-      <div className="p-6 space-y-6">
-        {/* Información básica */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-gray-50 rounded-lg p-4">
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <Mail className="h-4 w-4 text-blue-600" />
-              Información de contacto
-            </h3>
-            <div className="space-y-2 text-sm">
-              <div>
-                <span className="font-medium text-gray-600">Email:</span>
-                <p className="text-gray-900">{estilista.email || 'No disponible'}</p>
+      <div className="p-6 space-y-4">
+        {/* Grid de información */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Información de contacto */}
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <Mail className="h-4 w-4 text-gray-600" />
               </div>
-              {/* 🔥 ELIMINADO: No mostrar ID del profesional */}
+              <h3 className="font-medium text-gray-900">Contacto</h3>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Email</p>
+                <p className="text-sm text-gray-900 font-medium">{estilista.email || '—'}</p>
+              </div>
             </div>
           </div>
 
-          <div className="bg-gray-50 rounded-lg p-4">
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <Building className="h-4 w-4 text-green-600" />
-              Información laboral
-            </h3>
-            <div className="space-y-2 text-sm">
+          {/* Información laboral */}
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <Building className="h-4 w-4 text-gray-600" />
+              </div>
+              <h3 className="font-medium text-gray-900">Laboral</h3>
+            </div>
+            <div className="space-y-3">
               <div>
-                <span className="font-medium text-gray-600">Sede:</span>
-                {/* 🔥 CORREGIDO: Mostrar nombre de la sede en lugar del ID */}
-                <p className="text-gray-900">
+                <p className="text-xs text-gray-500 mb-1">Sede</p>
+                <p className="text-sm text-gray-900 font-medium">
                   {(estilista as any).sede_nombre || 'Sede no asignada'}
                 </p>
               </div>
               {estilista.comision && (
                 <div>
-                  <span className="font-medium text-gray-600">Comisión:</span>
-                  <p className="text-gray-900 flex items-center gap-1">
-                    <Percent className="h-3 w-3" />
-                    {estilista.comision}%
-                  </p>
+                  <p className="text-xs text-gray-500 mb-1">Comisión</p>
+                  <div className="flex items-center gap-1">
+                    <Percent className="h-3.5 w-3.5 text-gray-600" />
+                    <p className="text-sm text-gray-900 font-medium">{estilista.comision}%</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Fechas */}
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <Calendar className="h-4 w-4 text-gray-600" />
+              </div>
+              <h3 className="font-medium text-gray-900">Fechas</h3>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Creado</p>
+                <p className="text-sm text-gray-900">{formatDate(estilista.created_at)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Actualizado</p>
+                <p className="text-sm text-gray-900">{formatDate(estilista.updated_at)}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Estadísticas */}
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <Clock className="h-4 w-4 text-gray-600" />
+              </div>
+              <h3 className="font-medium text-gray-900">Detalles</h3>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Rol</p>
+                <p className="text-sm text-gray-900 capitalize">{estilista.rol || 'No definido'}</p>
+              </div>
+              {estilista.created_by && (
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Creado por</p>
+                  <p className="text-sm text-gray-900">{estilista.created_by}</p>
                 </div>
               )}
             </div>
@@ -150,22 +211,28 @@ export function EstilistaDetail({ estilista, onEdit, onDelete }: EstilistaDetail
         </div>
 
         {/* Especialidades */}
-        <div className="bg-gray-50 rounded-lg p-4">
-          <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-            <Star className="h-4 w-4 text-yellow-600" />
-            Especialidades {especialidadesCount > 0 && `(${especialidadesCount})`}
-          </h3>
+        <div className="bg-white border border-gray-200 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <Star className="h-4 w-4 text-gray-600" />
+              </div>
+              <h3 className="font-medium text-gray-900">
+                Especialidades {especialidadesCount > 0 && `(${especialidadesCount})`}
+              </h3>
+            </div>
+          </div>
           
           {especialidadesCount > 0 ? (
             <div className="space-y-3">
-              {/* Lista simple de especialidades */}
+              {/* Lista de especialidades */}
               <div>
-                <p className="text-sm text-gray-600 mb-2">Especialidades asignadas:</p>
+                <p className="text-xs text-gray-500 mb-2">Asignadas</p>
                 <div className="flex flex-wrap gap-2">
                   {especialidades.map((especialidad, index) => (
                     <span
                       key={index}
-                      className="inline-flex items-center px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium"
+                      className="inline-flex items-center px-2.5 py-1 bg-gray-100 text-gray-800 rounded-full text-xs font-medium"
                     >
                       {especialidad}
                     </span>
@@ -173,17 +240,17 @@ export function EstilistaDetail({ estilista, onEdit, onDelete }: EstilistaDetail
                 </div>
               </div>
 
-              {/* Detalles de especialidades si están disponibles */}
+              {/* Detalles de especialidades */}
               {especialidadesDetalle.length > 0 && (
                 <div>
-                  <p className="text-sm text-gray-600 mb-2">Detalles de especialidades:</p>
+                  <p className="text-xs text-gray-500 mb-2">Detalles</p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     {especialidadesDetalle.map((detalle, index) => (
                       <div
                         key={index}
-                        className="flex items-center gap-2 p-2 bg-white rounded-lg border"
+                        className="flex items-center gap-2 p-2 bg-gray-50 rounded border border-gray-100"
                       >
-                        <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                        <div className="w-1.5 h-1.5 bg-gray-400 rounded-full"></div>
                         <span className="text-sm text-gray-700">{detalle.nombre}</span>
                       </div>
                     ))}
@@ -192,72 +259,22 @@ export function EstilistaDetail({ estilista, onEdit, onDelete }: EstilistaDetail
               )}
             </div>
           ) : (
-            <p className="text-gray-500 text-sm">No hay especialidades asignadas</p>
+            <div className="text-center py-4">
+              <p className="text-sm text-gray-500">No hay especialidades asignadas</p>
+            </div>
           )}
         </div>
 
-        {/* Información adicional */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-gray-50 rounded-lg p-4">
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <Calendar className="h-4 w-4 text-purple-600" />
-              Fechas importantes
-            </h3>
-            <div className="space-y-2 text-sm">
-              <div>
-                <span className="font-medium text-gray-600">Creado:</span>
-                <p className="text-gray-900">{formatDate(estilista.created_at)}</p>
-              </div>
-              <div>
-                <span className="font-medium text-gray-600">Actualizado:</span>
-                <p className="text-gray-900">{formatDate(estilista.updated_at)}</p>
-              </div>
-              {estilista.created_by && (
-                <div>
-                  <span className="font-medium text-gray-600">Creado por:</span>
-                  <p className="text-gray-900">{estilista.created_by}</p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-gray-50 rounded-lg p-4">
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <Clock className="h-4 w-4 text-orange-600" />
-              Estadísticas
-            </h3>
-            <div className="space-y-2 text-sm">
-              <div>
-                <span className="font-medium text-gray-600">Estado:</span>
-                <p className="text-gray-900">
-                  <span
-                    className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                      estilista.activo
-                        ? 'bg-green-100 text-green-800'
-                        : 'bg-red-100 text-red-800'
-                    }`}
-                  >
-                    {estilista.activo ? 'Activo' : 'Inactivo'}
-                  </span>
-                </p>
-              </div>
-              <div>
-                <span className="font-medium text-gray-600">Rol:</span>
-                <p className="text-gray-900 capitalize">{estilista.rol || 'No definido'}</p>
-              </div>
-              {/* 🔥 ELIMINADO: No mostrar ID de franquicia */}
-            </div>
-          </div>
-        </div>
-
-        {/* Información de eliminación si existe */}
+        {/* Información de eliminación */}
         {(estilista.deleted_at || estilista.deleted_by) && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <h3 className="font-semibold text-red-900 mb-2 flex items-center gap-2">
-              <Trash2 className="h-4 w-4" />
-              Información de eliminación
-            </h3>
-            <div className="space-y-1 text-sm text-red-700">
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center">
+                <Trash2 className="h-3 w-3 text-gray-600" />
+              </div>
+              <h3 className="text-sm font-medium text-gray-900">Eliminación</h3>
+            </div>
+            <div className="space-y-1 text-sm text-gray-600">
               {estilista.deleted_at && (
                 <p>Eliminado el: {formatDate(estilista.deleted_at)}</p>
               )}
