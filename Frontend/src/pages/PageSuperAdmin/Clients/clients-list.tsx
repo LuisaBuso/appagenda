@@ -43,6 +43,7 @@ export function ClientsList({
   onExport,
   itemsPerPage = 10
 }: ClientsListProps) {
+  const [searchTerm, setSearchTerm] = useState("")
   const [currentPage, setCurrentPage] = useState(1)
 
   // Filtrado de clientes
@@ -53,6 +54,11 @@ export function ClientsList({
       cliente.telefono.toLowerCase().includes(searchValue.toLowerCase())
     )
   }, [clientes, searchValue])
+      cliente.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      cliente.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      cliente.telefono.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+  }, [clientes, searchTerm])
 
   // Cálculo de paginación
   const totalPages = Math.ceil(filteredClientes.length / itemsPerPage)
@@ -69,6 +75,11 @@ export function ClientsList({
 
   const handlePageChange = (page: number) => {
     setCurrentPage(Math.max(1, Math.min(page, totalPages)))
+  }
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchTerm(e.target.value)
+    setCurrentPage(1) // Resetear a primera página al buscar
   }
 
   // Generar rango de páginas para mostrar
@@ -128,6 +139,7 @@ export function ClientsList({
             <p className="text-sm text-gray-600 mt-1">
               {filteredClientes.length} cliente{filteredClientes.length !== 1 ? 's' : ''} encontrado{filteredClientes.length !== 1 ? 's' : ''}
               {searchValue && ` para "${searchValue}"`}
+              {searchTerm && ` para "${searchTerm}"`}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -164,6 +176,8 @@ export function ClientsList({
               onSearch(e.target.value)                  // 👈 debounce vive arriba
               setCurrentPage(1)
             }}
+              value={searchTerm}
+              onChange={handleSearchChange}
               className="pl-10 h-10 bg-white"
             />
           </div>
@@ -200,11 +214,13 @@ export function ClientsList({
               <User className="h-12 w-12 text-gray-300 mx-auto mb-4" />
               <p className="text-lg font-medium text-gray-900 mb-1">
                 {searchValue || selectedSede !== "all" 
+                {searchTerm || selectedSede !== "all" 
                   ? "No se encontraron clientes" 
                   : "No hay clientes registrados"}
               </p>
               <p className="text-sm text-gray-600 mb-6 max-w-sm">
                 {searchValue || selectedSede !== "all"
+                {searchTerm || selectedSede !== "all"
                   ? "Ajusta los términos de búsqueda o el filtro de sede"
                   : "Comienza agregando tu primer cliente a la plataforma"}
               </p>
@@ -277,6 +293,7 @@ export function ClientsList({
                           <div className="text-gray-900">
                             {cliente.sede_id 
                               ? sedes.find(s => s.sede_id === cliente.sede_id)?.nombre || cliente.sede_id 
+                              ? sedes.find(s => s.sede_id === cliente.sede_id)?.nombre || 'Sede asignada'
                               : 'Sin sede asignada'}
                           </div>
                         </td>

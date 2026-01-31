@@ -188,6 +188,9 @@ export default function ClientsPage() {
 }
 
 
+  const handleSearch = (filtro: string) => {
+    loadClientes(1, filtro)
+  }
 
   const handleSelectClient = async (client: Cliente) => {
     if (!user?.access_token) return
@@ -212,6 +215,11 @@ export default function ClientsPage() {
       if (!sedeIdToUse && sedes.length > 0) {
         sedeIdToUse = sedes[0].id || sedes[0]._id
       }
+
+      if (!sedeIdToUse) {
+        throw new Error('No hay sedes disponibles')
+      }
+
 
       if (!sedeIdToUse) {
         throw new Error('No hay sedes disponibles')

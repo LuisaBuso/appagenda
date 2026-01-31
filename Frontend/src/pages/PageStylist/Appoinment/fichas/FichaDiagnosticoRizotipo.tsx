@@ -242,12 +242,14 @@ export function FichaDiagnosticoRizotipo({ cita, datosIniciales, onGuardar, onSu
         // Campos REQUERIDOS
         cliente_id: cita.cliente.cliente_id,
         servicio_id: cita.servicios?.[0]?.servicio_id || "",
+        servicio_id: cita.servicio.servicio_id,
         profesional_id: estilistaData.id, // ← ESTE ES EL ID CORRECTO
         sede_id: cita.sede?.sede_id || 'sede_default',
         tipo_ficha: "DIAGNOSTICO_RIZOTIPO",
 
         // Información básica
         servicio_nombre: cita.servicios?.map((s: any) => s.nombre).join(', ') || "",
+        servicio_nombre: cita.servicio.nombre || "",
         profesional_nombre: estilistaData.nombre,
         profesional_email: estilistaData.email, // ← Puedes agregar el email también
         fecha_ficha: new Date().toISOString(),
@@ -355,6 +357,7 @@ export function FichaDiagnosticoRizotipo({ cita, datosIniciales, onGuardar, onSu
           }
         ],
         descripcion_servicio: `Diagnóstico rizotipo para ${cita.servicios?.map((s: any) => s.nombre).join(', ') || 'Sin servicio'} - Realizado por ${estilistaData.nombre}`,
+        descripcion_servicio: `Diagnóstico rizotipo para ${cita.servicio.nombre} - Realizado por ${estilistaData.nombre}`,
 
         // Fotos (URLs vacías porque el backend las subirá a S3)
         fotos_antes: [],

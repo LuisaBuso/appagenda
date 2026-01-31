@@ -221,12 +221,14 @@ export function FichaAsesoriaCorte({ cita, datosIniciales, onGuardar, onSubmit, 
         // Campos REQUERIDOS
         cliente_id: cita.cliente.cliente_id,
         servicio_id: cita.servicios?.[0]?.servicio_id || "",
+        servicio_id: cita.servicio.servicio_id,
         profesional_id: estilistaData.id,
         sede_id: cita.sede?.sede_id || 'sede_default',
         tipo_ficha: "ASESORIA_CORTE",
 
         // Información básica
         servicio_nombre: cita.servicios?.map((s: any) => s.nombre).join(', ') || "",
+        servicio_nombre: cita.servicio.nombre || "",
         profesional_nombre: estilistaData.nombre,
         profesional_email: estilistaData.email,
         fecha_ficha: new Date().toISOString(),

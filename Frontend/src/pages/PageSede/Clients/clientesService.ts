@@ -248,6 +248,49 @@ export const clientesService = {
 
       // Transformar la respuesta al formato Cliente
       return todosLosClientesRaw.map((cliente: any) => ({
+
+  async getAllClientes(token: string, pagina: number = 1, limite: number = 500): Promise<Cliente[]> {
+    try {
+      console.log(`📋 Obteniendo todos los clientes (pagina=${pagina}, limite=${limite})`);
+
+      const response = await fetch(`${API_BASE_URL}clientes/todos?limite=${limite}&pagina=${pagina}`, {
+        method: 'GET',
+        headers: {
+          'accept': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ Error ${response.status} en /clientes/todos:`, errorText);
+        throw new Error(`Error al obtener clientes: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      // Manejar diferentes estructuras de respuesta
+      let clientesArray: any[] = [];
+      
+      if (Array.isArray(data)) {
+        clientesArray = data;
+      } else if (data && typeof data === 'object') {
+        // Si es un objeto con propiedad clientes
+        if (data.clientes && Array.isArray(data.clientes)) {
+          clientesArray = data.clientes;
+        } else if (data.data && Array.isArray(data.data)) {
+          clientesArray = data.data;
+        } else {
+          // Intentar extraer clientes de cualquier propiedad
+          const values = Object.values(data);
+          clientesArray = values.find(val => Array.isArray(val)) || [];
+        }
+      }
+
+      console.log(`✅ Total de clientes obtenidos: ${clientesArray.length}`);
+
+      // Transformar la respuesta al formato Cliente
+      return clientesArray.map((cliente: any) => ({
         id: cliente.cliente_id || cliente.id || cliente._id || '',
         nombre: cliente.nombre || '',
         telefono: cliente.telefono || 'No disponible',
