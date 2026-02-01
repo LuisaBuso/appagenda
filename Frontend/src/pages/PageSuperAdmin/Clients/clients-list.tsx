@@ -25,8 +25,6 @@ interface ClientsListProps {
   sedes?: Sede[]
   onExport?: () => void
   itemsPerPage?: number
-  searchValue: string
-  onSearch: (value: string) => void
 }
 
 export function ClientsList({ 
@@ -36,23 +34,22 @@ export function ClientsList({
   error, 
   onRetry,
   onSedeChange,
-  searchValue,
-  onSearch,
   selectedSede = "all",
   sedes = [],
   onExport,
   itemsPerPage = 10
 }: ClientsListProps) {
+  const [searchTerm, setSearchTerm] = useState("")
   const [currentPage, setCurrentPage] = useState(1)
 
   // Filtrado de clientes
   const filteredClientes = useMemo(() => {
     return clientes.filter(cliente =>
-      cliente.nombre.toLowerCase().includes(searchValue.toLowerCase()) ||
-      cliente.email.toLowerCase().includes(searchValue.toLowerCase()) ||
-      cliente.telefono.toLowerCase().includes(searchValue.toLowerCase())
+      cliente.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      cliente.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      cliente.telefono.toLowerCase().includes(searchTerm.toLowerCase())
     )
-  }, [clientes, searchValue])
+  }, [clientes, searchTerm])
 
   // Cálculo de paginación
   const totalPages = Math.ceil(filteredClientes.length / itemsPerPage)
@@ -69,6 +66,11 @@ export function ClientsList({
 
   const handlePageChange = (page: number) => {
     setCurrentPage(Math.max(1, Math.min(page, totalPages)))
+  }
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchTerm(e.target.value)
+    setCurrentPage(1) // Resetear a primera página al buscar
   }
 
   // Generar rango de páginas para mostrar
@@ -127,7 +129,7 @@ export function ClientsList({
             <h1 className="text-2xl font-bold text-gray-900">Clientes</h1>
             <p className="text-sm text-gray-600 mt-1">
               {filteredClientes.length} cliente{filteredClientes.length !== 1 ? 's' : ''} encontrado{filteredClientes.length !== 1 ? 's' : ''}
-              {searchValue && ` para "${searchValue}"`}
+              {searchTerm && ` para "${searchTerm}"`}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -159,11 +161,8 @@ export function ClientsList({
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <Input
               placeholder="Buscar por nombre, email o teléfono..."
-              value={searchValue}                         // 👈 viene del padre
-              onChange={(e) => {
-              onSearch(e.target.value)                  // 👈 debounce vive arriba
-              setCurrentPage(1)
-            }}
+              value={searchTerm}
+              onChange={handleSearchChange}
               className="pl-10 h-10 bg-white"
             />
           </div>
@@ -199,12 +198,12 @@ export function ClientsList({
             <div className="text-center px-8">
               <User className="h-12 w-12 text-gray-300 mx-auto mb-4" />
               <p className="text-lg font-medium text-gray-900 mb-1">
-                {searchValue || selectedSede !== "all" 
+                {searchTerm || selectedSede !== "all" 
                   ? "No se encontraron clientes" 
                   : "No hay clientes registrados"}
               </p>
               <p className="text-sm text-gray-600 mb-6 max-w-sm">
-                {searchValue || selectedSede !== "all"
+                {searchTerm || selectedSede !== "all"
                   ? "Ajusta los términos de búsqueda o el filtro de sede"
                   : "Comienza agregando tu primer cliente a la plataforma"}
               </p>
@@ -276,7 +275,7 @@ export function ClientsList({
                         <td className="px-6 py-4">
                           <div className="text-gray-900">
                             {cliente.sede_id 
-                              ? sedes.find(s => s.sede_id === cliente.sede_id)?.nombre || cliente.sede_id 
+                              ? sedes.find(s => s.sede_id === cliente.sede_id)?.nombre || 'Sede asignada'
                               : 'Sin sede asignada'}
                           </div>
                         </td>

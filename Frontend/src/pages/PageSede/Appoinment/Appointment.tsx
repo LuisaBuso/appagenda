@@ -1233,7 +1233,7 @@ const CalendarScheduler: React.FC = () => {
                 </p>
                 {user?.sede_id && (
                   <div className="text-[10px] text-gray-500 mt-0.5">
-                    📍 Sede: {sedes.find(s => s.sede_id === user.sede_id)?.nombre || user.sede_id}
+                    📍 Sede: {sedes.find(s => s.sede_id === user.sede_id)?.nombre || 'Tu sede'}
                   </div>
                 )}
               </div>
@@ -1258,7 +1258,7 @@ const CalendarScheduler: React.FC = () => {
                 <div className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs bg-gray-50">
                   <div className="flex items-center justify-between">
                     <span className="text-gray-900 font-medium">
-                      {sedes.find(s => s.sede_id === user.sede_id)?.nombre || user.sede_id}
+                      {sedes.find(s => s.sede_id === user.sede_id)?.nombre || 'Tu sede'}
                     </span>
                     <span className="text-[10px] text-gray-500">(Tu sede)</span>
                   </div>
