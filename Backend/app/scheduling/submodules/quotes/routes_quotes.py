@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File, Form
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
+import traceback
 from typing import Optional, List
 from email.message import EmailMessage
 import smtplib, ssl, os
@@ -132,6 +133,7 @@ async def resolve_cita_by_id(cita_id: str) -> Optional[dict]:
 async def obtener_citas(
     sede_id: Optional[str] = Query(None),
     profesional_id: Optional[str] = Query(None),
+    fecha: Optional[str] = Query(None, description="Fecha específica (YYYY-MM-DD)"),
     current_user: dict = Depends(get_current_user)
 ):
     """
@@ -139,81 +141,136 @@ async def obtener_citas(
     ✅ Soporta nueva estructura (servicios con nombre/precio)
     ✅ Compatible con estructuras antiguas
     """
-    filtro = {}
-    if sede_id:
-        filtro["sede_id"] = sede_id
-    if profesional_id:
-        filtro["profesional_id"] = profesional_id
-
-    citas = await collection_citas.find(filtro).sort("fecha", 1).to_list(None)
-
-    if not citas:
-        return {"citas": []}
-
-    # === Bulk fetch para enriquecer datos (solo si es necesario) ===
-    servicio_ids = set()
-    for cita in citas:
-        if "servicios" in cita:
-            for s in cita["servicios"]:
-                servicio_ids.add(s.get("servicio_id"))
-        elif "servicios_ids" in cita:
-            servicio_ids.update(cita["servicios_ids"])
-        elif "servicio_id" in cita:
-            servicio_ids.add(cita["servicio_id"])
-
-    # Solo consultar servicios si hay IDs
-    servicios_map = {}
-    if servicio_ids:
-        servicios = await collection_servicios.find(
-            {"servicio_id": {"$in": list(servicio_ids)}}
-        ).to_list(None)
-        servicios_map = {s["servicio_id"]: s for s in servicios}
-
-    # === Enriquecer cada cita ===
-    for cita in citas:
-        normalize_cita_doc(cita)
-
-        # ⭐ NUEVA ESTRUCTURA (con nombre y precio en servicios)
-        if "servicios" in cita and cita["servicios"] and isinstance(cita["servicios"][0], dict):
-            primer_servicio = cita["servicios"][0]
-            
-            # Detectar si es nueva estructura (tiene campo "nombre")
-            if "nombre" in primer_servicio:
-                # Nueva estructura - nombres ya están en la cita
-                nombres = [s.get("nombre", "Servicio") for s in cita["servicios"]]
-                cita["servicio_nombre"] = ", ".join(nombres)
-                
-                # Duración: consultar solo para obtener duraciones
-                duracion_total = 0
-                for s in cita["servicios"]:
-                    srv = servicios_map.get(s.get("servicio_id"))
-                    if srv:
-                        duracion_total += srv.get("duracion_minutos", 0)
-                cita["servicio_duracion"] = duracion_total
-                
-                # Ya no necesitas recalcular servicios_detalle, ya está en la cita
-                # Opcional: si el frontend lo necesita en otro formato
-                cita["servicios_detalle"] = cita["servicios"]
-            else:
-                # Estructura antigua (solo tiene servicio_id)
-                nombres = []
-                duracion = 0
-                for s in cita["servicios"]:
-                    srv = servicios_map.get(s.get("servicio_id"))
-                    if srv:
-                        nombres.append(srv.get("nombre", "Servicio"))
-                        duracion += srv.get("duracion_minutos", 0)
-                
-                cita["servicio_nombre"] = ", ".join(nombres) if nombres else "Sin servicio"
-                cita["servicio_duracion"] = duracion
-
+    try:
+        # === CONSTRUIR FILTRO ===
+        filtro = {}
+        if sede_id:
+            filtro["sede_id"] = sede_id
+        if profesional_id:
+            filtro["profesional_id"] = profesional_id
+        if fecha:
+            filtro["fecha"] = fecha
         
-        elif "servicio_id" in cita:
-            # Estructura muy antigua (un solo servicio)
-            srv = servicios_map.get(cita.get("servicio_id"))
-            cita["servicio_nombre"] = srv.get("nombre", "Sin servicio") if srv else "Sin servicio"
+        # 🔥 IMPORTANTE: Si no hay filtros, agregar límite temporal
+        # Esto evita traer TODA la historia
+        if not filtro:
+            # Por defecto: solo últimos 30 días y próximos 60 días
+            hoy = datetime.now()
+            fecha_inicio = (hoy - timedelta(days=30)).strftime("%Y-%m-%d")
+            fecha_fin = (hoy + timedelta(days=60)).strftime("%Y-%m-%d")
+            filtro["fecha"] = {"$gte": fecha_inicio, "$lte": fecha_fin}
+            print(f"⚠️ Filtro vacío detectado, usando rango: {fecha_inicio} a {fecha_fin}")
 
-    return {"citas": citas}
+        print(f"🔍 Buscando citas con filtro: {filtro}")
+
+        # 🔥 OPCIÓN 1: Usar aggregate con allowDiskUse (solución rápida)
+        pipeline = [
+            {"$match": filtro},
+            {"$sort": {"fecha": 1}}
+        ]
+        
+        citas = await collection_citas.aggregate(
+            pipeline,
+            allowDiskUse=True  # Permite usar disco si se excede memoria
+        ).to_list(None)
+
+        # 🔥 ALTERNATIVA: Si prefieres usar find(), agregar límite
+        # citas = await collection_citas.find(filtro).sort("fecha", 1).limit(500).to_list(500)
+
+        print(f"✅ Se encontraron {len(citas)} citas")
+
+        if not citas:
+            return {"citas": []}
+
+        # === Bulk fetch para enriquecer datos (solo si es necesario) ===
+        servicio_ids = set()
+        for cita in citas:
+            if "servicios" in cita:
+                for s in cita["servicios"]:
+                    servicio_ids.add(s.get("servicio_id"))
+            elif "servicios_ids" in cita:
+                servicio_ids.update(cita["servicios_ids"])
+            elif "servicio_id" in cita:
+                servicio_ids.add(cita["servicio_id"])
+
+        # Solo consultar servicios si hay IDs
+        servicios_map = {}
+        if servicio_ids:
+            print(f"🔍 Buscando {len(servicio_ids)} servicios...")
+            servicios = await collection_servicios.find(
+                {"servicio_id": {"$in": list(servicio_ids)}}
+            ).to_list(None)
+            servicios_map = {s["servicio_id"]: s for s in servicios}
+            print(f"✅ Se encontraron {len(servicios)} servicios")
+
+        # === Enriquecer cada cita ===
+        for cita in citas:
+            try:
+                normalize_cita_doc(cita)
+
+                # ⭐ NUEVA ESTRUCTURA (con nombre y precio en servicios)
+                if "servicios" in cita and cita["servicios"] and isinstance(cita["servicios"][0], dict):
+                    primer_servicio = cita["servicios"][0]
+                    
+                    # Detectar si es nueva estructura (tiene campo "nombre")
+                    if "nombre" in primer_servicio:
+                        # Nueva estructura - nombres ya están en la cita
+                        nombres = [s.get("nombre", "Servicio") for s in cita["servicios"]]
+                        cita["servicio_nombre"] = ", ".join(nombres)
+                        
+                        # Duración: consultar solo para obtener duraciones
+                        duracion_total = 0
+                        for s in cita["servicios"]:
+                            srv = servicios_map.get(s.get("servicio_id"))
+                            if srv:
+                                duracion_total += srv.get("duracion_minutos", 0)
+                        cita["servicio_duracion"] = duracion_total
+                        
+                        # Ya no necesitas recalcular servicios_detalle, ya está en la cita
+                        cita["servicios_detalle"] = cita["servicios"]
+                    else:
+                        # Estructura antigua (solo tiene servicio_id)
+                        nombres = []
+                        duracion = 0
+                        for s in cita["servicios"]:
+                            srv = servicios_map.get(s.get("servicio_id"))
+                            if srv:
+                                nombres.append(srv.get("nombre", "Servicio"))
+                                duracion += srv.get("duracion_minutos", 0)
+                        
+                        cita["servicio_nombre"] = ", ".join(nombres) if nombres else "Sin servicio"
+                        cita["servicio_duracion"] = duracion
+                
+                elif "servicio_id" in cita:
+                    # Estructura muy antigua (un solo servicio)
+                    srv = servicios_map.get(cita.get("servicio_id"))
+                    cita["servicio_nombre"] = srv.get("nombre", "Sin servicio") if srv else "Sin servicio"
+                    
+            except Exception as e:
+                print(f"❌ Error enriqueciendo cita {cita.get('_id')}: {str(e)}")
+                # Continuar con las demás citas
+                continue
+
+        print(f"✅ Retornando {len(citas)} citas enriquecidas")
+        return {"citas": citas}
+
+    except Exception as e:
+        print(f"❌ ERROR EN OBTENER_CITAS:")
+        print(f"   Tipo: {type(e).__name__}")
+        print(f"   Mensaje: {str(e)}")
+        print(f"   Traceback:")
+        traceback.print_exc()
+        
+        # Retornar error HTTP apropiado
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Error al obtener citas",
+                "tipo": type(e).__name__,
+                "mensaje": str(e),
+                "filtro": filtro if 'filtro' in locals() else None
+            }
+        )
 
 # =============================================================
 # 🔹 CREAR CITA (ACTUALIZADA)

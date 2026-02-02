@@ -1,0 +1,306 @@
+# ============================================================
+# utils_cash.py - Utilidades para cálculos de caja
+# ============================================================
+
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+import secrets
+
+# ============================================================
+# GENERADORES DE IDs
+# ============================================================
+
+def generar_cierre_id(sede_id: str, fecha: str) -> str:
+    """
+    Genera ID único para cierre de caja
+    Formato: CC-YYYY-MM-DD-SEDEID-RANDOM
+    """
+    timestamp = datetime.now().strftime("%H%M%S")
+    return f"CC-{fecha}-{sede_id}-{timestamp}"
+
+def generar_egreso_id() -> str:
+    """
+    Genera ID único para egreso
+    Formato: EG-TIMESTAMP-RANDOM
+    """
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    random = secrets.token_hex(3).upper()
+    return f"EG-{timestamp}-{random}"
+
+def generar_apertura_id(sede_id: str, fecha: str) -> str:
+    """
+    Genera ID único para apertura de caja
+    Formato: AP-YYYY-MM-DD-SEDEID
+    """
+    return f"AP-{fecha}-{sede_id}"
+
+# ============================================================
+# VALIDACIONES DE FECHAS
+# ============================================================
+
+def validar_fecha_formato(fecha: str) -> bool:
+    """Valida que la fecha esté en formato YYYY-MM-DD"""
+    try:
+        datetime.strptime(fecha, "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+
+def obtener_rango_fecha(fecha: str) -> tuple:
+    """
+    Obtiene el rango de inicio y fin para un día completo
+    Returns: (datetime_inicio, datetime_fin)
+    """
+    fecha_dt = datetime.strptime(fecha, "%Y-%m-%d")
+    fecha_inicio = fecha_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    fecha_fin = fecha_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return (fecha_inicio, fecha_fin)
+
+def fecha_a_datetime(fecha: str) -> datetime:
+    """Convierte string YYYY-MM-DD a datetime"""
+    return datetime.strptime(fecha, "%Y-%m-%d")
+
+# ============================================================
+# FORMATEADORES
+# ============================================================
+
+def formatear_monto(monto: float, moneda: str = "USD") -> str:
+    """
+    Formatea un monto según la moneda
+    """
+    simbolos = {
+        "USD": "$",
+        "COP": "$",
+        "EUR": "€",
+        "MXN": "$"
+    }
+    
+    simbolo = simbolos.get(moneda, "$")
+    
+    if moneda == "COP":
+        # Sin decimales para pesos colombianos
+        return f"{simbolo}{monto:,.0f}"
+    else:
+        return f"{simbolo}{monto:,.2f}"
+
+def formatear_diferencia(diferencia: float) -> str:
+    """
+    Formatea la diferencia con signo
+    Positivo = Sobrante, Negativo = Faltante
+    """
+    if diferencia > 0:
+        return f"+{diferencia:.2f} (Sobrante)"
+    elif diferencia < 0:
+        return f"{diferencia:.2f} (Faltante)"
+    else:
+        return "0.00 (Exacto)"
+
+# ============================================================
+# CÁLCULOS DE TOTALES
+# ============================================================
+
+def calcular_total_desglose(desglose: List[Dict]) -> float:
+    """
+    Calcula el total de un desglose físico de billetes/monedas
+    """
+    if not desglose:
+        return 0.0
+    
+    total = sum(item.get("subtotal", 0) for item in desglose)
+    return round(total, 2)
+
+def calcular_diferencia(esperado: float, contado: float) -> float:
+    """
+    Calcula la diferencia entre efectivo esperado y contado
+    Positivo = Sobrante, Negativo = Faltante
+    """
+    return round(contado - esperado, 2)
+
+# ============================================================
+# AGRUPADORES
+# ============================================================
+
+def agrupar_por_metodo_pago(pagos: List[Dict]) -> Dict[str, float]:
+    """
+    Agrupa pagos por método y suma totales
+    """
+    totales = {}
+    for pago in pagos:
+        metodo = pago.get("metodo", "efectivo")
+        monto = pago.get("monto", 0)
+        totales[metodo] = totales.get(metodo, 0) + monto
+    
+    return totales
+
+def agrupar_egresos_por_tipo(egresos: List[Dict]) -> Dict[str, Dict]:
+    """
+    Agrupa egresos por tipo y calcula totales
+    """
+    agrupados = {
+        "compras_internas": {"total": 0, "cantidad": 0},
+        "gastos_operativos": {"total": 0, "cantidad": 0},
+        "retiros_caja": {"total": 0, "cantidad": 0},
+        "otros": {"total": 0, "cantidad": 0}
+    }
+    
+    for egreso in egresos:
+        tipo = egreso.get("tipo", "otro")
+        monto = egreso.get("monto", 0)
+        
+        if tipo in agrupados:
+            agrupados[tipo]["total"] += monto
+            agrupados[tipo]["cantidad"] += 1
+        else:
+            agrupados["otros"]["total"] += monto
+            agrupados["otros"]["cantidad"] += 1
+    
+    return agrupados
+
+# ============================================================
+# VALIDACIONES DE NEGOCIO
+# ============================================================
+
+def validar_monto_positivo(monto: float, campo: str = "monto") -> None:
+    """Valida que un monto sea positivo"""
+    if monto < 0:
+        raise ValueError(f"El {campo} no puede ser negativo")
+    if monto == 0:
+        raise ValueError(f"El {campo} debe ser mayor a cero")
+
+def validar_diferencia_aceptable(diferencia: float, tolerancia: float = 10.0) -> tuple:
+    """
+    Valida si la diferencia está dentro de la tolerancia
+    Returns: (es_aceptable, mensaje)
+    """
+    diferencia_abs = abs(diferencia)
+    
+    if diferencia_abs == 0:
+        return (True, "Cierre exacto ✓")
+    elif diferencia_abs <= tolerancia:
+        tipo = "Sobrante" if diferencia > 0 else "Faltante"
+        return (True, f"{tipo} dentro de tolerancia ({formatear_monto(diferencia_abs)})")
+    else:
+        tipo = "Sobrante" if diferencia > 0 else "Faltante"
+        return (False, f"⚠️ {tipo} excede tolerancia ({formatear_monto(diferencia_abs)})")
+
+# ============================================================
+# HELPERS DE CONSULTAS
+# ============================================================
+
+def construir_filtro_fecha(fecha: Optional[str] = None, 
+                          fecha_inicio: Optional[str] = None,
+                          fecha_fin: Optional[str] = None) -> Dict:
+    """
+    Construye filtro de fecha para queries MongoDB
+    """
+    if fecha:
+        # Fecha específica
+        return {"fecha": fecha}
+    
+    elif fecha_inicio and fecha_fin:
+        # Rango de fechas
+        return {
+            "fecha": {
+                "$gte": fecha_inicio,
+                "$lte": fecha_fin
+            }
+        }
+    
+    elif fecha_inicio:
+        # Desde fecha_inicio hasta hoy
+        hoy = datetime.now().strftime("%Y-%m-%d")
+        return {
+            "fecha": {
+                "$gte": fecha_inicio,
+                "$lte": hoy
+            }
+        }
+    
+    else:
+        # Hoy por defecto
+        hoy = datetime.now().strftime("%Y-%m-%d")
+        return {"fecha": hoy}
+
+def construir_pipeline_ingresos_citas(sede_id: str, fecha: str) -> List[Dict]:
+    """
+    Construye pipeline de agregación para calcular ingresos de citas
+    """
+    return [
+        {
+            "$match": {
+                "sede_id": sede_id,
+                "fecha": fecha,
+                "estado_pago": "pagado",
+                "$or": [
+                    {"metodo_pago_actual": "efectivo"},
+                    {"metodo_pago_inicial": "efectivo"}
+                ]
+            }
+        },
+        {
+            "$group": {
+                "_id": None,
+                "total": {"$sum": "$valor_total"},
+                "cantidad": {"$sum": 1},
+                "citas": {
+                    "$push": {
+                        "cita_id": {"$toString": "$_id"},
+                        "cliente": "$cliente_nombre",
+                        "monto": "$valor_total"
+                    }
+                }
+            }
+        }
+    ]
+
+def construir_pipeline_productos_citas(sede_id: str, fecha: str) -> List[Dict]:
+    """
+    Construye pipeline para calcular productos vendidos en citas
+    """
+    return [
+        {
+            "$match": {
+                "sede_id": sede_id,
+                "fecha": fecha,
+                "$or": [
+                    {"metodo_pago_actual": "efectivo"},
+                    {"metodo_pago_inicial": "efectivo"}
+                ],
+                "productos": {"$exists": True, "$ne": []}
+            }
+        },
+        {
+            "$unwind": "$productos"
+        },
+        {
+            "$group": {
+                "_id": None,
+                "total": {"$sum": "$productos.subtotal"},
+                "cantidad": {"$sum": 1}
+            }
+        }
+    ]
+
+# ============================================================
+# CONVERSIONES
+# ============================================================
+
+def convertir_moneda(monto: float, de: str, a: str, tasas: Dict[str, float]) -> float:
+    """
+    Convierte monto entre monedas
+    tasas: diccionario con tasas de cambio base USD
+    """
+    if de == a:
+        return monto
+    
+    # Convertir a USD primero si no es USD
+    if de != "USD":
+        monto_usd = monto / tasas.get(de, 1)
+    else:
+        monto_usd = monto
+    
+    # Convertir de USD a moneda destino
+    if a != "USD":
+        return monto_usd * tasas.get(a, 1)
+    else:
+        return monto_usd
