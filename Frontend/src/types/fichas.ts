@@ -1,4 +1,14 @@
 // src/types/fichas.ts
+
+// 🔥 NUEVA INTERFAZ PARA SERVICIO INDIVIDUAL
+export interface Servicio {
+  servicio_id: string;
+  nombre: string;
+  precio: number;
+  precio_personalizado?: boolean;
+}
+
+// 🔥 INTERFAZ ACTUALIZADA PARA CITA CON MÚLTIPLES SERVICIOS
 export interface Cita {
   cita_id: string;
   cliente: {
@@ -8,21 +18,58 @@ export interface Cita {
     telefono: string;
     email: string;
   };
-  servicio: {
-    servicio_id: string;
-    nombre: string;
-    precio: number;
-  };
+  
+  // 🆕 NUEVO: Array de servicios (formato actual)
+  servicios?: Servicio[];
+  
+  // 🆕 NUEVO: Campos calculados del backend
+  precio_total?: number;
+  cantidad_servicios?: number;
+  tiene_precio_personalizado?: boolean;
+  
   sede: {
     sede_id: string;
     nombre: string;
   };
   estilista_id: string;
+  profesional_id?: string;
   fecha: string;
   hora_inicio: string;
   hora_fin: string;
   estado: string;
+  estado_pago?: string;
   comentario?: string;
+  
+  // 🆕 NUEVO: Campos adicionales de pago
+  metodo_pago_inicial?: string;
+  metodo_pago_actual?: string;
+  abono?: number;
+  valor_total?: number;
+  saldo_pendiente?: number;
+  moneda?: string;
+  
+  // 🆕 NUEVO: Campos de productos
+  productos?: Array<{
+    producto_id: string;
+    nombre: string;
+    cantidad: number;
+    precio_unitario: number;
+    subtotal: number;
+  }>;
+  
+  // 🆕 NUEVO: Información de creación
+  creada_por?: string;
+  creada_por_rol?: string;
+  fecha_creacion?: string;
+  ultima_actualizacion?: string;
+  
+  // 🆕 NUEVO: Historial
+  historial_pagos?: Array<{
+    fecha: string;
+    monto: number;
+    metodo: string;
+    realizado_por?: string;
+  }>;
 }
 
 export interface FichaBase {

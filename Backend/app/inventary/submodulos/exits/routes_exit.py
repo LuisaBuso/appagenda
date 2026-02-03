@@ -53,7 +53,7 @@ async def crear_salida(
     # 📉 Descontar stock del INVENTARIO de la sede (no de productos)
     for item in salida.items:
         # Validar que el producto existe
-        producto = await collection_productos.find_one({"_id": ObjectId(item.producto_id)})
+        producto = await collection_inventarios.find_one({"producto_id": (item.producto_id)})
         if not producto:
             raise HTTPException(
                 status_code=404, 

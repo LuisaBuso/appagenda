@@ -241,13 +241,13 @@ export function FichaDiagnosticoRizotipo({ cita, datosIniciales, onGuardar, onSu
       const fichaData = {
         // Campos REQUERIDOS
         cliente_id: cita.cliente.cliente_id,
-        servicio_id: cita.servicio.servicio_id,
+        servicio_id: cita.servicios?.[0]?.servicio_id || "",
         profesional_id: estilistaData.id, // ← ESTE ES EL ID CORRECTO
         sede_id: cita.sede?.sede_id || 'sede_default',
         tipo_ficha: "DIAGNOSTICO_RIZOTIPO",
 
         // Información básica
-        servicio_nombre: cita.servicio.nombre || "",
+        servicio_nombre: cita.servicios?.map((s: any) => s.nombre).join(', ') || "",
         profesional_nombre: estilistaData.nombre,
         profesional_email: estilistaData.email, // ← Puedes agregar el email también
         fecha_ficha: new Date().toISOString(),
@@ -261,7 +261,7 @@ export function FichaDiagnosticoRizotipo({ cita, datosIniciales, onGuardar, onSu
         telefono: cita.cliente.telefono || "",
 
         // Información financiera
-        precio: cita.servicio.precio || 0,
+        precio: cita.precio_total || cita.servicios?.reduce((sum: number, s: any) => sum + (s.precio || 0), 0) || 0,
         estado: "completado",
         estado_pago: "pagado",
 
@@ -354,7 +354,7 @@ export function FichaDiagnosticoRizotipo({ cita, datosIniciales, onGuardar, onSu
             respondido_por_id: estilistaData.id
           }
         ],
-        descripcion_servicio: `Diagnóstico rizotipo para ${cita.servicio.nombre} - Realizado por ${estilistaData.nombre}`,
+        descripcion_servicio: `Diagnóstico rizotipo para ${cita.servicios?.map((s: any) => s.nombre).join(', ') || 'Sin servicio'} - Realizado por ${estilistaData.nombre}`,
 
         // Fotos (URLs vacías porque el backend las subirá a S3)
         fotos_antes: [],
@@ -539,7 +539,7 @@ export function FichaDiagnosticoRizotipo({ cita, datosIniciales, onGuardar, onSu
         <h3 className="font-semibold mb-2">Información del servicio</h3>
         <div className="grid grid-cols-2 gap-2">
           <p><strong>Cliente:</strong> {cita.cliente.nombre} {cita.cliente.apellido}</p>
-          <p><strong>Servicio:</strong> {cita.servicio.nombre}</p>
+          <p><strong>Servicio(s):</strong> {cita.servicios?.map((s: any) => s.nombre).join(', ') || 'Sin servicio'}</p>
           <p><strong>Fecha:</strong> {cita.fecha}</p>
           <p><strong>Hora:</strong> {cita.hora_inicio}</p>
         </div>

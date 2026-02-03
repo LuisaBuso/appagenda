@@ -7,7 +7,7 @@ import "./index.css";
 import SuperDashboard from "./pages/PageSuperAdmin/Dashboard/Dashboard";
 import SuperPerformance from "./pages/PageSuperAdmin/Perfomance/Perfomance";
 import SuperAppointment from "./pages/PageSuperAdmin/Appoinment/Appointment";
-import SuperProducts from "./pages/PageSuperAdmin/Products/Products";
+import { ProductsList as SuperProducts } from "./pages/PageSuperAdmin/Products/Products";
 import SuperSede from "./pages/PageSuperAdmin/Sedes/Sede";
 import SuperServices from './pages/PageSuperAdmin/Services/Services';
 import SuperComisiones from "./pages/PageSuperAdmin/Comisiones/Comisiones";

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Clock, Calendar as CalendarIcon, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { Clock, Calendar as CalendarIcon, ChevronLeft, ChevronRight, X, Plus, Trash2 } from 'lucide-react';
 import { useAuth } from '../../components/Auth/AuthContext';
 import { getEstilistas, getEstilistaCompleto, Estilista } from '../../components/Professionales/estilistasApi';
 import { getServicios, Servicio } from '../../components/Quotes/serviciosApi';
@@ -40,7 +40,13 @@ interface CitaParaPago {
     monto_total: number;
     cliente_id: string;
     profesional_id: string;
-    servicio_id: string;
+    
+    // ⭐ CAMBIO: En lugar de servicio_id singular, ahora es servicios (array)
+    servicios: Array<{
+        servicio_id: string;
+        precio_personalizado: number | null;  // null si usa precio de BD
+    }>;
+    
     sede_id: string;
     notas: string;
 }
@@ -61,10 +67,20 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
     const [showMiniCalendar, setShowMiniCalendar] = useState(false);
     const [loading, ] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [selectedService, setSelectedService] = useState<Service | null>(null);
+    const [serviciosSeleccionados, setServiciosSeleccionados] = useState<Array<{
+    servicio_id: string;
+    nombre: string;
+    duracion: number;
+    precio_base: number;
+    precio_personalizado: number | null;
+    precio_final: number;
+    }>>([]);
     const [selectedStylist, setSelectedStylist] = useState<EstilistaCompleto | null>(null);
     const [selectedClient, setSelectedClient] = useState<Cliente | null>(null);
     const [notes, setNotes] = useState('');
+    const [servicioActual, setServicioActual] = useState<Service | null>(null);
+    const [precioPersonalizado, setPrecioPersonalizado] = useState<string>('');
+    const [usarPrecioCustom, setUsarPrecioCustom] = useState(false);
 
     // 🔥 NUEVO ESTADO PARA EL MODAL DE PAGO
     const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -230,6 +246,150 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
         cargarServicios();
     }, [user?.access_token]);
 
+    const handleAgregarServicio = useCallback(() => {
+    if (!servicioActual) return;
+
+    // Verificar si ya está agregado
+    if (serviciosSeleccionados.some(s => s.servicio_id === servicioActual.id)) {
+        setError('⚠️ Este servicio ya está agregado');
+        return;
+    }
+
+    const nuevoServicio = {
+        servicio_id: servicioActual.id,
+        nombre: servicioActual.name,
+        duracion: servicioActual.duration,
+        precio_base: servicioActual.price,
+        precio_personalizado: usarPrecioCustom && precioPersonalizado 
+            ? parseFloat(precioPersonalizado) 
+            : null,
+        precio_final: usarPrecioCustom && precioPersonalizado 
+            ? parseFloat(precioPersonalizado) 
+            : servicioActual.price
+    };
+
+    setServiciosSeleccionados([...serviciosSeleccionados, nuevoServicio]);
+    
+    // Resetear campos
+    setServicioActual(null);
+    setPrecioPersonalizado('');
+    setUsarPrecioCustom(false);
+    setError(null);
+    }, [servicioActual, precioPersonalizado, usarPrecioCustom, serviciosSeleccionados]);
+
+    // =================================================
+// 🔥 PASO 3: FUNCIÓN PARA ELIMINAR SERVICIO
+// =================================================
+
+const handleEliminarServicio = useCallback((servicioId: string) => {
+    setServiciosSeleccionados(serviciosSeleccionados.filter(s => s.servicio_id !== servicioId));
+}, [serviciosSeleccionados]);
+
+// =================================================
+// 🔥 PASO 4: FUNCIÓN PARA EDITAR PRECIO
+// =================================================
+
+    const handleEditarPrecio = useCallback((servicioId: string, nuevoPrecio: string) => {
+    setServiciosSeleccionados(serviciosSeleccionados.map(s => {
+        if (s.servicio_id === servicioId) {
+            const precioNum = nuevoPrecio ? parseFloat(nuevoPrecio) : null;
+            return {
+                ...s,
+                precio_personalizado: precioNum,
+                precio_final: precioNum || s.precio_base
+            };
+        }
+        return s;
+    }));
+}, [serviciosSeleccionados]);
+
+// =================================================
+// 🔥 PASO 5: CALCULAR TOTALES
+// =================================================
+
+const calcularTotales = useCallback(() => {
+    const total = serviciosSeleccionados.reduce((sum, s) => sum + s.precio_final, 0);
+    const duracion = serviciosSeleccionados.reduce((sum, s) => sum + s.duracion, 0);
+    return { total, duracion };
+}, [serviciosSeleccionados]);
+
+const { total: montoTotal, duracion: duracionTotal } = calcularTotales();
+
+// =================================================
+// 🔥 PASO 6: ACTUALIZAR handleContinuar
+// =================================================
+
+const handleContinuar = async () => {
+    if (!selectedClient) {
+        setError('Por favor selecciona o crea un cliente');
+        return;
+    }
+
+    if (serviciosSeleccionados.length === 0) {
+        setError('Por favor agrega al menos un servicio');
+        return;
+    }
+
+    if (!selectedStylist || !selectedStylist.profesional_id) {
+        setError('Por favor selecciona un estilista');
+        return;
+    }
+
+    if (!selectedDate) {
+        setError('Por favor selecciona una fecha');
+        return;
+    }
+
+    if (!sedeId) {
+        setError('No se ha especificado la sede');
+        return;
+    }
+
+    setError(null);
+
+    try {
+        // Calcular hora fin (basada en duración total)
+        const endTime = calculateEndTime(selectedTime, duracionTotal);
+
+        // ⭐ PREPARAR ARRAY DE SERVICIOS PARA BACKEND
+        const serviciosParaBackend = serviciosSeleccionados.map(s => ({
+            servicio_id: s.servicio_id,
+            precio_personalizado: s.precio_personalizado
+        }));
+
+        // Crear resumen de nombres de servicios
+        const nombresServicios = serviciosSeleccionados.map(s => s.nombre).join(', ');
+
+        const citaParaPago: CitaParaPago = {
+            cliente: selectedClient.nombre,
+            servicio: nombresServicios,  // Para mostrar en UI
+            profesional: selectedStylist.nombre,
+            fecha: formatFechaBonita(selectedDate, selectedTime),
+            hora_inicio: selectedTime,
+            hora_fin: endTime,
+            duracion: calcularDuracionTexto(duracionTotal),
+            monto_total: montoTotal,
+            cliente_id: selectedClient.cliente_id,
+            profesional_id: selectedStylist.profesional_id,
+            
+            // ⭐ ENVIAR ARRAY DE SERVICIOS
+            servicios: serviciosParaBackend,
+            
+            sede_id: sedeId,
+            notas: notes
+        };
+
+        setPreparedCitaData(citaParaPago);
+        setShowPaymentModal(true);
+
+    } catch (error: any) {
+        setError("Error al preparar los datos para el pago");
+    }
+  };
+    
+
+    
+
     const handleStylistChange = useCallback((estilistaId: string) => {
         const estilista = estilistas.find(e =>
             (e.profesional_id === estilistaId) || (e._id === estilistaId)
@@ -237,7 +397,7 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
 
         if (estilista) {
             setSelectedStylist(estilista);
-            setSelectedService(null);
+            setServiciosSeleccionados([]);
         }
     }, [estilistas]);
 
@@ -391,70 +551,7 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
         setShowMiniCalendar(false);
     }, []);
 
-    // 🔥 FUNCIÓN MODIFICADA PARA MOSTRAR MODAL EN LUGAR DE NAVEGAR
-    const handleContinuar = async () => {
-        if (!selectedClient) {
-            setError('Por favor selecciona o crea un cliente');
-            return;
-        }
-
-        if (!selectedService) {
-            setError('Por favor selecciona un servicio');
-            return;
-        }
-
-        if (!selectedStylist) {
-            setError('Por favor selecciona un estilista');
-            return;
-        }
-
-        if (!selectedStylist.profesional_id) {
-            setError('El estilista seleccionado no tiene ID válido');
-            return;
-        }
-
-        if (!selectedDate) {
-            setError('Por favor selecciona una fecha');
-            return;
-        }
-
-        if (!sedeId) {
-            setError('No se ha especificado la sede');
-            return;
-        }
-
-        setError(null);
-
-        try {
-            const endTime = calculateEndTime(selectedTime, selectedService.duration);
-
-
-            const citaParaPago: CitaParaPago = {
-                cliente: selectedClient.nombre,
-                servicio: selectedService.name,
-                profesional: selectedStylist.nombre,
-                fecha: formatFechaBonita(selectedDate, selectedTime),
-                hora_inicio: selectedTime,
-                hora_fin: endTime,
-                duracion: calcularDuracionTexto(selectedService.duration),
-                monto_total: selectedService.price,
-                cliente_id: selectedClient.cliente_id,
-                profesional_id: selectedStylist.profesional_id,
-                servicio_id: selectedService.profesional_id,
-                sede_id: sedeId,
-                notas: notes
-            };
-
-            // 🔥 GUARDAR LOS DATOS Y MOSTRAR MODAL DE PAGO
-            setPreparedCitaData(citaParaPago);
-            setShowPaymentModal(true);
-
-        } catch (error: any) {
-            setError("Error al preparar los datos para el pago");
-        }
-    };
-
-    // 🔥 FUNCIÓN PARA MANEJAR ÉXITO DEL PAGO
+        // 🔥 FUNCIÓN PARA MANEJAR ÉXITO DEL PAGO
     const handlePaymentSuccess = () => {
         // Cerrar ambos modales
         setShowPaymentModal(false);
@@ -471,9 +568,11 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
         // El usuario permanece en el modal de edición
     };
 
+    // 🔥 AGREGAR ESTOS useMemo QUE FALTAN (después de handleBackToEdit)
     const calendarDays = useMemo(() => generateCalendarDays(), [generateCalendarDays]);
     const allTimeSlots = useMemo(() => generateTimeSlots(), [generateTimeSlots]);
     const dayHeaders = useMemo(() => ['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá'], []);
+
 
     const getCurrencySymbol = useCallback(() => {
         const paisUsuario = user?.pais;
@@ -607,10 +706,10 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
                             </select>
                         </div>
 
-                        {/* SERVICIO */}
+                        {/* SERVICIO - VERSIÓN NUEVA CON MÚLTIPLES SERVICIOS */}
                         <div className="space-y-1">
                             <label className="block text-xs font-semibold text-gray-700">
-                                Servicio *
+                                Servicios *
                             </label>
 
                             {!selectedStylist ? (
@@ -619,10 +718,11 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
                                 </div>
                             ) : (
                                 <>
+                                    {/* Selector de servicio */}
                                     <select
-                                        value={selectedService?.profesional_id || ''}
+                                        value={servicioActual?.profesional_id || ''}
                                         disabled={loadingServicios || serviciosAMostrar.length === 0}
-                                        onChange={(e) => setSelectedService(serviciosAMostrar.find(s => s.profesional_id === e.target.value) || null)}
+                                        onChange={(e) => setServicioActual(serviciosAMostrar.find(s => s.profesional_id === e.target.value) || null)}
                                         className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-gray-900 focus:border-gray-900 outline-none bg-white disabled:bg-gray-100"
                                     >
                                         <option value="">
@@ -630,7 +730,7 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
                                                 ? '🔄 Cargando...'
                                                 : serviciosAMostrar.length === 0
                                                     ? '❌ No hay servicios'
-                                                    : '💇‍♀️ Seleccionar...'
+                                                    : '💇‍♀️ Seleccionar servicio...'
                                             }
                                         </option>
                                         {serviciosAMostrar.map(service => (
@@ -640,13 +740,116 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
                                         ))}
                                     </select>
 
-                                    {selectedService && (
-                                        <div className="mt-1 p-1.5 bg-gray-50 rounded border border-gray-200">
-                                            <div className="flex justify-between items-center text-xs">
-                                                <span className="font-semibold text-gray-900">{selectedService.name}</span>
-                                                <div className="flex gap-2 text-gray-700">
-                                                    <span>{selectedService.duration}min</span>
-                                                    <span>{currencySymbol} {selectedService.price}</span>
+                                    {/* Checkbox precio personalizado */}
+                                    {servicioActual && (
+                                        <div className="mt-2">
+                                            <label className="flex items-center gap-2 text-xs">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={usarPrecioCustom}
+                                                    onChange={(e) => {
+                                                        setUsarPrecioCustom(e.target.checked);
+                                                        if (!e.target.checked) setPrecioPersonalizado('');
+                                                    }}
+                                                    className="rounded border-gray-300"
+                                                />
+                                                <span className="text-gray-700">Usar precio personalizado</span>
+                                            </label>
+                                        </div>
+                                    )}
+
+                                    {/* Input precio personalizado */}
+                                    {usarPrecioCustom && servicioActual && (
+                                        <div className="mt-2">
+                                            <input
+                                                type="number"
+                                                value={precioPersonalizado}
+                                                onChange={(e) => setPrecioPersonalizado(e.target.value)}
+                                                placeholder={`Precio (base: ${currencySymbol} ${servicioActual.price})`}
+                                                className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-gray-900 focus:border-gray-900 outline-none"
+                                            />
+                                        </div>
+                                    )}
+
+                                    {/* Botón agregar servicio */}
+                                    {servicioActual && (
+                                        <button
+                                            onClick={handleAgregarServicio}
+                                            className="w-full mt-2 bg-gray-900 text-white py-1.5 rounded text-xs font-semibold hover:bg-gray-800 flex items-center justify-center gap-1"
+                                        >
+                                            <Plus className="w-3 h-3" />
+                                            Agregar servicio
+                                        </button>
+                                    )}
+
+                                    {/* Lista de servicios agregados */}
+                                    {serviciosSeleccionados.length > 0 && (
+                                        <div className="mt-2 space-y-2">
+                                            <div className="text-xs font-semibold text-gray-700">
+                                                Servicios agregados ({serviciosSeleccionados.length})
+                                            </div>
+                                            {serviciosSeleccionados.map((servicio, index) => (
+                                                <div
+                                                    key={`selected-${servicio.servicio_id}-${index}`}
+                                                    className="p-2 border border-gray-300 rounded bg-gray-50"
+                                                >
+                                                    <div className="flex items-start justify-between mb-1">
+                                                        <div className="flex-1">
+                                                            <div className="text-xs font-semibold text-gray-900">
+                                                                {servicio.nombre}
+                                                            </div>
+                                                            <div className="flex items-center gap-2 text-[10px] text-gray-600 mt-0.5">
+                                                                <span>{servicio.duracion}min</span>
+                                                                {servicio.precio_personalizado !== null && (
+                                                                    <span className="text-orange-600 font-medium">⚡ Custom</span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        <button
+                                                            onClick={() => handleEliminarServicio(servicio.servicio_id)}
+                                                            className="p-1 hover:bg-red-50 rounded text-red-600"
+                                                            title="Eliminar"
+                                                        >
+                                                            <Trash2 className="w-3 h-3" />
+                                                        </button>
+                                                    </div>
+
+                                                    <div className="flex items-center justify-between">
+                                                        {servicio.precio_personalizado !== null ? (
+                                                            <>
+                                                                <span className="text-[10px] text-gray-500 line-through">
+                                                                    {currencySymbol} {servicio.precio_base}
+                                                                </span>
+                                                                <span className="text-xs font-bold text-orange-600">
+                                                                    {currencySymbol} {servicio.precio_final}
+                                                                </span>
+                                                            </>
+                                                        ) : (
+                                                            <span className="text-xs font-bold text-gray-900">
+                                                                {currencySymbol} {servicio.precio_final}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                {/* Input para editar precio */}
+                                                <input
+                                                type="number"
+                                                value={servicio.precio_personalizado || ''}
+                                                onChange={(e) => handleEditarPrecio(servicio.servicio_id, e.target.value)}
+                                                placeholder={`Editar precio (base: ${servicio.precio_base})`}
+                                                className="w-full border border-gray-300 rounded px-2 py-1 text-[10px] focus:ring-1 focus:ring-gray-900 focus:border-gray-900 outline-none"
+                                                />
+                                            </div>
+                                        ))}
+
+                                            {/* Resumen total */}
+                                            <div className="p-2 border-2 border-gray-900 rounded bg-gray-50">
+                                                <div className="flex justify-between items-center">
+                                                    <div className="text-xs text-gray-700">
+                                                        Total ({duracionTotal} min)
+                                                    </div>
+                                                    <div className="text-sm font-bold text-gray-900">
+                                                        {currencySymbol} {montoTotal}
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
@@ -654,7 +857,6 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
                                 </>
                             )}
                         </div>
-
                         {/* FECHA Y HORA */}
                         <div className="space-y-1">
                             <label className="block text-xs font-semibold text-gray-700">
@@ -729,7 +931,7 @@ const AppointmentScheduler: React.FC<AppointmentSchedulerProps> = ({
                         {/* BOTÓN - CAMBIADO A handleContinuar */}
                         <button
                             onClick={handleContinuar}
-                            disabled={!selectedClient || !selectedService || !selectedStylist || !selectedDate || loading}
+                            disabled={!selectedClient || serviciosSeleccionados.length === 0 || !selectedStylist || !selectedDate || loading}
                             className="w-full bg-gray-900 text-white py-2 rounded text-xs font-semibold hover:bg-gray-800 active:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                         >
                             Continuar

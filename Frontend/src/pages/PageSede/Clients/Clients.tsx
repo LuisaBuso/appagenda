@@ -11,6 +11,7 @@ import { sedeService } from "../../PageSuperAdmin/Sedes/sedeService"
 import { useAuth } from "../../../components/Auth/AuthContext"
 import { Loader } from "lucide-react"
 
+
 // Interface para la respuesta de la API
 interface ApiResponse {
   clientes?: any[];
@@ -43,6 +44,7 @@ const asegurarClienteCompleto = (clienteData: any): Cliente => {
 export default function ClientsPage() {
   const [selectedClient, setSelectedClient] = useState<Cliente | null>(null)
   const [clientes, setClientes] = useState<Cliente[]>([])
+  const [searchTerm, setSearchTerm] = useState("") // ✅ NUEVO
   const [metadata, setMetadata] = useState<{
     total: number;
     pagina: number;
@@ -161,6 +163,16 @@ export default function ClientsPage() {
   }
 
   useEffect(() => {
+  if (!user?.access_token) return
+
+  const timeout = setTimeout(() => {
+    loadClientes(1, searchTerm)
+  }, 600)
+
+  return () => clearTimeout(timeout)
+}, [searchTerm])
+
+  useEffect(() => {
     if (!authLoading && user) {
       loadSedes()
       loadClientes()
@@ -171,9 +183,11 @@ export default function ClientsPage() {
     loadClientes(pagina, filtro)
   }
 
-  const handleSearch = (filtro: string) => {
-    loadClientes(1, filtro)
-  }
+  const handleSearch = (value: string) => {
+  setSearchTerm(value)
+}
+
+
 
   const handleSelectClient = async (client: Cliente) => {
     if (!user?.access_token) return
@@ -303,6 +317,8 @@ export default function ClientsPage() {
               isLoading={isLoading}
               onPageChange={handlePageChange}
               onSearch={handleSearch}
+              searchValue={searchTerm}   // 👈 ESTO
+            
             />
           </>
         )}
