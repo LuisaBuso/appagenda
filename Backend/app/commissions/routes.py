@@ -102,7 +102,6 @@ def construir_query_filtros(user: dict, filtros: Optional[dict] = None):
     
     if filtros.get("sede_id") and user.get("rol") == "superadmin":
         query["sede_id"] = filtros["sede_id"]
-
     
     if filtros.get("estado"):
         if filtros["estado"] == "pendiente":
@@ -131,18 +130,14 @@ def construir_query_filtros(user: dict, filtros: Optional[dict] = None):
     return query
 
 def formatear_comision_response(comision: dict) -> ComisionResponse:
+    """Formatea un documento de comisión a ComisionResponse"""
     return ComisionResponse(
         id=str(comision["_id"]),
-        profesional={
-            "id": comision["profesional_id"],
-            "nombre": comision["profesional_nombre"]
-        },
-        sede={
-            "id": comision["sede_id"],
-            "nombre": comision.get("sede_nombre", "")
-        },
+        profesional_id=comision["profesional_id"],
+        profesional_nombre=comision["profesional_nombre"],
+        sede_id=comision["sede_id"],
         moneda=comision.get("moneda"),
-        tipo_comision=comision.get("tipo_comision", "servicios"),
+        tipo_comision=comision.get("tipo_comision", "servicios"),  # ⭐ NUEVO
         total_servicios=comision["total_servicios"],
         total_comisiones=comision["total_comisiones"],
         periodo_inicio=comision.get("periodo_inicio", ""),
@@ -150,9 +145,8 @@ def formatear_comision_response(comision: dict) -> ComisionResponse:
         estado=comision.get("estado", "pendiente"),
         creado_en=comision["creado_en"],
         liquidada_por=comision.get("liquidada_por"),
-        liquidada_en=comision.get("liquidada_en"),
+        liquidada_en=comision.get("liquidada_en")
     )
-
 
 # ⭐ NUEVA FUNCIÓN: Calcular totales desglosados por tipo
 def calcular_totales_por_tipo(servicios_detalle: list) -> dict:
@@ -221,21 +215,42 @@ async def obtener_comision_detalle(
     comision_id: str,
     user: dict = Depends(get_current_user)
 ):
-    validar_object_id(comision_id)
-    comision = await obtener_comision_por_id(comision_id)
-    verificar_acceso_sede(user, comision)
-
-    totales = calcular_totales_por_tipo(comision.get("servicios_detalle", []))
-
-    base = formatear_comision_response(comision)
-
-    return ComisionDetalleResponse(
-        **base.dict(),
-        total_comisiones_servicios=totales["total_comisiones_servicios"],
-        total_comisiones_productos=totales["total_comisiones_productos"],
-        servicios_detalle=comision["servicios_detalle"]
-    )
-
+    """Obtiene el detalle completo de una comisión incluyendo todos los servicios"""
+    try:
+        validar_object_id(comision_id)
+        comision = await obtener_comision_por_id(comision_id)
+        verificar_acceso_sede(user, comision)
+        
+        # ⭐ CALCULAR TOTALES DESGLOSADOS
+        totales = calcular_totales_por_tipo(comision.get("servicios_detalle", []))
+        
+        return ComisionDetalleResponse(
+            id=str(comision["_id"]),
+            profesional_id=comision["profesional_id"],
+            profesional_nombre=comision["profesional_nombre"],
+            sede_id=comision["sede_id"],
+            moneda=comision.get("moneda"),
+            tipo_comision=comision.get("tipo_comision", "servicios"),  # ⭐ NUEVO
+            total_servicios=comision["total_servicios"],
+            total_comisiones=comision["total_comisiones"],
+            total_comisiones_servicios=totales["total_comisiones_servicios"],  # ⭐ NUEVO
+            total_comisiones_productos=totales["total_comisiones_productos"],  # ⭐ NUEVO
+            servicios_detalle=comision["servicios_detalle"],
+            periodo_inicio=comision.get("periodo_inicio", ""),
+            periodo_fin=comision.get("periodo_fin", ""),
+            estado=comision.get("estado", "pendiente"),
+            creado_en=comision["creado_en"],
+            liquidada_por=comision.get("liquidada_por"),
+            liquidada_en=comision.get("liquidada_en")
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al obtener detalle de comisión: {str(e)}"
+        )
 
 @router.post("/{comision_id}/liquidar")
 async def liquidar_comision(
@@ -430,16 +445,11 @@ async def obtener_resumen_por_tipo(
         for comision in comisiones:
             key = f"{comision['profesional_id']}_{comision['sede_id']}"
             
-            resumen_por_profesional[key] = {
-                "profesional": {
-                    "id": comision["profesional_id"],
-                    "nombre": comision["profesional_nombre"]
-
-                    },
-                    "sede": {
-                    "id": comision["sede_id"],
-                    "nombre": comision.get("sede_nombre", "")
-                    },
+            if key not in resumen_por_profesional:
+                resumen_por_profesional[key] = {
+                    "profesional_id": comision["profesional_id"],
+                    "profesional_nombre": comision["profesional_nombre"],
+                    "sede_id": comision["sede_id"],
                     "moneda": comision.get("moneda", "COP"),
                     "tipo_comision_sede": comision.get("tipo_comision", "servicios"),
                     "total_servicios": 0,
@@ -449,8 +459,7 @@ async def obtener_resumen_por_tipo(
                     "estado": estado,
                     "periodo_inicio": "",
                     "periodo_fin": ""
-                    }         
-
+                }
             
             # Sumar totales
             resumen_por_profesional[key]["total_servicios"] += comision["total_servicios"]
