@@ -610,6 +610,7 @@ async def facturar_cita_o_venta(
                 "profesional_id": profesional_id,
                 "profesional_nombre": profesional_nombre,
                 "sede_id": sede_id,
+                "sede_nombre": sede.get("nombre", ""),
                 "moneda": moneda_sede,
                 "tipo_comision": tipo_comision,
                 "total_servicios": len(servicios_comision),

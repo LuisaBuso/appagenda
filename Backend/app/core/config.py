@@ -34,6 +34,7 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "https://agenda.rizosfelices.co",
         "https://staging-agenda.rizosfelices.co",
+        "https://preview.agenda.rizosfelices.co",
     ],
     allow_credentials=True,
     allow_methods=["*"],
