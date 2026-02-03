@@ -2,6 +2,15 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 
+class ProfesionalRef(BaseModel):
+    id: str
+    nombre: str
+
+class SedeRef(BaseModel):
+    id: str
+    nombre: str
+
+
 # ==============================================================
 # Modelo de detalle de servicio dentro de la comisión
 # ⭐ ACTUALIZADO: Separa comisiones de servicios y productos
@@ -49,9 +58,8 @@ class LiquidarComisionRequest(BaseModel):
 # ==============================================================
 class ComisionResponse(BaseModel):
     id: str
-    profesional_id: str
-    profesional_nombre: str
-    sede_id: str
+    profesional: ProfesionalRef
+    sede: SedeRef
     moneda: Optional[str] = None  # ⭐ Opcional para comisiones viejas
     tipo_comision: Optional[str] = "servicios"  # ⭐ NUEVO
     total_servicios: int
@@ -66,24 +74,13 @@ class ComisionResponse(BaseModel):
 # ==============================================================
 # Modelo de respuesta detallada (incluye servicios)
 # ==============================================================
-class ComisionDetalleResponse(BaseModel):
-    id: str
-    profesional_id: str
-    profesional_nombre: str
-    sede_id: str
-    moneda: Optional[str] = None  # ⭐ Opcional para comisiones viejas
-    tipo_comision: Optional[str] = "servicios"  # ⭐ NUEVO
-    total_servicios: int
-    total_comisiones: float
-    total_comisiones_servicios: float = 0  # ⭐ NUEVO: Total solo de servicios
-    total_comisiones_productos: float = 0  # ⭐ NUEVO: Total solo de productos
+class ComisionDetalleResponse(ComisionResponse):
+    total_comisiones_servicios: float = 0
+    total_comisiones_productos: float = 0
     servicios_detalle: List[ServicioDetalle]
-    periodo_inicio: str
-    periodo_fin: str
-    estado: str
-    creado_en: datetime
     liquidada_por: Optional[str] = None
     liquidada_en: Optional[datetime] = None
+
 
 # ==============================================================
 # Filtros para búsqueda de comisiones
@@ -100,25 +97,18 @@ class FiltrosComision(BaseModel):
 # ⭐ NUEVO: Modelo para resumen de comisiones por tipo
 # ==============================================================
 class ResumenComisionPorTipo(BaseModel):
-    """Resumen de comisiones desglosadas por tipo"""
-    profesional_id: str
-    profesional_nombre: str
-    sede_id: str
+    profesional: ProfesionalRef
+    sede: SedeRef
     moneda: str
     tipo_comision_sede: str
-    
-    # Totales generales
+
     total_servicios: int
     total_comisiones: float
-    
-    # Desglose por tipo
     comisiones_por_servicios: float
     comisiones_por_productos: float
-    
-    # Porcentajes
     porcentaje_servicios: float
     porcentaje_productos: float
-    
+
     estado: str
     periodo_inicio: str
     periodo_fin: str
