@@ -528,9 +528,6 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                     <h4 className="text-xs font-bold text-gray-900 truncate">
                       {producto.nombre}
                     </h4>
-                    <span className="text-[10px] px-1 py-0.5 bg-gray-100 text-gray-700 rounded">
-                      {producto.producto_id}
-                    </span>
                   </div>
                   
                   <div className="grid grid-cols-2 gap-1 text-[10px] mb-1">

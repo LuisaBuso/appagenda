@@ -1,7 +1,15 @@
-// services/api.ts
+// services/api.ts - ACTUALIZADO
 import { API_BASE_URL } from '../../../types/config';
 
-// Interfaces simplificadas - solo campos esenciales
+// ⭐ NUEVA INTERFAZ: Servicio en cita
+export interface ServicioEnCita {
+  servicio_id: string;
+  nombre: string;
+  precio: number;
+  precio_personalizado: boolean;
+}
+
+// Interfaces simplificadas
 export interface Estilista {
   _id: string;
   unique_id?: string;
@@ -25,21 +33,66 @@ export interface Servicio {
   precio: number;
 }
 
+// ⭐ INTERFAZ ACTUALIZADA: Cita con múltiples servicios
 export interface Cita {
   _id: string;
+  cita_id?: string;
   cliente_nombre: string;
-  servicio?: {
+  
+  // ⭐ NUEVO: Array de servicios
+  servicios: ServicioEnCita[];
+  
+  // ⭐ COMPATIBILIDAD: Campos calculados
+  servicio?: {  // Primer servicio (compatibilidad)
     nombre: string;
-    duracion_minutos: number;
+    duracion_minutos?: number;
     precio: number;
   };
+  
   fecha: string;
   hora_inicio: string;
   hora_fin: string;
   estado: string;
+  
+  // ⭐ NUEVOS CAMPOS
+  precio_total?: number;
+  cantidad_servicios?: number;
+  tiene_precio_personalizado?: boolean;
 }
 
-// 🔥 CACHE GLOBAL para evitar peticiones duplicadas
+// 🔥 HELPER: Normalizar cita para compatibilidad
+const normalizarCita = (cita: any): Cita => {
+  // Si tiene servicios (nuevo formato)
+  if (cita.servicios && Array.isArray(cita.servicios) && cita.servicios.length > 0) {
+    return {
+      ...cita,
+      // ⭐ Agregar campo 'servicio' para compatibilidad
+      servicio: {
+        nombre: cita.servicios.map((s: any) => s.nombre).join(', '),
+        precio: cita.precio_total || cita.servicios.reduce((sum: number, s: any) => sum + (s.precio || 0), 0),
+        duracion_minutos: cita.servicios[0]?.duracion_minutos
+      }
+    };
+  }
+  
+  // Si tiene servicio único (formato antiguo)
+  if (cita.servicio) {
+    return {
+      ...cita,
+      // Convertir a array
+      servicios: [{
+        servicio_id: cita.servicio.servicio_id || cita.servicio_id || '',
+        nombre: cita.servicio.nombre || 'Servicio',
+        precio: cita.servicio.precio || 0,
+        precio_personalizado: false
+      }]
+    };
+  }
+  
+  return cita;
+};
+
+// Cache y httpClient sin cambios...
 const cache = {
   servicios: null as Servicio[] | null,
   estilistas: new Map<string, Estilista>(),
@@ -47,11 +100,10 @@ const cache = {
   citas: new Map<string, Cita[]>(),
   lastFetch: new Map<string, number>(),
   
-  // Limpiar cache después de 5 minutos
   shouldRefetch: (key: string) => {
     const last = cache.lastFetch.get(key);
     if (!last) return true;
-    return Date.now() - last > 5 * 60 * 1000; // 5 minutos
+    return Date.now() - last > 5 * 60 * 1000;
   },
   
   set: <T>(key: string, data: T) => {
@@ -60,7 +112,6 @@ const cache = {
   }
 };
 
-// 🔥 HTTP Client optimizado
 const httpClient = {
   get: async (url: string, token: string) => {
     const response = await fetch(url, {
@@ -96,12 +147,11 @@ const httpClient = {
   }
 };
 
-// 🔥 API OPTIMIZADA - MÍNIMAS PETICIONES
+// APIs sin cambios...
 export const serviciosApi = {
   getServicios: async (token: string): Promise<Servicio[]> => {
     const cacheKey = 'servicios';
     
-    // 🔥 Usar cache si está disponible y es reciente
     if (cache.servicios && !cache.shouldRefetch(cacheKey)) {
       return cache.servicios;
     }
@@ -110,13 +160,11 @@ export const serviciosApi = {
       const data = await httpClient.get(`${API_BASE_URL}scheduling/services/`, token);
       const servicios = Array.isArray(data) ? data : [];
       
-      // 🔥 Guardar en cache
       cache.servicios = servicios;
       cache.set(cacheKey, servicios);
       
       return servicios;
     } catch (error) {
-      // 🔥 Si falla, devolver cache aunque sea viejo
       if (cache.servicios) return cache.servicios;
       throw error;
     }
@@ -136,7 +184,6 @@ export const serviciosApi = {
     }
 
     try {
-      // 🔥 Obtener estilista y servicios en paralelo
       const [estilista, todosServicios] = await Promise.all([
         estilistasApi.getEstilista(estilistaId, token),
         serviciosApi.getServicios(token)
@@ -170,7 +217,6 @@ export const estilistasApi = {
       const data = await httpClient.get(`${API_BASE_URL}admin/profesionales/`, token);
       const estilistas = Array.isArray(data) ? data : [];
       
-      // 🔥 Actualizar cache
       cache.estilistas.clear();
       estilistas.forEach(est => {
         if (est._id) cache.estilistas.set(est._id, est);
@@ -185,7 +231,6 @@ export const estilistasApi = {
   },
 
   getEstilista: async (estilistaId: string, token: string): Promise<Estilista> => {
-    // 🔥 Buscar en cache primero
     if (cache.estilistas.has(estilistaId) && !cache.shouldRefetch(`estilista_${estilistaId}`)) {
       return cache.estilistas.get(estilistaId)!;
     }
@@ -196,7 +241,6 @@ export const estilistasApi = {
         token
       );
 
-      // 🔥 Actualizar cache
       cache.estilistas.set(estilistaId, estilista);
       if (estilista.unique_id) {
         cache.estilistas.set(estilista.unique_id, estilista);
@@ -205,7 +249,6 @@ export const estilistasApi = {
       cache.set(`estilista_${estilistaId}`, estilista);
       return estilista;
     } catch (error) {
-      // 🔥 Fallback a cache si existe
       if (cache.estilistas.has(estilistaId)) {
         return cache.estilistas.get(estilistaId)!;
       }
@@ -249,7 +292,6 @@ export const sedesApi = {
       const data = await httpClient.get(`${API_BASE_URL}admin/locales/`, token);
       const sedes = Array.isArray(data) ? data : [];
       
-      // 🔥 Actualizar cache
       cache.sedes.clear();
       sedes.forEach(sede => {
         if (sede._id) cache.sedes.set(sede._id, sede);
@@ -264,7 +306,6 @@ export const sedesApi = {
   },
 
   getSede: async (sedeId: string, token: string): Promise<Sede> => {
-    // 🔥 Buscar en cache primero
     if (cache.sedes.has(sedeId) && !cache.shouldRefetch(`sede_${sedeId}`)) {
       return cache.sedes.get(sedeId)!;
     }
@@ -275,7 +316,6 @@ export const sedesApi = {
         token
       );
 
-      // 🔥 Actualizar cache
       cache.sedes.set(sedeId, sede);
       if (sede._id && sede._id !== sedeId) {
         cache.sedes.set(sede._id, sede);
@@ -284,7 +324,6 @@ export const sedesApi = {
       cache.set(`sede_${sedeId}`, sede);
       return sede;
     } catch (error) {
-      // 🔥 Fallback a cache si existe
       if (cache.sedes.has(sedeId)) {
         return cache.sedes.get(sedeId)!;
       }
@@ -293,14 +332,14 @@ export const sedesApi = {
   }
 };
 
+// ⭐ ACTUALIZADO: citasApi con normalización
 export const citasApi = {
   getCitas: async (params: { estilista_id?: string; fecha?: string }, token: string): Promise<Cita[]> => {
     const cacheKey = `citas_${params.estilista_id}_${params.fecha}`;
     
-    // 🔥 Cache muy agresivo para citas (1 minuto)
     if (cache.citas.has(cacheKey)) {
       const lastFetch = cache.lastFetch.get(cacheKey) || 0;
-      if (Date.now() - lastFetch < 60 * 1000) { // 1 minuto
+      if (Date.now() - lastFetch < 60 * 1000) {
         return cache.citas.get(cacheKey)!;
       }
     }
@@ -315,15 +354,18 @@ export const citasApi = {
         token
       );
 
-      const citas = Array.isArray(data) ? data : (data.citas || []);
+      let citasRaw = Array.isArray(data) ? data : (data.citas || []);
       
-      // 🔥 Guardar en cache
+      // ⭐ NORMALIZAR TODAS LAS CITAS
+      const citas = citasRaw.map((cita: any) => normalizarCita(cita));
+      
       cache.citas.set(cacheKey, citas);
       cache.set(cacheKey, citas);
       
+      console.log('✅ Citas normalizadas:', citas);
+      
       return citas;
     } catch (error) {
-      // 🔥 Devolver cache aunque sea viejo
       if (cache.citas.has(cacheKey)) {
         return cache.citas.get(cacheKey)!;
       }
@@ -338,7 +380,6 @@ export const citasApi = {
       token
     );
 
-    // 🔥 Invalidar cache de citas para esta fecha/estilista
     const cacheKey = `citas_${data.estilista_id}_${data.fecha}`;
     cache.citas.delete(cacheKey);
     cache.lastFetch.delete(cacheKey);
@@ -353,7 +394,6 @@ export const bloqueosApi = {
   }
 };
 
-// 🔥 API PRINCIPAL OPTIMIZADA - MÁXIMA EFICIENCIA
 export const estilistaApi = {
   getMiPerfil: async (token: string, email: string): Promise<{ estilista: Estilista; sede: Sede | null }> => {
     const cacheKey = `perfil_${email}`;
@@ -370,7 +410,6 @@ export const estilistaApi = {
     }
 
     try {
-      // 🔥 Obtener todo en paralelo para máxima velocidad
       const [estilistas, sedes] = await Promise.all([
         estilistasApi.getEstilistas(token),
         sedesApi.getSedes(token)
@@ -412,7 +451,6 @@ export const estilistaApi = {
   }
 };
 
-// 🔥 Función para limpiar cache (útil para logout)
 export const clearCache = () => {
   cache.servicios = null;
   cache.estilistas.clear();

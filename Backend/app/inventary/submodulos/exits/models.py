@@ -10,6 +10,5 @@ class ItemSalida(BaseModel):
 class Salida(BaseModel):
     motivo: str  # venta | uso_interno | ajuste
     sede_id: Optional[str] = None
-    franquicia_id: Optional[str] = None
     items: List[ItemSalida]
     fecha_creacion: Optional[datetime] = None

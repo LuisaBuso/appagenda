@@ -117,7 +117,7 @@ export function FichaSelector({ citas }: FichaSelectorProps) {
           <option value="">Selecciona una cita</option>
           {citas.map(cita => (
             <option key={cita.cita_id} value={cita.cita_id}>
-              {cita.cliente.nombre} - {cita.servicio.nombre} - {cita.fecha}
+              {cita.cliente.nombre} - {cita.servicios?.map((s: any) => s.nombre).join(', ') || 'Sin servicio'} - {cita.fecha}
             </option>
           ))}
         </select>

@@ -17,7 +17,13 @@ interface CitaParaPago {
     monto_total: number;
     cliente_id: string;
     profesional_id: string;
-    servicio_id: string;
+    
+    // ⭐ CAMBIO: En lugar de servicio_id singular, ahora es servicios (array)
+    servicios: Array<{
+        servicio_id: string;
+        precio_personalizado: number | null;  // null si usa precio de BD
+    }>;
+    
     sede_id: string;
     notas: string;
 }
@@ -189,7 +195,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 sede_id: citaData.sede_id,
                 cliente_id: citaData.cliente_id,
                 profesional_id: citaData.profesional_id,
-                servicio_id: citaData.servicio_id,
+                servicios: citaData.servicios,
                 fecha: formatearFechaParaBackend(citaData.fecha),
                 hora_inicio: citaData.hora_inicio,
                 hora_fin: citaData.hora_fin,

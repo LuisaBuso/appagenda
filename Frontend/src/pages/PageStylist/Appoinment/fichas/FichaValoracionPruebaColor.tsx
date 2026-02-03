@@ -22,7 +22,7 @@ export function FichaValoracionPruebaColor({ cita, datosIniciales, onGuardar, on
     foto_expectativa: [] as File[],
     acuerdos: "",
     recomendaciones: "",
-    servicio_valorado: cita.servicio.nombre || "",
+    servicio_valorado: cita.servicios?.[0]?.nombre || "",
     observaciones_adicionales: ""
   });
 
@@ -232,13 +232,13 @@ export function FichaValoracionPruebaColor({ cita, datosIniciales, onGuardar, on
       const fichaData = {
         // Campos REQUERIDOS
         cliente_id: cita.cliente.cliente_id,
-        servicio_id: cita.servicio.servicio_id,
+        servicio_nombre: cita.servicios?.map((s: any) => s.nombre).join(', ') || "",
         profesional_id: estilistaData.id,
         sede_id: cita.sede?.sede_id || 'sede_default',
         tipo_ficha: "VALORACION_PRUEBA_COLOR",
 
         // Información básica
-        servicio_nombre: cita.servicio.nombre || "",
+        servicio_id: cita.servicios?.[0]?.servicio_id || "",
         profesional_nombre: estilistaData.nombre,
         profesional_email: estilistaData.email,
         fecha_ficha: new Date().toISOString(),
@@ -252,7 +252,7 @@ export function FichaValoracionPruebaColor({ cita, datosIniciales, onGuardar, on
         telefono: cita.cliente.telefono || "",
 
         // Información financiera
-        precio: cita.servicio.precio || 0,
+        precio: cita.precio_total || cita.servicios?.reduce((sum: number, s: any) => sum + (s.precio || 0), 0) || 0,
         estado: "completado",
         estado_pago: "pagado",
 
@@ -473,7 +473,7 @@ export function FichaValoracionPruebaColor({ cita, datosIniciales, onGuardar, on
         <h3 className="font-semibold mb-2">Información del servicio</h3>
         <div className="grid grid-cols-2 gap-2">
           <p><strong>Cliente:</strong> {cita.cliente.nombre} {cita.cliente.apellido}</p>
-          <p><strong>Servicio:</strong> {cita.servicio.nombre}</p>
+          <p><strong>Servicio(s):</strong> {cita.servicios?.map((s: any) => s.nombre).join(', ') || 'Sin servicio'}</p>
           <p><strong>Fecha:</strong> {cita.fecha}</p>
           <p><strong>Hora:</strong> {cita.hora_inicio}</p>
         </div>

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
-from app.clients_service.models import Cliente, NotaCliente
-from app.database.mongo import collection_clients, collection_citas, collection_card,collection_servicios, collection_locales,collection_estilista
+from app.clients_service.models import Cliente, NotaCliente,ClientesPaginados
+from app.database.mongo import collection_clients, collection_citas, collection_card,collection_servicios, collection_locales,collection_estilista, collection_sales
 from app.auth.routes import get_current_user
 from app.id_generator.generator import generar_id
 from datetime import datetime
@@ -61,28 +61,29 @@ async def crear_cliente(
         if rol not in ["admin_sede", "admin_franquicia", "super_admin"]:
             raise HTTPException(403, "No autorizado")
 
-        # 🚫 ELIMINADO: verificación de correo / teléfono duplicado
-        # existing = await verificar_duplicado_cliente(
-        #     correo=cliente.correo,
-        #     telefono=cliente.telefono
-        # )
-        #
-        # if existing:
-        #     campo = (
-        #         "correo"
-        #         if cliente.correo == existing.get("correo")
-        #         else "teléfono"
-        #     )
-        #     raise HTTPException(400, f"Ya existe un cliente con este {campo}")
-
-        sede = current_user.get("sede_id", "000")
-        cliente_id = await generar_id("cliente", sede)
+        sede_autenticada = current_user.get("sede_id", "000")
+        
+        # ✅ Consultar información de la sede
+        sede_info = await collection_locales.find_one({"sede_id": sede_autenticada})
+        
+        if not sede_info:
+            raise HTTPException(400, "Sede no encontrada")
+        
+        # ✅ Verificar si la sede maneja clientes globales
+        es_global = sede_info.get("es_global", False)
+        
+        # ✅ Generar ID del cliente
+        cliente_id = await generar_id("cliente", sede_autenticada)
 
         data = cliente.dict(exclude_none=True)
         data["cliente_id"] = cliente_id
         data["fecha_creacion"] = datetime.now()
         data["creado_por"] = current_user.get("email", "unknown")
-        data["sede_id"] = sede
+        
+        # ⭐ Si es sede global, no asignar sede_id específica
+        data["sede_id"] = None if es_global else sede_autenticada
+        
+        data["pais"] = sede_info.get("pais", "")
         data["notas_historial"] = []
 
         result = await collection_clients.insert_one(data)
@@ -133,18 +134,89 @@ async def listar_clientes(
 
 
 # ============================================================
-# LISTAR TODOS LOS CLIENTES (SUPER ADMIN)
+# LISTAR TODOS LOS CLIENTES (UNIVERSAL: SUPER ADMIN, SEDES GLOBALES Y SEDES LOCALES)
 # ============================================================
 
-@router.get("/todos", response_model=List[dict])
-async def listar_todos(current_user: dict = Depends(get_current_user)):
+@router.get("/todos", response_model=ClientesPaginados)
+async def listar_todos(
+    filtro: Optional[str] = Query(None),
+    limite: int = Query(100, ge=1, le=500),
+    pagina: int = Query(1, ge=1),
+    current_user: dict = Depends(get_current_user)
+):
     try:
-        if current_user.get("rol") != "super_admin":
+        rol = current_user.get("rol")
+        
+        # Validar roles permitidos
+        if rol not in ["super_admin", "admin_sede", "estilista"]:
             raise HTTPException(403, "No autorizado")
 
-        clientes = await collection_clients.find({}).to_list(None)
-        return [cliente_to_dict(c) for c in clientes]
+        query = {}
+        
+        # Lógica según el rol
+        if rol in ["admin_sede", "estilista"]:
+            sede_id = current_user.get("sede_id")
+            
+            if not sede_id:
+                raise HTTPException(400, "Usuario sin sede asignada")
+            
+            # Verificar si la sede es global
+            sede_info = await collection_locales.find_one({"sede_id": sede_id})
+            
+            if not sede_info:
+                raise HTTPException(404, "Sede no encontrada")
+            
+            # 🔥 LÓGICA UNIVERSAL:
+            if sede_info.get("es_global") == True:
+                # Sede GLOBAL: traer clientes con sede_id null
+                query["sede_id"] = None
+            else:
+                # Sede LOCAL/INTERNACIONAL: traer clientes de esa sede específica
+                query["sede_id"] = sede_id
+        
+        # Si es super_admin, no aplica filtro de sede (trae todos los clientes)
+        
+        # Aplicar filtros de búsqueda si existen
+        if filtro:
+            filtro_condiciones = [
+                {"nombre": {"$regex": filtro, "$options": "i"}},
+                {"correo": {"$regex": filtro, "$options": "i"}},
+                {"telefono": {"$regex": filtro, "$options": "i"}},
+                {"cliente_id": {"$regex": filtro, "$options": "i"}},
+            ]
+            
+            if query:
+                # Combinar query existente con filtros de búsqueda
+                query = {"$and": [query, {"$or": filtro_condiciones}]}
+            else:
+                query["$or"] = filtro_condiciones
 
+        # Calcular paginación
+        skip = (pagina - 1) * limite
+        
+        # Obtener total de documentos
+        total_clientes = await collection_clients.count_documents(query)
+        
+        # Ejecutar query con paginación
+        clientes = await collection_clients.find(query).skip(skip).limit(limite).to_list(None)
+        
+        # Calcular metadata de paginación
+        total_paginas = (total_clientes + limite - 1) // limite
+        
+        return {
+            "clientes": [cliente_to_dict(c) for c in clientes],
+            "metadata": {
+                "total": total_clientes,
+                "pagina": pagina,
+                "limite": limite,
+                "total_paginas": total_paginas,
+                "tiene_siguiente": pagina < total_paginas,
+                "tiene_anterior": pagina > 1
+            }
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error al obtener todos los clientes: {e}", exc_info=True)
         raise HTTPException(500, "Error al obtener todos los clientes")
@@ -188,10 +260,12 @@ async def obtener_cliente(
 ):
     try:
         rol = current_user.get("rol")
+        user_sede_id = current_user.get("sede_id")
 
         if rol not in ["admin_sede", "admin_franquicia", "super_admin", "estilista"]:
-            raise HTTPException(403, "No autorizado")
+            raise HTTPException(status_code=403, detail="No autorizado")
 
+        # 1️⃣ Buscar cliente por cliente_id o _id
         cliente = await collection_clients.find_one({"cliente_id": id})
 
         if not cliente:
@@ -201,17 +275,39 @@ async def obtener_cliente(
                 pass
 
         if not cliente:
-            raise HTTPException(404, "Cliente no encontrado")
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
+        # 2️⃣ Reglas de acceso SOLO para admin_sede / estilista
         if rol in ["admin_sede", "estilista"]:
-            if cliente.get("sede_id") != current_user.get("sede_id"):
-                raise HTTPException(403, "No autorizado")
+            cliente_sede_id = cliente.get("sede_id")
 
+            # ✅ Cliente sin sede → permitido
+            if cliente_sede_id is None:
+                return cliente_to_dict(cliente)
+
+            # 3️⃣ Validar sede del cliente
+            sede_cliente = await collection_locales.find_one(
+                {"sede_id": cliente_sede_id},
+                {"es_global": 1}
+            )
+
+            # ✅ Si la sede del cliente es global → permitido
+            if sede_cliente and sede_cliente.get("es_global") is True:
+                return cliente_to_dict(cliente)
+
+            # ❌ Sede internacional: debe coincidir con la del usuario
+            if cliente_sede_id != user_sede_id:
+                raise HTTPException(status_code=403, detail="No autorizado")
+
+        # 4️⃣ Roles altos pasan directo
         return cliente_to_dict(cliente)
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error obteniendo cliente: {e}")
-        raise HTTPException(500, "Error al obtener cliente")
+        logger.error(f"Error obteniendo cliente {id}: {e}")
+        raise HTTPException(status_code=500, detail="Error al obtener cliente")
+
 
 
 # ============================================================
