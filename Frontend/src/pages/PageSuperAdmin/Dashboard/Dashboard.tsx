@@ -79,7 +79,6 @@ export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [error, setError] = useState<string | null>(null);
   const [monedaUsuario, setMonedaUsuario] = useState<string>("COP");
-  const [debugInfo, setDebugInfo] = useState<string>("");
 
   const getSedeNombre = useCallback(
     (sedeId: string, fallback: string = "Sede seleccionada") => {
@@ -160,7 +159,6 @@ export default function DashboardPage() {
     try {
       setLoading(true);
       setError(null);
-      setDebugInfo("");
       // Cargar en paralelo solo lo esencial
       await Promise.all([
         loadSedes(),
@@ -170,7 +168,6 @@ export default function DashboardPage() {
     } catch (error: any) {
       console.error("Error cargando datos iniciales:", error);
       setError("Error al cargar datos iniciales");
-      setDebugInfo(`Error inicial: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -184,7 +181,6 @@ export default function DashboardPage() {
     } catch (error: any) {
       console.error("Error cargando sedes:", error);
       setError("Error al cargar las sedes");
-      setDebugInfo(prev => prev + ` | Error sedes: ${error.message}`);
     } finally {
       setLoadingSedes(false);
     }
@@ -195,12 +191,10 @@ export default function DashboardPage() {
       if (selectedSede !== "global") return;
 
       setError(null);
-      setDebugInfo("Cargando datos globales...");
       const data = await getDashboard(user!.access_token, {
         period: selectedPeriod
       });
       setGlobalData(data);
-      setDebugInfo(`Datos globales cargados: ${data.success ? 'OK' : 'Error'}`);
 
       // Limpiar datos de sede específica
       setDashboardData(null);
@@ -210,7 +204,6 @@ export default function DashboardPage() {
     } catch (error: any) {
       console.error("Error cargando datos globales:", error);
       setError("Error al cargar datos globales");
-      setDebugInfo(`Error global: ${error.message}`);
       setGlobalData(null);
     }
   };
@@ -226,7 +219,6 @@ export default function DashboardPage() {
       }, 5000);
 
       setError(null);
-      setDebugInfo(`Cargando datos para sede: ${getSedeNombre(selectedSede)}, período: ${selectedPeriod}`);
 
       // Configurar parámetros para la API
       const params: any = {
@@ -250,11 +242,9 @@ export default function DashboardPage() {
 
       try {
         ventasResponse = await getVentasDashboard(user!.access_token, params);
-        setDebugInfo(prev => prev + ` | Ventas: ${ventasResponse?.success ? 'OK' : 'Error'}`);
         console.log('Datos de ventas recibidos:', ventasResponse);
       } catch (ventasError: any) {
         console.warn('Error cargando datos de ventas:', ventasError.message);
-        setDebugInfo(prev => prev + ` | Error ventas: ${ventasError.message}`);
       }
 
       // Luego intentar cargar datos de analytics
@@ -263,11 +253,9 @@ export default function DashboardPage() {
           period: selectedPeriod,
           sede_id: selectedSede
         });
-        setDebugInfo(prev => prev + ` | Analytics: ${analyticsResponse?.success ? 'OK' : 'Error'}`);
         console.log('Datos de analytics recibidos:', analyticsResponse);
       } catch (analyticsError: any) {
         console.warn('Error cargando datos de analytics:', analyticsError.message);
-        setDebugInfo(prev => prev + ` | Error analytics: ${analyticsError.message}`);
       }
 
       // Establecer los datos que se cargaron exitosamente
@@ -289,7 +277,6 @@ export default function DashboardPage() {
     } catch (error: any) {
       console.error("Error general cargando dashboard:", error);
       setError(`Error al cargar datos: ${error.message}`);
-      setDebugInfo(prev => prev + ` | Error general: ${error.message}`);
       setDashboardData(null);
       setVentasData(null);
     }
@@ -336,7 +323,6 @@ export default function DashboardPage() {
     setVentasData(null);
     setChurnData([]);
     setError(null);
-    setDebugInfo("");
 
     if (sedeId === "global") {
       loadGlobalData();
@@ -657,44 +643,6 @@ export default function DashboardPage() {
     return (ticketPromedio as KPI).valor;
   };
 
-  // Componente para mostrar información de debug
-  const DebugInfo = () => {
-    if (!debugInfo && !ventasData) return null;
-
-    return (
-      <div className="mt-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
-        <div className="flex items-center justify-between mb-2">
-          <h4 className="text-sm font-medium text-gray-700">Información de depuración</h4>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              console.log('Ventas Data:', ventasData);
-              console.log('Dashboard Data:', dashboardData);
-              console.log('Métricas:', getMetricasVentas());
-            }}
-          >
-            Log en consola
-          </Button>
-        </div>
-        <div className="text-xs text-gray-600 space-y-1">
-          <p>Estado: {debugInfo}</p>
-          <p>Moneda usuario: {monedaUsuario}</p>
-          <p>Sede seleccionada: {getSedeNombre(selectedSede)}</p>
-          {ventasData?.metricas_por_moneda && (
-            <p>Monedas disponibles: {Object.keys(ventasData.metricas_por_moneda).join(', ')}</p>
-          )}
-          {ventasData?.descripcion && (
-            <p>Descripción: {ventasData.descripcion}</p>
-          )}
-          {ventasData?.range && (
-            <p>Período: {ventasData.range.start} - {ventasData.range.end}</p>
-          )}
-        </div>
-      </div>
-    );
-  };
-
   // Modal de selección de fechas
   const DateRangeModal = () => {
     if (!showDateModal) return null;
@@ -1004,7 +952,6 @@ export default function DashboardPage() {
                     <AlertCircle className="w-16 h-16 mx-auto mb-4 text-gray-400" />
                     <h3 className="text-lg font-medium text-gray-900 mb-2">Error al cargar datos</h3>
                     <p className="text-gray-500 mb-4">{error}</p>
-                    <DebugInfo />
                     <Button
                       onClick={handleRefresh}
                       className="bg-gray-900 hover:bg-gray-800 text-white mt-4"
@@ -1370,7 +1317,6 @@ export default function DashboardPage() {
                           </div>
                         </div>
 
-                        <DebugInfo />
                       </>
                     ) : dashboardData ? (
                       // Mostrar datos de analytics si no hay datos de ventas
@@ -1412,7 +1358,6 @@ export default function DashboardPage() {
                             </div>
                           </CardContent>
                         </Card>
-                        <DebugInfo />
                       </div>
                     ) : (
                       <div className="text-center py-12">
@@ -1421,7 +1366,6 @@ export default function DashboardPage() {
                         <p className="text-gray-500 mb-4">
                           No se pudieron cargar datos para esta sede.
                         </p>
-                        <DebugInfo />
                         <Button onClick={handleRefresh} className="bg-gray-900 hover:bg-gray-800 text-white mt-4">
                           <RefreshCw className="w-4 h-4 mr-2" />
                           Reintentar
