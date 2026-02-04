@@ -53,7 +53,6 @@ import {
   TableHeader,
   TableRow,
 } from "../../../components/ui/table";
-import { Progress } from "../../../components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import { formatMoney, extractNumericValue } from "./Api/formatMoney";
 
@@ -101,7 +100,6 @@ export default function DashboardPage() {
   const periodOptions = [
     { id: "last_7_days", label: "Últimos 7 días" },
     { id: "last_30_days", label: "Últimos 30 días" },
-    { id: "last_90_days", label: "Últimos 90 días" },
     { id: "month", label: "Mes actual" },
     { id: "custom", label: "Rango personalizado" },
   ];
@@ -191,16 +189,45 @@ export default function DashboardPage() {
       if (selectedSede !== "global") return;
 
       setError(null);
-      const data = await getDashboard(user!.access_token, {
-        period: selectedPeriod
-      });
-      setGlobalData(data);
+      const ventasParams: any = { period: selectedPeriod };
+      if (selectedPeriod === "custom") {
+        if (!dateRange.start_date || !dateRange.end_date) {
+          setError("Por favor selecciona un rango de fechas");
+          return;
+        }
+        ventasParams.start_date = dateRange.start_date;
+        ventasParams.end_date = dateRange.end_date;
+      }
+
+      let ventasResponse: VentasDashboardResponse | null = null;
+      let analyticsResponse: DashboardResponse | null = null;
+
+      try {
+        ventasResponse = await getVentasDashboard(user!.access_token, ventasParams);
+        setVentasData(ventasResponse);
+      } catch (ventasError: any) {
+        console.warn("Error cargando ventas globales:", ventasError.message);
+      }
+
+      try {
+        const analyticsParams: any = { period: selectedPeriod };
+        if (selectedPeriod === "custom") {
+          analyticsParams.start_date = dateRange.start_date;
+          analyticsParams.end_date = dateRange.end_date;
+        }
+        analyticsResponse = await getDashboard(user!.access_token, analyticsParams);
+        setGlobalData(analyticsResponse);
+      } catch (analyticsError: any) {
+        console.warn("Error cargando analytics globales:", analyticsError.message);
+      }
 
       // Limpiar datos de sede específica
       setDashboardData(null);
-      setVentasData(null);
       setChurnData([]);
 
+      if (!ventasResponse && !analyticsResponse) {
+        setError("No se pudieron cargar datos globales");
+      }
     } catch (error: any) {
       console.error("Error cargando datos globales:", error);
       setError("Error al cargar datos globales");
@@ -620,6 +647,132 @@ export default function DashboardPage() {
     return paymentMethods;
   };
 
+  const VentasOverview = () => (
+    <>
+      {/* KPIs principales */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="border border-gray-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
+              <DollarSign className="w-4 h-4" />
+              Ventas Totales
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {formatCurrency(getMetricasVentas().ventas_totales)}
+            </div>
+            <p className="text-sm text-gray-500 mt-2">
+              {getMetricasVentas().cantidad_ventas || 0} transacciones
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-gray-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
+              <Receipt className="w-4 h-4" />
+              Transacciones
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {getMetricasVentas().cantidad_ventas || 0}
+            </div>
+            <p className="text-sm text-gray-500 mt-2">
+              Ticket promedio: {formatCurrency(getMetricasVentas().ticket_promedio || 0)}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-gray-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
+              <Users className="w-4 h-4" />
+              Servicios
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {formatCurrency(getMetricasVentas().ventas_servicios)}
+            </div>
+            <p className="text-sm text-gray-500 mt-2">
+              {getMetricasVentas().ventas_servicios > 0 && getMetricasVentas().ventas_totales > 0
+                ? `${Math.round((getMetricasVentas().ventas_servicios / getMetricasVentas().ventas_totales) * 100)}% del total`
+                : 'Sin datos'}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-gray-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
+              <Package className="w-4 h-4" />
+              Productos
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {formatCurrency(getMetricasVentas().ventas_productos)}
+            </div>
+            <p className="text-sm text-gray-500 mt-2">
+              {getMetricasVentas().ventas_productos > 0 && getMetricasVentas().ventas_totales > 0
+                ? `${Math.round((getMetricasVentas().ventas_productos / getMetricasVentas().ventas_totales) * 100)}% del total`
+                : 'Sin datos'}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Main Dashboard Grid con gráficos */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* Left Column */}
+        <div className="flex flex-col gap-6">
+          <SalesChart
+            salesData={getSalesChartData()}
+            formatCurrency={formatCurrencyShort}
+            title="Ventas Semanales"
+          />
+
+          <SalesDonutChart
+            donutData={getDonutData()}
+            formatCurrency={formatCurrency}
+            title="Distribución de Ventas"
+          />
+        </div>
+
+        {/* Right Column */}
+        <div className="flex flex-col gap-6">
+          {/* Métodos de Pago */}
+          <Card className="border border-gray-200">
+            <CardHeader className="p-4 pb-2">
+              <CardTitle className="text-sm font-medium text-gray-900 flex items-center gap-2">
+                <CreditCard className="w-4 h-4" />
+                Métodos de Pago
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 pt-2">
+              <div className="grid grid-cols-2 gap-3">
+                {getPaymentMethodData().map((method, index) => (
+                  <div key={index} className="flex flex-col items-center justify-center p-3 bg-gray-50 rounded-lg border border-gray-200">
+                    <div
+                      className="w-3 h-3 rounded-full mb-1"
+                      style={{ backgroundColor: method.color }}
+                    />
+                    <span className="text-xs font-medium">{method.name}</span>
+                    <span className="text-sm font-bold mt-1">
+                      {formatCurrency(method.value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </>
+  );
+
   // Función para convertir TicketPromedioKPI a KPI
   const convertTicketPromedioToKPI = (ticketPromedio: TicketPromedioKPI): KPI => {
     if (typeof ticketPromedio === 'object' && ticketPromedio.valor !== undefined) {
@@ -930,7 +1083,7 @@ export default function DashboardPage() {
             {/* Tabs Content */}
             <div className="p-4">
               <TabsContent value="dashboard" className="m-0">
-                {loading && selectedSede === "global" && !globalData ? (
+                {loading && selectedSede === "global" && !globalData && !ventasData ? (
                   <div className="flex items-center justify-center h-64">
                     <div className="text-center">
                       <div className="w-10 h-10 border-3 border-gray-200 border-t-gray-900 rounded-full animate-spin mx-auto mb-4" />
@@ -1000,7 +1153,7 @@ export default function DashboardPage() {
                                 {formatCurrency(getSafeTicketPromedioValue(globalData.kpis.ticket_promedio))}
                               </div>
                               <p className="text-sm text-gray-600">
-                                Ticket promedio • {globalData.kpis.debug_info?.total_citas || 0} citas
+                                Ticket promedio del período
                               </p>
                             </CardContent>
                           </Card>
@@ -1027,16 +1180,6 @@ export default function DashboardPage() {
                             formatCurrency={formatCurrencyShort}
                           />
 
-                          <Card>
-                            <CardContent className="p-4">
-                              <div className="text-2xl font-bold text-gray-900 mb-1">
-                                {globalData.kpis.debug_info?.total_citas || 0}%
-                              </div>
-                              <p className="text-sm text-gray-600 mb-3">Capacidad de ocupación</p>
-                              <Progress value={globalData.kpis.debug_info?.total_citas || 0} className="h-1" />
-                            </CardContent>
-                          </Card>
-
                           <ClientIndicators
                             nuevosClientes={globalData.kpis.nuevos_clientes}
                             tasaRecurrencia={globalData.kpis.tasa_recurrencia}
@@ -1045,6 +1188,29 @@ export default function DashboardPage() {
                           />
                         </div>
                       </div>
+                    </div>
+                  ) : ventasData ? (
+                    <div className="space-y-4">
+                      <Card className="border border-gray-200 bg-gray-50">
+                        <CardContent className="p-6">
+                          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                            <div className="flex items-start gap-4">
+                              <div className="p-3 bg-gray-100 rounded-xl">
+                                <Globe className="w-6 h-6 text-gray-800" />
+                              </div>
+                              <div>
+                                <h3 className="text-xl font-bold">Vista Global (Ventas)</h3>
+                                <p className="text-gray-600 mt-2">
+                                  {sedes.length} sedes activas • Período: {getPeriodDisplay()}
+                                </p>
+                              </div>
+                            </div>
+                            <Badge className="bg-gray-900 text-white">Ventas</Badge>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      <VentasOverview />
                     </div>
                   ) : (
                     <div className="text-center py-12">
@@ -1228,26 +1394,6 @@ export default function DashboardPage() {
                             {/* Información de Clientes (si hay datos de analytics) */}
                             {dashboardData && (
                               <>
-                                <Card className="border border-gray-200">
-                                  <CardContent className="p-4">
-                                    <div className="flex items-center justify-between mb-3">
-                                      <div>
-                                        <div className="text-sm text-gray-600">Capacidad de Ocupación</div>
-                                        <div className="text-2xl font-bold text-gray-900">
-                                          {dashboardData.kpis.debug_info?.total_citas || 0}%
-                                        </div>
-                                      </div>
-                                      <div className="text-right">
-                                        <div className="text-sm text-gray-600">Clientes Totales</div>
-                                        <div className="text-lg font-bold text-gray-900">
-                                          {dashboardData.kpis.debug_info?.total_clientes || 0}
-                                        </div>
-                                      </div>
-                                    </div>
-                                    <Progress value={dashboardData.kpis.debug_info?.total_citas || 0} className="h-2" />
-                                  </CardContent>
-                                </Card>
-
                                 <ClientIndicators
                                   nuevosClientes={dashboardData.kpis.nuevos_clientes}
                                   tasaRecurrencia={dashboardData.kpis.tasa_recurrencia}
