@@ -54,7 +54,7 @@ async def facturar_cita_o_venta(
     print(f"📋 ID: {id}, Tipo: {tipo}")
 
     # Solo admin sede / superadmin
-    if current_user["rol"] not in ["admin_sede", "superadmin"]:
+    if current_user["rol"] not in ["admin_sede", "super_admin"]:
         raise HTTPException(status_code=403, detail="No autorizado para facturar")
 
     # ====================================
@@ -724,7 +724,7 @@ async def obtener_ventas_sede(
     """
     
     # Validar permisos
-    if current_user["rol"] not in ["admin_sede", "superadmin"]:
+    if current_user["rol"] not in ["admin_sede", "super_admin"]:
         raise HTTPException(status_code=403, detail="No autorizado")
     
     try:
@@ -947,7 +947,7 @@ async def obtener_detalle_venta(
     Obtiene el detalle completo de una venta específica
     """
     
-    if current_user["rol"] not in ["admin_sede", "superadmin"]:
+    if current_user["rol"] not in ["admin_sede", "super_admin"]:
         raise HTTPException(status_code=403, detail="No autorizado")
     
     try:
