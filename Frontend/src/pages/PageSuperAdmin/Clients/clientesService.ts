@@ -1,5 +1,6 @@
 import { API_BASE_URL } from "../../../types/config";
 import { Cliente } from "../../../types/cliente";
+import { calcularDiasSinVenir } from "../../../lib/clientMetrics";
 
 export interface CreateClienteData {
   nombre: string;
@@ -118,13 +119,6 @@ export interface FichaCliente {
 }
 
 // Helper functions fuera del objeto para evitar problemas con 'this'
-const calcularDiasSinVisitar = (fechaCreacion: string): number => {
-  const fechaUltimaVisita = new Date(fechaCreacion);
-  const hoy = new Date();
-  const diferenciaMs = hoy.getTime() - fechaUltimaVisita.getTime();
-  return Math.floor(diferenciaMs / (1000 * 60 * 60 * 24));
-};
-
 const obtenerRizotipoAleatorio = (): string => {
   const rizotipos = ['1A', '1B', '1C', '2A', '2B', '2C', '3A', '3B', '3C', '4A', '4B', '4C'];
   return rizotipos[Math.floor(Math.random() * rizotipos.length)];
@@ -150,24 +144,50 @@ const fixS3Url = (url: string): string => {
 };
 
 export const clientesService = {
-  async getClientes(token: string, sedeId?: string): Promise<Cliente[]> {
-    let url = `${API_BASE_URL}clientes/`;
+  async getClientes(
+    token: string,
+    sedeId?: string,
+    options?: { filtro?: string; limite?: number }
+  ): Promise<Cliente[]> {
+    const limite = options?.limite ?? 100;
+    const filtro = options?.filtro?.trim();
 
+    let baseUrl = `${API_BASE_URL}clientes/`;
     // Si se especifica una sede, usar el endpoint de filtrado
-    if (sedeId && sedeId !== 'all') {
-      url = `${API_BASE_URL}clientes/filtrar/${sedeId}`;
+    if (sedeId && sedeId !== "all") {
+      baseUrl = `${API_BASE_URL}clientes/filtrar/${sedeId}`;
     }
 
-    const response = await fetch(url, {
-      method: 'GET',
+    const url = new URL(baseUrl);
+    if (limite) {
+      url.searchParams.set("limite", String(limite));
+    }
+    if (filtro) {
+      url.searchParams.set("filtro", filtro);
+    }
+
+    const response = await fetch(url.toString(), {
+      method: "GET",
       headers: {
-        'accept': 'application/json',
-        'Authorization': `Bearer ${token}`
-      }
+        accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
     });
 
     if (!response.ok) {
-      throw new Error(`Error al obtener clientes: ${response.statusText}`);
+      const errorText = await response.text().catch(() => "");
+      let message = errorText || response.statusText || "Error desconocido";
+      try {
+        const parsed = errorText ? JSON.parse(errorText) : null;
+        if (parsed?.detail) {
+          message = parsed.detail;
+        } else if (parsed?.message) {
+          message = parsed.message;
+        }
+      } catch {
+        // mantener mensaje original
+      }
+      throw new Error(`Error al obtener clientes: ${message}`);
     }
 
     const data: ClienteResponse[] = await response.json();
@@ -178,7 +198,7 @@ export const clientesService = {
       nombre: cliente.nombre,
       telefono: cliente.telefono || 'No disponible',
       email: cliente.correo || 'No disponible',
-      diasSinVenir: cliente.dias_sin_visitar || calcularDiasSinVisitar(cliente.fecha_creacion),
+      diasSinVenir: calcularDiasSinVenir(cliente),
       diasSinComprar: cliente.dias_sin_visitar || 0,
       ltv: cliente.total_gastado || 0,
       ticketPromedio: cliente.ticket_promedio || 0,
@@ -211,7 +231,7 @@ export const clientesService = {
       nombre: cliente.nombre,
       telefono: cliente.telefono || 'No disponible',
       email: cliente.correo || 'No disponible',
-      diasSinVenir: cliente.dias_sin_visitar || calcularDiasSinVisitar(cliente.fecha_creacion),
+      diasSinVenir: calcularDiasSinVenir(cliente),
       diasSinComprar: cliente.dias_sin_visitar || 0,
       ltv: cliente.total_gastado || 0,
       ticketPromedio: cliente.ticket_promedio || 0,
@@ -251,7 +271,7 @@ export const clientesService = {
       nombre: cliente.nombre,
       telefono: cliente.telefono || 'No disponible',
       email: cliente.correo || 'No disponible',
-      diasSinVenir: cliente.dias_sin_visitar || calcularDiasSinVisitar(cliente.fecha_creacion),
+      diasSinVenir: calcularDiasSinVenir(cliente),
       diasSinComprar: cliente.dias_sin_visitar || 0,
       ltv: cliente.total_gastado || 0,
       ticketPromedio: cliente.ticket_promedio || 0,

@@ -6,6 +6,7 @@ import { Button } from "../../../components/ui/button"
 import { useEffect, useState } from "react"
 import { API_BASE_URL } from "../../../types/config"
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react"
+import { formatDateDMY } from "../../../lib/dateFormat"
 
 // Actualiza la interfaz para que coincida con los datos reales del API
 interface Appointment {
@@ -47,14 +48,7 @@ export function TodayAppointments({ onSelectAppointment, selectedAppointmentId }
 
   // Función para formatear la fecha en español
   const formatFecha = (fecha: Date) => {
-    const opciones: Intl.DateTimeFormatOptions = {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    }
-    
-    return fecha.toLocaleDateString('es-ES', opciones)
+    return formatDateDMY(fecha)
   }
 
   // Función para formatear fecha en YYYY-MM-DD para el filtro
@@ -384,7 +378,7 @@ export function TodayAppointments({ onSelectAppointment, selectedAppointmentId }
               </Button>
               
               <span className="text-sm font-medium">
-                {formatDateForFilter(selectedDate)}
+                {formatDateDMY(selectedDate)}
               </span>
             </div>
             

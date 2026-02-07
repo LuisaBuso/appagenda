@@ -17,13 +17,29 @@ import {
 import { Calendar, Plus, Trash2, Wallet } from "lucide-react";
 import { cashService } from "./api/cashService";
 import type { CashCierre, CashEgreso, CashResumen, CashReporteRaw } from "./types";
+import { formatDateDMY } from "../../../lib/dateFormat";
 
-const getToday = () => new Date().toISOString().split("T")[0];
+const toLocalDateString = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const getToday = () => toLocalDateString(new Date());
 
 const getDateNDaysAgo = (days: number) => {
   const date = new Date();
   date.setDate(date.getDate() - days);
-  return date.toISOString().split("T")[0];
+  return toLocalDateString(date);
+};
+
+const normalizeDateRange = (start?: string, end?: string) => {
+  if (!start || !end) return { start, end };
+  if (start > end) {
+    return { start: end, end: start };
+  }
+  return { start, end };
 };
 
 const toNumber = (value: any): number => {
@@ -48,16 +64,7 @@ const pickNumber = (source: any, keys: string[]): number | undefined => {
 
 const unwrapData = (data: any) => data?.data ?? data?.result ?? data;
 
-const formatDate = (dateString?: string) => {
-  if (!dateString) return "-";
-  const date = new Date(dateString);
-  if (Number.isNaN(date.getTime())) return dateString;
-  return date.toLocaleDateString("es-ES", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-};
+const formatDate = (dateString?: string) => formatDateDMY(dateString);
 
 export default function CierreCajaPage() {
   const [moneda, setMoneda] = useState("COP");
@@ -218,22 +225,26 @@ export default function CierreCajaPage() {
 
   const loadResumen = async () => {
     if (!sedeId) return;
+    const { start, end } = normalizeDateRange(fechaDesde, fechaHasta);
+    if (!start || !end) return;
     setLoadingResumen(true);
     setError(null);
 
     try {
       const reporte = await cashService.getReportePeriodo({
         sede_id: sedeId,
-        fecha_inicio: fechaDesde,
-        fecha_fin: fechaHasta,
+        fecha_inicio: start,
+        fecha_fin: end,
+        start_date: start,
+        end_date: end,
       });
       setResumen(normalizeResumen(reporte));
     } catch (err) {
-      if (fechaDesde === fechaHasta) {
+      if (start === end) {
         try {
           const efectivo = await cashService.getEfectivoDia({
             sede_id: sedeId,
-            fecha: fechaDesde,
+            fecha: start,
           });
           setResumen(normalizeResumen(efectivo));
         } catch (innerErr) {
@@ -251,14 +262,18 @@ export default function CierreCajaPage() {
 
   const loadEgresos = async () => {
     if (!sedeId) return;
+    const { start, end } = normalizeDateRange(fechaDesde, fechaHasta);
+    if (!start || !end) return;
     setLoadingEgresos(true);
     setError(null);
 
     try {
       const result = await cashService.getEgresos({
         sede_id: sedeId,
-        fecha_inicio: fechaDesde,
-        fecha_fin: fechaHasta,
+        fecha_inicio: start,
+        fecha_fin: end,
+        start_date: start,
+        end_date: end,
       });
       setEgresos(normalizeEgresos(result));
     } catch (err) {
@@ -627,8 +642,8 @@ export default function CierreCajaPage() {
             </Card>
           </div>
 
-          {/* Egresos */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {/* Egresos y cierres */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <Card className="border-gray-200 bg-gradient-to-br from-white via-gray-50 to-gray-100 shadow-sm">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm text-gray-700 flex items-center gap-2">
@@ -651,7 +666,7 @@ export default function CierreCajaPage() {
                   onClick={() => setEgresoModalOpen(true)}
                   className="bg-gray-900 hover:bg-gray-800 text-white w-full"
                 >
-                  Abrir formulario de egreso
+                  Registrar egreso
                 </Button>
               </CardContent>
             </Card>
@@ -694,11 +709,49 @@ export default function CierreCajaPage() {
                 )}
               </CardContent>
             </Card>
+
+            <Card className="border-gray-200">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-gray-700">Historial de cierres</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {loadingCierres ? (
+                  <div className="text-sm text-gray-500">Cargando cierres...</div>
+                ) : cierres.length === 0 ? (
+                  <div className="text-sm text-gray-500">No hay cierres registrados.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {cierres.map((cierre) => (
+                      <div key={cierre.id} className="rounded-md border border-gray-200 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <div className="text-sm font-medium text-gray-900">
+                              {formatDate(cierre.fecha_cierre || cierre.fecha_apertura)}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {cierre.notas || "Sin notas"}
+                            </div>
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {cierre.estado ? `Estado: ${cierre.estado}` : ""}
+                          </div>
+                        </div>
+                        <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-gray-600">
+                          <div>Ingresos: {formatMoney(cierre.ingresos || 0)}</div>
+                          <div>Egresos: {formatMoney(cierre.egresos || 0)}</div>
+                          <div>Balance: {formatMoney(cierre.balance || 0)}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
 
           <Dialog open={egresoModalOpen} onOpenChange={setEgresoModalOpen}>
             <DialogContent className="max-w-lg overflow-hidden border-gray-200 bg-white p-0">
-              <div className="bg-gradient-to-br from-gray-900 to-gray-700 px-6 py-5 text-white">
+              <div className="bg-gray-900 px-6 py-5 text-white">
                 <DialogHeader className="space-y-1 text-left">
                   <DialogTitle className="text-lg font-semibold">Registrar egreso</DialogTitle>
                   <DialogDescription className="text-gray-200">
@@ -718,30 +771,32 @@ export default function CierreCajaPage() {
                     placeholder="0"
                   />
                 </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-600">Tipo</label>
-                  <select
-                    value={egresoTipo}
-                    onChange={(e) => setEgresoTipo(e.target.value)}
-                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <option value="compra_interna">Compra interna</option>
-                    <option value="gasto_operativo">Gasto operativo</option>
-                    <option value="retiro_caja">Retiro de caja</option>
-                    <option value="otro">Otro</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-600">Motivo</label>
-                  <Input
-                    value={egresoMotivo}
-                    onChange={(e) => setEgresoMotivo(e.target.value)}
-                    placeholder="Ej: compra insumos"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-600">Fecha</label>
-                  <Input type="date" value={egresoFecha} onChange={(e) => setEgresoFecha(e.target.value)} />
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Tipo</label>
+                    <select
+                      value={egresoTipo}
+                      onChange={(e) => setEgresoTipo(e.target.value)}
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <option value="compra_interna">Compra interna</option>
+                      <option value="gasto_operativo">Gasto operativo</option>
+                      <option value="retiro_caja">Retiro de caja</option>
+                      <option value="otro">Otro</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Motivo</label>
+                    <Input
+                      value={egresoMotivo}
+                      onChange={(e) => setEgresoMotivo(e.target.value)}
+                      placeholder="Ej: compra insumos"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Fecha</label>
+                    <Input type="date" value={egresoFecha} onChange={(e) => setEgresoFecha(e.target.value)} />
+                  </div>
                 </div>
               </div>
 
@@ -760,44 +815,6 @@ export default function CierreCajaPage() {
             </DialogContent>
           </Dialog>
 
-          {/* Historial de cierres */}
-          <Card className="border-gray-200">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-gray-700">Historial de cierres</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {loadingCierres ? (
-                <div className="text-sm text-gray-500">Cargando cierres...</div>
-              ) : cierres.length === 0 ? (
-                <div className="text-sm text-gray-500">No hay cierres registrados.</div>
-              ) : (
-                <div className="space-y-3">
-                  {cierres.map((cierre) => (
-                    <div key={cierre.id} className="rounded-md border border-gray-200 p-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <div className="text-sm font-medium text-gray-900">
-                            {formatDate(cierre.fecha_cierre || cierre.fecha_apertura)}
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {cierre.notas || "Sin notas"}
-                          </div>
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {cierre.estado ? `Estado: ${cierre.estado}` : ""}
-                        </div>
-                      </div>
-                      <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-gray-600">
-                        <div>Ingresos: {formatMoney(cierre.ingresos || 0)}</div>
-                        <div>Egresos: {formatMoney(cierre.egresos || 0)}</div>
-                        <div>Balance: {formatMoney(cierre.balance || 0)}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
         </div>
       </main>
     </div>

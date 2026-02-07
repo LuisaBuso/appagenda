@@ -12,6 +12,7 @@ import { API_BASE_URL } from "../../../types/config"
 import { ProductCatalogModal } from "./ProductCatalogModal"
 import { Badge } from "../../../components/ui/badge"
 import { formatSedeNombre } from "../../../lib/sede"
+import { formatDateDMY } from "../../../lib/dateFormat"
 
 // En service-protocol.tsx - REEMPLAZA toda tu interfaz Producto con esto:
 interface Producto {
@@ -538,31 +539,17 @@ export function ServiceProtocol({
   }
 
   const formatFechaHora = (fecha: string) => {
-    try {
-      const date = new Date(fecha)
-      return date.toLocaleDateString('es-ES', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })
-    } catch {
-      return fecha
+    const date = new Date(fecha)
+    if (Number.isNaN(date.getTime())) {
+      return formatDateDMY(fecha, fecha)
     }
+    const horas = String(date.getHours()).padStart(2, "0")
+    const minutos = String(date.getMinutes()).padStart(2, "0")
+    return `${formatDateDMY(date)} ${horas}:${minutos}`
   }
 
   const formatFechaCorta = (fecha: string) => {
-    try {
-      const date = new Date(fecha)
-      return date.toLocaleDateString('es-ES', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric'
-      })
-    } catch {
-      return fecha
-    }
+    return formatDateDMY(fecha, fecha)
   }
 
   const getEstadoColor = (estado: string) => {

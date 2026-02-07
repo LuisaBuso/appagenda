@@ -9,6 +9,7 @@ import { ClientIndicators } from "./client-indicators";
 import { Button } from "../../../components/ui/button";
 import { useAuth } from "../../../components/Auth/AuthContext";
 import { formatSedeNombre } from "../../../lib/sede";
+import { formatDateDMY } from "../../../lib/dateFormat";
 import {
   getDashboard,
   getVentasDashboard,
@@ -415,15 +416,7 @@ export default function DashboardPage() {
     setTempDateRange(newRange);
   };
 
-  const formatDateDisplay = (dateString: string) => {
-    if (!dateString) return "";
-    const date = new Date(dateString);
-    return date.toLocaleDateString('es-ES', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric'
-    });
-  };
+  const formatDateDisplay = (dateString: string) => formatDateDMY(dateString, "");
 
   const getPeriodDisplay = () => {
     if (selectedPeriod === "custom") {
@@ -1131,7 +1124,7 @@ export default function DashboardPage() {
                                 </p>
                                 {globalData.range && (
                                   <p className="text-sm text-gray-500">
-                                    {new Date(globalData.range.start).toLocaleDateString()} - {new Date(globalData.range.end).toLocaleDateString()}
+                                    {formatDateDMY(globalData.range.start)} - {formatDateDMY(globalData.range.end)}
                                   </p>
                                 )}
                               </div>
@@ -1635,7 +1628,7 @@ export default function DashboardPage() {
                           <div className="text-xs text-gray-500">{cliente.telefono}</div>
                         </TableCell>
                         <TableCell>
-                          {new Date(cliente.ultima_visita).toLocaleDateString()}
+                          {formatDateDMY(cliente.ultima_visita)}
                         </TableCell>
                         <TableCell>
                           <div className={`font-semibold ${cliente.dias_inactivo > 90 ? 'text-red-600' :

@@ -17,6 +17,7 @@ import { ProductManagementPanel } from "./ProductManagementPanel"
 import { ZoomIn, X, ExternalLink } from "lucide-react";
 import { ShoppingCart } from "lucide-react";
 import { formatSedeNombre } from "../../../lib/sede";
+import { formatDateDMY } from "../../../lib/dateFormat";
 
 interface AttentionProtocolProps {
   citaSeleccionada?: any;
@@ -244,20 +245,7 @@ export function AttentionProtocol({
     }
   };
   // Función para formatear la fecha
-  const formatFecha = (fechaString: string) => {
-    try {
-      const fecha = new Date(fechaString)
-      return fecha.toLocaleDateString('es-ES', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })
-    } catch {
-      return fechaString
-    }
-  }
+  const formatFecha = (fechaString: string) => formatDateDMY(fechaString, fechaString)
 
   // Función para obtener el nombre del tipo de ficha
   const getNombreTipoFicha = (tipo: TipoFicha) => {

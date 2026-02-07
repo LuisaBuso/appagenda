@@ -7,6 +7,7 @@ import { getSalesMetrics, formatCurrencyMetric } from "./salesMetricsApi"
 import { Calendar, DollarSign, Package, Users } from "lucide-react"
 import { Button } from "../../../components/ui/button"
 import { Skeleton } from "../../../components/ui/skeleton"
+import { formatDateDMY } from "../../../lib/dateFormat"
 
 interface SalesMetricsProps {
   initialPeriod?: string;
@@ -229,12 +230,7 @@ export function SalesMetrics({
 
   const formatDateDisplay = (dateString: string) => {
     if (!dateString) return ""
-    const date = new Date(dateString)
-    return date.toLocaleDateString('es-ES', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric'
-    })
+    return formatDateDMY(dateString)
   }
 
   const getPeriodDisplay = () => {

@@ -4,6 +4,7 @@ import { Edit, Trash2, Mail, Calendar, Building, Percent, Star, Clock, User } fr
 import { Button } from "../../../components/ui/button"
 import type { Estilista } from "../../../types/estilista"
 import { formatSedeNombre } from "../../../lib/sede"
+import { formatDateDMY } from "../../../lib/dateFormat"
 
 interface EstilistaDetailProps {
   estilista: Estilista
@@ -50,18 +51,7 @@ export function EstilistaDetail({ estilista, onEdit, onDelete }: EstilistaDetail
     }
   }
 
-  const formatDate = (dateString: string) => {
-    if (!dateString) return 'No disponible'
-    try {
-      return new Date(dateString).toLocaleDateString('es-ES', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      })
-    } catch {
-      return 'Fecha inválida'
-    }
-  }
+  const formatDate = (dateString: string) => formatDateDMY(dateString, 'No disponible')
 
   return (
     <div className="h-full overflow-y-auto bg-white">

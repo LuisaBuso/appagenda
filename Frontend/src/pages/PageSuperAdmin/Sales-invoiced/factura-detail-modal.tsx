@@ -5,6 +5,7 @@ import { X } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../../components/ui/dialog"
 import { Button } from "../../../components/ui/button"
 import type { Factura } from "../../../types/factura"
+import { formatDateDMY } from "../../../lib/dateFormat"
 
 interface FacturaDetailModalProps {
   factura: Factura
@@ -13,15 +14,7 @@ interface FacturaDetailModalProps {
 }
 
 export function FacturaDetailModal({ factura, open, onOpenChange }: FacturaDetailModalProps) {
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("es-ES", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",    
-    })
-  }
+  const formatDate = (dateString: string) => formatDateDMY(dateString, "-")
 
   const formatCurrency = (amount: number, currency: string) => {
     return `${currency} ${amount.toFixed(2)}`

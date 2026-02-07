@@ -12,6 +12,7 @@ import { inventarioService } from "../../PageSede/Products/inventario"
 import type { InventarioProducto } from "../../PageSede/Products/inventario"
 import { Sidebar } from "../../../components/Layout/Sidebar"
 import { useAuth } from "../../../components/Auth/AuthContext" // Ajusta la ruta según tu estructura
+import { formatDateDMY } from "../../../lib/dateFormat"
 
 export function ProductsList() {
   const [searchTerm, setSearchTerm] = useState("")
@@ -591,7 +592,7 @@ export function ProductsList() {
                               <span className="text-xs text-gray-500">
                                 Actualizado:{" "}
                                 {producto.fecha_ultima_actualizacion
-                                  ? new Date(producto.fecha_ultima_actualizacion).toLocaleDateString("es-ES")
+                                  ? formatDateDMY(producto.fecha_ultima_actualizacion)
                                   : "—"}
 
                               </span>
