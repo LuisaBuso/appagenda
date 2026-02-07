@@ -8,6 +8,7 @@ import { facturaService } from "./facturas"
 import { sedeService } from "../Sedes/sedeService"
 import type { Sede } from "../../../types/sede"
 import { formatSedeNombre } from "../../../lib/sede"
+import { formatDateDMY } from "../../../lib/dateFormat"
 
 export function VentasFacturadasList() {
   const [searchTerm, setSearchTerm] = useState("")
@@ -124,17 +125,7 @@ export function VentasFacturadasList() {
     setIsModalOpen(true)
   }
 
-  const formatDate = (dateString: string) => {
-    try {
-      return new Date(dateString).toLocaleDateString("es-ES", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-      })
-    } catch (error) {
-      return dateString
-    }
-  }
+  const formatDate = (dateString: string) => formatDateDMY(dateString, dateString)
 
   const formatCurrency = (amount: number, currency: string) => {
     return `${currency} ${amount?.toFixed(2) || '0.00'}`

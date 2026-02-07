@@ -5,6 +5,7 @@ import { X, FileText, User, CreditCard, Calendar, CheckCircle, Clock, Package, S
 import { Dialog, DialogContent, DialogTitle } from "../../../components/ui/dialog"
 import { Button } from "../../../components/ui/button"
 import type { Factura } from "../../../types/factura"
+import { formatDateDMY } from "../../../lib/dateFormat"
 
 interface FacturaDetailModalProps {
   factura: Factura
@@ -36,7 +37,7 @@ export function FacturaDetailModal({ factura, open, onOpenChange }: FacturaDetai
             <span class="label">Cliente:</span> ${factura.nombre_cliente}<br/>
             <span class="label">Profesional:</span> ${factura.profesional_nombre}<br/>
             <span class="label">Identificador:</span> ${factura.identificador}<br/>
-            <span class="label">Fecha de pago:</span> ${factura.fecha_pago ? new Date(factura.fecha_pago).toLocaleDateString("es-ES") : "-"}<br/>
+            <span class="label">Fecha de pago:</span> ${factura.fecha_pago ? formatDateDMY(factura.fecha_pago) : "-"}<br/>
             <span class="label">Método de pago:</span> ${factura.metodo_pago}<br/>
             <span class="label">Total:</span> ${factura.moneda} ${factura.total?.toFixed(2) || '0.00'}<br/>
           </div>
@@ -81,20 +82,7 @@ export function FacturaDetailModal({ factura, open, onOpenChange }: FacturaDetai
     }
   };
   
-  const formatDate = (dateString: string) => {
-    if (!dateString) return "-";
-    try {
-      return new Date(dateString).toLocaleDateString("es-ES", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    } catch (error) {
-      return dateString;
-    }
-  }
+  const formatDate = (dateString: string) => formatDateDMY(dateString, "-")
 
   const formatCurrency = (amount: number | undefined, currency: string | undefined) => {
     const safeAmount = amount || 0;

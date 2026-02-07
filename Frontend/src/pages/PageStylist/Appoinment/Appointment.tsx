@@ -8,6 +8,7 @@ import { StylistStats } from './stylist-stats';
 import { AttentionProtocol } from './attention-protocol';
 import { Sidebar } from '../../../components/Layout/Sidebar';
 import { getBloqueosProfesional, Bloqueo } from '../../../components/Quotes/bloqueosApi';
+import { formatDateDMY } from "../../../lib/dateFormat";
 
 // ⭐ HELPER: Calcular precio total de una cita con múltiples servicios
 const calcularPrecioTotalCita = (cita: any): number => {
@@ -283,10 +284,7 @@ export default function VistaEstilistaPage() {
               <div>
                 <h3 className="text-sm font-medium text-gray-900">
                   {fechaFiltro 
-                    ? `Citas del ${new Date(fechaFiltro + 'T12:00:00').toLocaleDateString('es-ES', { 
-                        day: 'numeric',
-                        month: 'short'
-                      })}`
+                    ? `Citas del ${formatDateDMY(fechaFiltro)}`
                     : "Citas de hoy"
                   }
                 </h3>
@@ -347,11 +345,7 @@ export default function VistaEstilistaPage() {
             <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
             <p className="text-sm text-gray-600 mt-1">
               {fechaFiltro 
-                ? `Citas del ${new Date(fechaFiltro + 'T12:00:00').toLocaleDateString('es-ES', { 
-                    weekday: 'long', 
-                    day: 'numeric', 
-                    month: 'long'
-                  })}` 
+                ? `Citas del ${formatDateDMY(fechaFiltro)}` 
                 : "Citas de hoy"
               }
             </p>

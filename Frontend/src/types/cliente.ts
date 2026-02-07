@@ -17,6 +17,7 @@ export interface Cliente {
   fecha_de_nacimiento?: string;
   fecha_creacion?: string;
   fecha_registro?: string;
+  ultima_visita?: string;
   
   // Historiales - ACTUALIZADO: cambiar estilista por profesional
   historialCitas: Array<{

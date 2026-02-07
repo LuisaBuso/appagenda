@@ -12,6 +12,7 @@ import { inventarioService } from "./inventario"
 import type { InventarioProducto } from "./inventario"
 import { Sidebar } from "../../../components/Layout/Sidebar"
 import { useAuth } from "../../../components/Auth/AuthContext" // Ajusta la ruta según tu estructura
+import { formatDateDMY } from "../../../lib/dateFormat"
 
 export function ProductsList() {
   const [searchTerm, setSearchTerm] = useState("")
@@ -583,13 +584,13 @@ export function ProductsList() {
                                       : "Disponible"}
                                 </Badge>
                               </div>
-                              <span className="text-xs text-gray-500">
-                                Actualizado:{" "}
-                                {producto.fecha_ultima_actualizacion
-                                  ? new Date(producto.fecha_ultima_actualizacion).toLocaleDateString("es-ES")
-                                  : "—"}
+                                <span className="text-xs text-gray-500">
+                                  Actualizado:{" "}
+                                  {producto.fecha_ultima_actualizacion
+                                    ? formatDateDMY(producto.fecha_ultima_actualizacion)
+                                    : "—"}
 
-                              </span>
+                                </span>
                               {mensajeExito && productoEditando === null && (
                                 <span className="text-xs text-green-600 font-medium">
                                   {mensajeExito}
