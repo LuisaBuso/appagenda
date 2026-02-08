@@ -1,7 +1,5 @@
 // components/ClientsList.tsx
 "use client"
-
-import { useState,  } from "react"
 import { 
   Search, 
   Plus, 
@@ -32,6 +30,7 @@ interface ClientsListProps {
   isLoading?: boolean
   onPageChange?: (page: number, filtro?: string) => void
   onSearch?: (filtro: string) => void
+  searchValue: string
 }
 
 export function ClientsList({ 
@@ -42,44 +41,19 @@ export function ClientsList({
   error, 
   isLoading = false,
   onPageChange,
-  onSearch
+  onSearch,
+  searchValue
 }: ClientsListProps) {
-  const [searchTerm, setSearchTerm] = useState("")
-  const [searchTimeout, setSearchTimeout] = useState<NodeJS.Timeout | null>(null)
 
-  // Manejar búsqueda con debounce
-  const handleSearch = (value: string) => {
-    setSearchTerm(value)
-    
-    if (searchTimeout) {
-      clearTimeout(searchTimeout)
-    }
-    
-    const timeout = setTimeout(() => {
-      if (onSearch) {
-        onSearch(value)
-      } else if (onPageChange) {
-        onPageChange(1, value)
-      }
-    }, 500)
-    
-    setSearchTimeout(timeout)
-  }
-
-  // Limpiar búsqueda
   const clearSearch = () => {
-    setSearchTerm("")
-    if (onSearch) {
-      onSearch("")
-    } else if (onPageChange) {
-      onPageChange(1, "")
-    }
-  }
+  onSearch?.("")
+}
 
   // Manejar cambio de página
   const handlePageChange = (page: number) => {
     if (onPageChange) {
-      onPageChange(page, searchTerm)
+      onPageChange(page, searchValue
+)
     }
   }
 
@@ -109,7 +83,7 @@ export function ClientsList({
           <p className="text-xs text-gray-500 mb-3">{error}</p>
           {onPageChange && (
             <Button 
-              onClick={() => onPageChange(1, searchTerm)}
+              onClick={() => onPageChange(1, searchValue)}
               variant="outline"
               className="text-xs border-gray-300 text-gray-700 hover:bg-gray-50"
             >
@@ -150,12 +124,12 @@ export function ClientsList({
             <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
             <Input
               placeholder="Buscar por nombre, email, teléfono o cédula..."
-              value={searchTerm}
-              onChange={(e) => handleSearch(e.target.value)}
+              value={searchValue}
+              onChange={(e) => onSearch?.(e.target.value)}
               className="pl-9 h-8 text-sm border-gray-300"
               disabled={isLoading}
             />
-            {searchTerm && (
+            {searchValue && (
               <button
                 onClick={clearSearch}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
@@ -168,10 +142,10 @@ export function ClientsList({
         </div>
 
         {/* Badges de filtros activos */}
-        {searchTerm && (
+        {searchValue && (
           <div className="mt-2 flex flex-wrap gap-1">
             <Badge variant="secondary" className="text-xs">
-              Buscando: "{searchTerm}"
+              Buscando: "{searchValue}"
             </Badge>
             <Button
               variant="ghost"
@@ -198,12 +172,12 @@ export function ClientsList({
             <div className="text-center">
               <User className="h-8 w-8 text-gray-300 mx-auto mb-2" />
               <p className="text-sm text-gray-600 mb-1">
-                {searchTerm ? "No se encontraron resultados" : "No hay clientes"}
+                {searchValue ? "No se encontraron resultados" : "No hay clientes"}
               </p>
               <p className="text-xs text-gray-500">
-                {searchTerm ? "Ajusta tu búsqueda" : "Agrega tu primer cliente"}
+                {searchValue ? "Ajusta tu búsqueda" : "Agrega tu primer cliente"}
               </p>
-              {!searchTerm && (
+              {!searchValue && (
                 <Button
                   onClick={onAddClient}
                   variant="outline"

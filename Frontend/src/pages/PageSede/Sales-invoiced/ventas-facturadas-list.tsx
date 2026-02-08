@@ -7,6 +7,7 @@ import { Input } from "../../../components/ui/input"
 import { FacturaDetailModal } from "./factura-detail-modal"
 import type { Factura } from "../../../types/factura"
 import { facturaService } from "./facturas"
+import { formatDateDMY } from "../../../lib/dateFormat"
 
 export function VentasFacturadasList() {
   const [searchTerm, setSearchTerm] = useState("")
@@ -144,17 +145,7 @@ export function VentasFacturadasList() {
     setIsModalOpen(true)
   }
 
-  const formatDate = (dateString: string) => {
-    try {
-      return new Date(dateString).toLocaleDateString("es-ES", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-      })
-    } catch (error) {
-      return dateString
-    }
-  }
+  const formatDate = (dateString: string) => formatDateDMY(dateString, dateString)
 
   const formatCurrency = (amount: number, currency: string) => {
     return `${currency} ${(amount || 0).toFixed(2)}`

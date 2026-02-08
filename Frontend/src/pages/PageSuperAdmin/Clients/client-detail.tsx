@@ -4,6 +4,8 @@ import { Button } from "../../../components/ui/button"
 import type { Cliente } from "../../../types/cliente"
 import { EditClientModal } from "./EditClientModal"
 import { generarPDFFicha, type FichaPDFData } from "../../../lib/pdfGenerator"
+import { formatSedeNombre } from "../../../lib/sede"
+import { formatDateDMY } from "../../../lib/dateFormat"
 
 interface ClientDetailProps {
   client: Cliente
@@ -158,53 +160,8 @@ export function ClientDetail({ client, onBack, onClientUpdated }: ClientDetailPr
     }
   }
 
-  // 🔥 SOLUCIÓN DEFINITIVA - CONVERSIÓN MANUAL SIN PROBLEMAS DE ZONA HORARIA
   const formatFechaCorregida = (fecha: string) => {
-    if (!fecha) return '';
-
-    console.log(`🔍 Procesando: ${fecha}`);
-
-    try {
-      // Extraer solo la parte de fecha YYYY-MM-DD
-      let datePart = fecha;
-      if (fecha.includes('T')) {
-        datePart = fecha.split('T')[0];
-      }
-
-      // Verificar formato
-      const partes = datePart.split('-');
-      if (partes.length !== 3) {
-        console.log(`⚠️ Formato no reconocido, devolviendo original: ${fecha}`);
-        return fecha;
-      }
-
-      const [year, month, day] = partes;
-
-      // 🔥 CONVERSIÓN MANUAL - 100% SEGURA
-      // Convertir a números
-      const diaNum = parseInt(day, 10);
-      const mesNum = parseInt(month, 10) - 1; // Meses 0-11
-      const añoNum = parseInt(year, 10);
-
-      // Validar
-      if (isNaN(diaNum) || isNaN(mesNum) || isNaN(añoNum)) {
-        return datePart;
-      }
-
-      // Meses en español
-      const meses = ['ene', 'feb', 'mar', 'abr', 'may', 'jun',
-        'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-
-      // Formatear manualmente
-      const resultado = `${diaNum} ${meses[mesNum]} ${añoNum}`;
-
-      console.log(`✅ Conversión manual: ${datePart} → ${resultado}`);
-      return resultado;
-
-    } catch (error) {
-      console.error('Error en formatFechaCorregida:', error);
-      return fecha;
-    }
+    return formatDateDMY(fecha, fecha);
   };
 
   const handleDownloadPDF = async (ficha: FichaExtendida, fichaId: string) => {
@@ -243,7 +200,7 @@ ${datos.productos_sugeridos || 'No especificados'}
         ficha: {
           servicio: ficha.servicio_nombre || ficha.servicio || 'Servicio',
           fecha: formatFechaCorregida(ficha.fecha_ficha),
-          sede: ficha.sede_nombre || ficha.sede || ficha.local || 'Sin sede',
+          sede: formatSedeNombre(ficha.sede_nombre || ficha.sede || ficha.local, 'Sin sede'),
           estilista: ficha.profesional_nombre || ficha.estilista || 'Sin estilista',
           notas_cliente: ficha.notas_cliente || diagnosticoInfo || '',
           comentario_interno: ficha.comentario_interno || ficha.datos_especificos?.recomendaciones_personalizadas || '',
@@ -482,7 +439,7 @@ ${datos.productos_sugeridos || 'No especificados'}
                 {(client.fichas as FichaExtendida[]).map((ficha) => {
                   const servicioNombre = ficha.servicio_nombre || ficha.servicio || 'Servicio'
                   const estilistaNombre = ficha.profesional_nombre || ficha.estilista || 'Sin estilista'
-                  const sedeNombre = ficha.sede_nombre || ficha.sede || ficha.local || 'Sin sede'
+                  const sedeNombre = formatSedeNombre(ficha.sede_nombre || ficha.sede || ficha.local, 'Sin sede')
                   const tieneDiagnostico = ficha.datos_especificos || (ficha.respuestas && ficha.respuestas.length > 0)
                   const isExpanded = expandedFichas.has(ficha._id)
 
@@ -770,7 +727,7 @@ ${datos.productos_sugeridos || 'No especificados'}
                     <div key={index} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-b-0">
                       <span className="text-sm text-gray-700">{item.tipo}</span>
                       <span className="text-xs text-gray-500 bg-gray-50 px-2 py-1 rounded">
-                        {item.fecha}
+                        {formatDateDMY(item.fecha, item.fecha)}
                       </span>
                     </div>
                   ))}

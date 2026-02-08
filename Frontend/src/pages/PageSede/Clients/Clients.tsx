@@ -6,34 +6,29 @@ import { ClientsList } from "./clients-list"
 import { ClientDetail } from "./client-detail"
 import { ClientFormModal } from "./ClientFormModal"
 import type { Cliente } from "../../../types/cliente"
-import { clientesService } from "./clientesService"
+import { clientesService, type ClientesPaginadosMetadata } from "./clientesService"
 import { sedeService } from "../../PageSuperAdmin/Sedes/sedeService"
 import { useAuth } from "../../../components/Auth/AuthContext"
 import { Loader } from "lucide-react"
 
-// Interface para la respuesta de la API
-interface ApiResponse {
-  clientes?: any[];
-  data?: any[];
-  [key: string]: any;
-}
+const SEARCH_DEBOUNCE_MS = 500
 
 // Función para asegurar que un objeto cumpla con la interfaz Cliente
 const asegurarClienteCompleto = (clienteData: any): Cliente => {
   return {
-    id: clienteData.id || clienteData._id || clienteData.cliente_id || '',
-    nombre: clienteData.nombre || '',
-    email: clienteData.email || clienteData.correo || 'No disponible',
-    telefono: clienteData.telefono || 'No disponible',
-    cedula: clienteData.cedula || '',
-    ciudad: clienteData.ciudad || '',
-    sede_id: clienteData.sede_id || '',
+    id: clienteData.id || clienteData._id || clienteData.cliente_id || "",
+    nombre: clienteData.nombre || "",
+    email: clienteData.email || clienteData.correo || "No disponible",
+    telefono: clienteData.telefono || "No disponible",
+    cedula: clienteData.cedula || "",
+    ciudad: clienteData.ciudad || "",
+    sede_id: clienteData.sede_id || "",
     diasSinVenir: clienteData.diasSinVenir || clienteData.dias_sin_visitar || 0,
     diasSinComprar: clienteData.diasSinComprar || 0,
     ltv: clienteData.ltv || clienteData.total_gastado || 0,
     ticketPromedio: clienteData.ticketPromedio || clienteData.ticket_promedio || 0,
-    rizotipo: clienteData.rizotipo || '',
-    nota: clienteData.nota || clienteData.notas || '',
+    rizotipo: clienteData.rizotipo || "",
+    nota: clienteData.nota || clienteData.notas || "",
     historialCitas: clienteData.historialCitas || [],
     historialCabello: clienteData.historialCabello || [],
     historialProductos: clienteData.historialProductos || []
@@ -43,14 +38,8 @@ const asegurarClienteCompleto = (clienteData: any): Cliente => {
 export default function ClientsPage() {
   const [selectedClient, setSelectedClient] = useState<Cliente | null>(null)
   const [clientes, setClientes] = useState<Cliente[]>([])
-  const [metadata, setMetadata] = useState<{
-    total: number;
-    pagina: number;
-    limite: number;
-    total_paginas: number;
-    tiene_siguiente: boolean;
-    tiene_anterior: boolean;
-  } | null>(null)
+  const [searchTerm, setSearchTerm] = useState("")
+  const [metadata, setMetadata] = useState<ClientesPaginadosMetadata | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -66,14 +55,13 @@ export default function ClientsPage() {
       const sedesData = await sedeService.getSedes(user.access_token)
       setSedes(sedesData)
     } catch (err) {
-      console.error('Error cargando sedes:', err)
+      console.error("Error cargando sedes:", err)
     }
   }
 
-  // Método para cargar TODOS los clientes
-  const loadClientes = async (pagina: number = 1, filtro: string = "") => {
+  const loadClientes = async (pagina: number = 1, filtro: string = searchTerm) => {
     if (!user?.access_token) {
-      setError('No hay token de autenticación disponible')
+      setError("No hay token de autenticación disponible")
       setIsLoading(false)
       return
     }
@@ -81,80 +69,21 @@ export default function ClientsPage() {
     try {
       setIsLoading(true)
       setError(null)
-      
-      console.log('📋 Cargando TODOS los clientes...')
-      
-      // Usar el método obtenerClientes del servicio (que ahora solo recibe token)
-      const todosClientes = await clientesService.obtenerClientes(user.access_token)
-      
-      console.log('📦 Respuesta de obtenerClientes:', todosClientes)
 
-      // Transformar a array de Clientes completos
-      let clientesArray: Cliente[] = []
-      
-      if (Array.isArray(todosClientes)) {
-        clientesArray = todosClientes.map(asegurarClienteCompleto)
-      } else if (todosClientes && typeof todosClientes === 'object') {
-        // Cast a ApiResponse para que TypeScript reconozca las propiedades
-        const response = todosClientes as ApiResponse
-        
-        // Manejar diferentes estructuras de respuesta
-        if (response.clientes && Array.isArray(response.clientes)) {
-          clientesArray = response.clientes.map(asegurarClienteCompleto)
-        } else if (response.data && Array.isArray(response.data)) {
-          clientesArray = response.data.map(asegurarClienteCompleto)
-        } else {
-          // Intentar extraer array de alguna propiedad
-          const values = Object.values(response)
-          for (const val of values) {
-            if (Array.isArray(val)) {
-              clientesArray = val.map(asegurarClienteCompleto)
-              break
-            }
-          }
-        }
-      }
-
-      console.log(`✅ Total de clientes procesados: ${clientesArray.length}`)
-
-      // Aplicar filtro de búsqueda
-      let clientesFiltrados = clientesArray
-      if (filtro) {
-        const filtroLower = filtro.toLowerCase()
-        clientesFiltrados = clientesFiltrados.filter(cliente => 
-          cliente.nombre?.toLowerCase().includes(filtroLower) ||
-          cliente.email?.toLowerCase().includes(filtroLower) ||
-          cliente.telefono?.includes(filtro) ||
-          cliente.cedula?.includes(filtro) ||
-          cliente.ciudad?.toLowerCase().includes(filtroLower)
-        )
-        console.log(`🔍 Clientes después de filtrar: ${clientesFiltrados.length}`)
-      }
-      
-      // Ordenar por nombre
-      clientesFiltrados.sort((a, b) => a.nombre.localeCompare(b.nombre))
-      
-      // Configurar paginación
-      const limite = itemsPorPagina
-      const inicio = (pagina - 1) * limite
-      const clientesPaginados = clientesFiltrados.slice(inicio, inicio + limite)
-      const totalPaginas = Math.ceil(clientesFiltrados.length / limite)
-      
-      console.log(`📊 Paginación: Mostrando ${clientesPaginados.length} de ${clientesFiltrados.length}`)
-      
-      setClientes(clientesPaginados)
-      setMetadata({
-        total: clientesFiltrados.length,
-        pagina: pagina,
-        limite: limite,
-        total_paginas: totalPaginas,
-        tiene_siguiente: inicio + limite < clientesFiltrados.length,
-        tiene_anterior: pagina > 1
+      const result = await clientesService.getClientesPaginados(user.access_token, {
+        pagina,
+        limite: itemsPorPagina,
+        filtro
       })
-      
+
+      setClientes(result.clientes.map(asegurarClienteCompleto))
+      setMetadata(result.metadata)
+
     } catch (err) {
-      console.error('❌ Error cargando clientes:', err)
-      setError(err instanceof Error ? err.message : 'Error al cargar los clientes')
+      console.error("❌ Error cargando clientes:", err)
+      setError(err instanceof Error ? err.message : "Error al cargar los clientes")
+      setClientes([])
+      setMetadata(null)
     } finally {
       setIsLoading(false)
     }
@@ -163,16 +92,25 @@ export default function ClientsPage() {
   useEffect(() => {
     if (!authLoading && user) {
       loadSedes()
-      loadClientes()
     }
-  }, [user, authLoading, itemsPorPagina])
+  }, [user, authLoading])
 
-  const handlePageChange = (pagina: number, filtro: string = "") => {
+  useEffect(() => {
+    if (!user?.access_token) return
+
+    const timeout = setTimeout(() => {
+      loadClientes(1, searchTerm)
+    }, SEARCH_DEBOUNCE_MS)
+
+    return () => clearTimeout(timeout)
+  }, [user?.access_token, searchTerm, itemsPorPagina])
+
+  const handlePageChange = (pagina: number, filtro: string = searchTerm) => {
     loadClientes(pagina, filtro)
   }
 
-  const handleSearch = (filtro: string) => {
-    loadClientes(1, filtro)
+  const handleSearch = (value: string) => {
+    setSearchTerm(value)
   }
 
   const handleSelectClient = async (client: Cliente) => {
@@ -181,7 +119,7 @@ export default function ClientsPage() {
       const clienteCompleto = await clientesService.getClienteById(user.access_token, client.id)
       setSelectedClient(asegurarClienteCompleto(clienteCompleto))
     } catch (err) {
-      console.error('Error cargando detalles:', err)
+      console.error("Error cargando detalles:", err)
       setSelectedClient(client)
     }
   }
@@ -200,27 +138,26 @@ export default function ClientsPage() {
       }
 
       if (!sedeIdToUse) {
-        throw new Error('No hay sedes disponibles')
+        throw new Error("No hay sedes disponibles")
       }
 
       const createData = {
         nombre: clienteData.nombre,
-        correo: clienteData.email || '',
-        telefono: clienteData.telefono || '',
-        notas: clienteData.nota || '',
+        correo: clienteData.email || "",
+        telefono: clienteData.telefono || "",
+        notas: clienteData.nota || "",
         sede_id: sedeIdToUse,
-        cedula: clienteData.cedula || '',
-        ciudad: clienteData.ciudad || '',
-        fecha_de_nacimiento: clienteData.fecha_de_nacimiento || ''
+        cedula: clienteData.cedula || "",
+        ciudad: clienteData.ciudad || "",
+        fecha_de_nacimiento: clienteData.fecha_de_nacimiento || ""
       }
 
-      // Usar type assertion ya que createCliente espera CreateClienteData
       await (clientesService.createCliente as any)(user.access_token, createData)
-      await loadClientes(metadata?.pagina || 1)
+      await loadClientes(1, searchTerm)
       setIsModalOpen(false)
 
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al crear el cliente')
+      setError(err instanceof Error ? err.message : "Error al crear el cliente")
     } finally {
       setIsSaving(false)
     }
@@ -264,7 +201,7 @@ export default function ClientsPage() {
                 <div>
                   <h1 className="text-lg font-medium text-gray-900">Clientes</h1>
                   <p className="text-xs text-gray-500 mt-1">
-                    {metadata ? `Mostrando ${clientes.length} de ${metadata.total} clientes` : 'Cargando...'}
+                    {metadata ? `Mostrando ${clientes.length} de ${metadata.total} clientes` : "Cargando..."}
                   </p>
                 </div>
                 
@@ -280,8 +217,6 @@ export default function ClientsPage() {
                       <option value="25">25</option>
                       <option value="50">50</option>
                       <option value="100">100</option>
-                      <option value="200">200</option>
-                      <option value="500">500</option>
                     </select>
                     <span className="text-xs text-gray-500">por página</span>
                   </div>
@@ -303,6 +238,7 @@ export default function ClientsPage() {
               isLoading={isLoading}
               onPageChange={handlePageChange}
               onSearch={handleSearch}
+              searchValue={searchTerm}
             />
           </>
         )}

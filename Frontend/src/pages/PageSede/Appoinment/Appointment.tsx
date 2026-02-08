@@ -10,6 +10,8 @@ import { getEstilistas, type Estilista } from '../../../components/Professionale
 import AppointmentDetailsModal from './AppointmentDetailsModal';
 import { useAuth } from '../../../components/Auth/AuthContext';
 import { getBloqueosEstilista, type Bloqueo } from '../../../components/Quotes/bloqueosApi';
+import { formatSedeNombre } from '../../../lib/sede';
+import { formatDateDMY } from '../../../lib/dateFormat';
 
 interface Appointment {
   id: string;
@@ -1227,13 +1229,13 @@ const CalendarScheduler: React.FC = () => {
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Calendario</h1>
                 <p className="text-xs text-gray-600">
-                  {selectedDate.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })} • {selectedSede?.nombre || 'Tu sede'}
+                  {formatDateDMY(selectedDate)} • {selectedSede?.nombre || 'Tu sede'}
                   {loading && <span className="ml-1.5 inline-flex items-center gap-0.5 text-gray-600 text-[10px]"><Loader2 className="w-2.5 h-2.5 animate-spin" />Actualizando...</span>}
                   {loadingBloqueos && <span className="ml-1.5 inline-flex items-center gap-0.5 text-gray-600 text-[10px]"><Loader2 className="w-2.5 h-2.5 animate-spin" />Bloqueos...</span>}
                 </p>
                 {user?.sede_id && (
                   <div className="text-[10px] text-gray-500 mt-0.5">
-                    📍 Sede: {sedes.find(s => s.sede_id === user.sede_id)?.nombre || user.sede_id}
+                    📍 Sede: {formatSedeNombre(sedes.find(s => s.sede_id === user.sede_id)?.nombre, 'Tu sede')}
                   </div>
                 )}
               </div>
@@ -1258,7 +1260,7 @@ const CalendarScheduler: React.FC = () => {
                 <div className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs bg-gray-50">
                   <div className="flex items-center justify-between">
                     <span className="text-gray-900 font-medium">
-                      {sedes.find(s => s.sede_id === user.sede_id)?.nombre || user.sede_id}
+                      {formatSedeNombre(sedes.find(s => s.sede_id === user.sede_id)?.nombre, 'Tu sede')}
                     </span>
                     <span className="text-[10px] text-gray-500">(Tu sede)</span>
                   </div>
@@ -1274,7 +1276,7 @@ const CalendarScheduler: React.FC = () => {
                 >
                   <option value="">Todas las sedes</option>
                   {sedesDisponibles.map(sede => (
-                    <option key={sede._id} value={sede._id}>{sede.nombre}</option>
+                    <option key={sede._id} value={sede._id}>{formatSedeNombre(sede.nombre)}</option>
                   ))}
                 </select>
               )}

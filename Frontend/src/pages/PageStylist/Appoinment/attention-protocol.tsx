@@ -16,6 +16,8 @@ import BloqueosModal from "../../../components/Quotes/Bloqueos";  // <-- AÑADIR
 import { ProductManagementPanel } from "./ProductManagementPanel"
 import { ZoomIn, X, ExternalLink } from "lucide-react";
 import { ShoppingCart } from "lucide-react";
+import { formatSedeNombre } from "../../../lib/sede";
+import { formatDateDMY } from "../../../lib/dateFormat";
 
 interface AttentionProtocolProps {
   citaSeleccionada?: any;
@@ -227,7 +229,7 @@ export function AttentionProtocol({
           },
           servicio_nombre: ficha.servicio_nombre || ficha.servicio || 'Servicio sin nombre',
           profesional_nombre: ficha.profesional_nombre || ficha.estilista || 'Estilista no asignado',
-          sede_nombre: ficha.sede_nombre || ficha.sede || 'Sede no especificada'
+          sede_nombre: formatSedeNombre(ficha.sede_nombre || ficha.sede || ficha.local, 'Sede no especificada')
         };
       });
 
@@ -243,20 +245,7 @@ export function AttentionProtocol({
     }
   };
   // Función para formatear la fecha
-  const formatFecha = (fechaString: string) => {
-    try {
-      const fecha = new Date(fechaString)
-      return fecha.toLocaleDateString('es-ES', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })
-    } catch {
-      return fechaString
-    }
-  }
+  const formatFecha = (fechaString: string) => formatDateDMY(fechaString, fechaString)
 
   // Función para obtener el nombre del tipo de ficha
   const getNombreTipoFicha = (tipo: TipoFicha) => {
@@ -813,7 +802,7 @@ export function AttentionProtocol({
               <p className="text-xs"><strong>Nombre:</strong> {detalleFicha.nombre} {detalleFicha.apellido || ''}</p> {/* REDUCIDO texto */}
               <p className="text-xs"><strong>Cédula:</strong> {detalleFicha.cedula}</p>
               <p className="text-xs"><strong>Teléfono:</strong> {detalleFicha.telefono}</p>
-              <p className="text-xs"><strong>Sede:</strong> {detalleFicha.sede_nombre}</p>
+              <p className="text-xs"><strong>Sede:</strong> {formatSedeNombre(detalleFicha.sede_nombre, 'Sede no especificada')}</p>
             </div>
           </div>
 
@@ -1272,7 +1261,7 @@ export function AttentionProtocol({
                     </div>
                     <div>
                       <span className="text-gray-600">Sede:</span>
-                      <span className="ml-1">{ficha.sede_nombre}</span> {/* REDUCIDO de ml-2 */}
+                      <span className="ml-1">{formatSedeNombre(ficha.sede_nombre, 'Sede no especificada')}</span> {/* REDUCIDO de ml-2 */}
                     </div>
                     <div>
                       <span className="text-gray-600">Precio:</span>
@@ -1490,7 +1479,7 @@ export function AttentionProtocol({
               <div>
                 <span className="font-medium text-gray-600">Servicio:</span>
                 <p className="font-semibold">
-                  {citaSeleccionada.servicio.nombre}
+                  {citaSeleccionada.servicios?.map((s: any) => s.nombre).join(', ') || citaSeleccionada.servicio?.nombre || 'Sin servicio'}
                 </p>
               </div>
               <div>
@@ -1663,7 +1652,8 @@ export function AttentionProtocol({
           <div>
             <h2 className="text-lg font-bold">Protocolo de atención</h2>
             <p className="text-sm text-gray-600 mt-1">
-              {citaSeleccionada.cliente.nombre} - {citaSeleccionada.servicio.nombre}
+              {citaSeleccionada.cliente.nombre} - {
+                citaSeleccionada.servicios?.map((s: any) => s.nombre).join(', ') ||  citaSeleccionada.servicio?.nombre || 'Sin servicio'}
             </p>
             <p className="text-xs text-gray-500">
               {citaSeleccionada.fecha} • {citaSeleccionada.hora_inicio} - {citaSeleccionada.hora_fin}

@@ -12,6 +12,7 @@ import {
 import Modal from '../../../components/ui/modal';
 import { useAuth } from '../../../components/Auth/AuthContext';
 import { updateCita, registrarPagoCita } from './citasApi';
+import { formatDateDMY } from '../../../lib/dateFormat';
 
 interface AppointmentDetailsModalProps {
   open: boolean;
@@ -117,7 +118,7 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
 
     if (abonado > 0) {
       pagos.push({
-        fecha: rawData.fecha_creacion ? new Date(rawData.fecha_creacion).toLocaleDateString('es-ES') : new Date().toLocaleDateString('es-ES'),
+        fecha: formatDateDMY(rawData.fecha_creacion, formatDateDMY(new Date())),
         tipo: 'Abono',
         monto: abonado,
         metodo: rawData.metodo_pago || 'Efectivo',
@@ -295,28 +296,7 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
   };
 
   const formatFechaSegura = (fechaString: string) => {
-    if (!fechaString) return 'Fecha no especificada';
-
-    try {
-      const [year, month, day] = fechaString.split('-').map(Number);
-
-      const meses = [
-        'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-        'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
-      ];
-      const dias = [
-        'domingo', 'lunes', 'martes', 'miércoles',
-        'jueves', 'viernes', 'sábado'
-      ];
-
-      const fechaObj = new Date(year, month - 1, day);
-      const diaSemana = dias[fechaObj.getDay()];
-      const mesNombre = meses[month - 1];
-
-      return `${diaSemana}, ${day} de ${mesNombre} de ${year}`;
-    } catch (error) {
-      return fechaString;
-    }
+    return formatDateDMY(fechaString, 'Fecha no especificada');
   };
 
   const getPrecio = () => {
@@ -343,18 +323,13 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
 
   const formatFechaHora = (fechaString: string) => {
     if (!fechaString) return 'Fecha no disponible';
-    try {
-      const fecha = new Date(fechaString);
-      return fecha.toLocaleDateString('es-ES', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    } catch (error) {
-      return fechaString;
+    const fecha = new Date(fechaString);
+    if (Number.isNaN(fecha.getTime())) {
+      return formatDateDMY(fechaString, fechaString);
     }
+    const horas = String(fecha.getHours()).padStart(2, '0');
+    const minutos = String(fecha.getMinutes()).padStart(2, '0');
+    return `${formatDateDMY(fecha)} ${horas}:${minutos}`;
   };
 
   const renderPagoModal = () => {
@@ -528,9 +503,6 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                     <h4 className="text-xs font-bold text-gray-900 truncate">
                       {producto.nombre}
                     </h4>
-                    <span className="text-[10px] px-1 py-0.5 bg-gray-100 text-gray-700 rounded">
-                      {producto.producto_id}
-                    </span>
                   </div>
                   
                   <div className="grid grid-cols-2 gap-1 text-[10px] mb-1">

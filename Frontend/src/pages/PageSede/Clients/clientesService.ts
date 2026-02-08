@@ -1,5 +1,6 @@
 import { API_BASE_URL } from "../../../types/config";
 import { Cliente } from "../../../types/cliente";
+import { calcularDiasSinVenir } from "../../../lib/clientMetrics";
 
 export interface CreateClienteData {
   nombre: string;
@@ -43,6 +44,22 @@ export interface ClienteResponse {
   dias_sin_visitar?: number;
   total_gastado?: number;
   ticket_promedio?: number;
+}
+
+export interface ClientesPaginadosMetadata {
+  total: number;
+  pagina: number;
+  limite: number;
+  total_paginas: number;
+  tiene_siguiente: boolean;
+  tiene_anterior: boolean;
+  rango_inicio?: number;
+  rango_fin?: number;
+}
+
+export interface ClientesPaginadosResult {
+  clientes: Cliente[];
+  metadata: ClientesPaginadosMetadata;
 }
 
 // 🔥 INTERFAZ ACTUALIZADA PARA LAS FICHAS DEL CLIENTE
@@ -137,13 +154,6 @@ export interface PDFInfoResponse {
 }
 
 // Helper functions
-const calcularDiasSinVisitar = (fechaCreacion: string): number => {
-  const fechaUltimaVisita = new Date(fechaCreacion);
-  const hoy = new Date();
-  const diferenciaMs = hoy.getTime() - fechaUltimaVisita.getTime();
-  return Math.floor(diferenciaMs / (1000 * 60 * 60 * 24));
-};
-
 const obtenerRizotipoAleatorio = (): string => {
   const rizotipos = ['1A', '1B', '1C', '2A', '2B', '2C', '3A', '3B', '3C', '4A', '4B', '4C'];
   return rizotipos[Math.floor(Math.random() * rizotipos.length)];
@@ -167,13 +177,103 @@ const fixS3Url = (url: string): string => {
   return url;
 };
 
+const mapCliente = (cliente: any): Cliente => ({
+  id: cliente.cliente_id || cliente.id || cliente._id || '',
+  nombre: cliente.nombre || '',
+  telefono: cliente.telefono || 'No disponible',
+  email: cliente.correo || cliente.email || 'No disponible',
+  cedula: cliente.cedula || '',
+  ciudad: cliente.ciudad || '',
+  diasSinVenir: calcularDiasSinVenir(cliente),
+  diasSinComprar: cliente.dias_sin_visitar || 0,
+  ltv: cliente.total_gastado || 0,
+  ticketPromedio: cliente.ticket_promedio || 0,
+  rizotipo: obtenerRizotipoAleatorio(),
+  nota: cliente.notas_historial?.[0]?.contenido || cliente.notas || '',
+  sede_id: cliente.sede_id || '',
+  historialCitas: [],
+  historialCabello: [],
+  historialProductos: []
+});
+
 export const clientesService = {
+  async getClientesPaginados(
+    token: string,
+    params?: { pagina?: number; limite?: number; filtro?: string }
+  ): Promise<ClientesPaginadosResult> {
+    const pagina = params?.pagina ?? 1;
+    const limiteSolicitado = params?.limite ?? 10;
+    const limite = Math.min(Math.max(limiteSolicitado, 1), 100);
+    const filtro = params?.filtro?.trim();
 
-  async getAllClientes(token: string, pagina: number = 1, limite: number = 500): Promise<Cliente[]> {
+    const url = new URL(`${API_BASE_URL}clientes/todos`);
+    url.searchParams.set("pagina", String(pagina));
+    url.searchParams.set("limite", String(limite));
+    if (filtro) {
+      url.searchParams.set("filtro", filtro);
+    }
+
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      let message = errorText || response.statusText || "Error desconocido";
+      try {
+        const parsed = errorText ? JSON.parse(errorText) : null;
+        if (parsed?.detail) {
+          message = parsed.detail;
+        } else if (parsed?.message) {
+          message = parsed.message;
+        }
+      } catch {
+        // mantener mensaje original
+      }
+      throw new Error(`Error al obtener clientes: ${message}`);
+    }
+
+    const data = await response.json();
+    let rawClientes: any[] = [];
+
+    if (data?.clientes && Array.isArray(data.clientes)) {
+      rawClientes = data.clientes;
+    } else if (Array.isArray(data)) {
+      rawClientes = data;
+    } else if (data?.data && Array.isArray(data.data)) {
+      rawClientes = data.data;
+    }
+
+    const meta = data?.metadata || {};
+    const total = meta.total ?? rawClientes.length;
+    const totalPaginas = meta.total_paginas ?? Math.max(1, Math.ceil(total / limite));
+    const paginaActual = meta.pagina ?? pagina;
+
+    return {
+      clientes: rawClientes.map(mapCliente),
+      metadata: {
+        total,
+        pagina: paginaActual,
+        limite: meta.limite ?? limite,
+        total_paginas: totalPaginas,
+        tiene_siguiente: meta.tiene_siguiente ?? paginaActual < totalPaginas,
+        tiene_anterior: meta.tiene_anterior ?? paginaActual > 1,
+        rango_inicio: meta.rango_inicio,
+        rango_fin: meta.rango_fin
+      }
+    };
+  },
+
+  async getAllClientes(token: string, limite: number = 100): Promise<Cliente[]> {
     try {
-      console.log(`📋 Obteniendo todos los clientes (pagina=${pagina}, limite=${limite})`);
+      console.log(`📋 Cargando TODOS los clientes...`);
 
-      const response = await fetch(`${API_BASE_URL}clientes/todos?limite=${limite}&pagina=${pagina}`, {
+      // Primera petición para obtener metadata
+      const primeraRespuesta = await fetch(`${API_BASE_URL}clientes/todos?limite=${limite}&pagina=1`, {
         method: 'GET',
         headers: {
           'accept': 'application/json',
@@ -181,59 +281,79 @@ export const clientesService = {
         }
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`❌ Error ${response.status} en /clientes/todos:`, errorText);
-        throw new Error(`Error al obtener clientes: ${response.status} ${response.statusText}`);
+      if (!primeraRespuesta.ok) {
+        const errorText = await primeraRespuesta.text();
+        console.error(`❌ Error ${primeraRespuesta.status} en /clientes/todos:`, errorText);
+        throw new Error(`Error al obtener clientes: ${primeraRespuesta.status} ${primeraRespuesta.statusText}`);
       }
 
-      const data = await response.json();
-
-      // Manejar diferentes estructuras de respuesta
-      let clientesArray: any[] = [];
+      const primeraData = await primeraRespuesta.json();
       
-      if (Array.isArray(data)) {
-        clientesArray = data;
-      } else if (data && typeof data === 'object') {
-        // Si es un objeto con propiedad clientes
-        if (data.clientes && Array.isArray(data.clientes)) {
-          clientesArray = data.clientes;
-        } else if (data.data && Array.isArray(data.data)) {
-          clientesArray = data.data;
-        } else {
-          // Intentar extraer clientes de cualquier propiedad
-          const values = Object.values(data);
-          clientesArray = values.find(val => Array.isArray(val)) || [];
-        }
+      // Extraer clientes de la primera página
+      let todosLosClientesRaw: any[] = [];
+      
+      if (primeraData.clientes && Array.isArray(primeraData.clientes)) {
+        todosLosClientesRaw = [...primeraData.clientes];
+      } else if (Array.isArray(primeraData)) {
+        todosLosClientesRaw = [...primeraData];
       }
 
-      console.log(`✅ Total de clientes obtenidos: ${clientesArray.length}`);
+      // Obtener metadata
+      const metadata = primeraData.metadata;
+      const totalPaginas = metadata?.total_paginas || 1;
+      const totalClientes = metadata?.total || todosLosClientesRaw.length;
+
+      console.log(`📊 Total: ${totalClientes} clientes en ${totalPaginas} páginas`);
+
+      // Si hay más de una página, obtener el resto en paralelo
+      if (totalPaginas > 1) {
+        console.log(`🚀 Descargando ${totalPaginas - 1} páginas adicionales en paralelo...`);
+        
+        const promesas = [];
+        for (let p = 2; p <= totalPaginas; p++) {
+          promesas.push(
+            fetch(`${API_BASE_URL}clientes/todos?limite=${limite}&pagina=${p}`, {
+              method: 'GET',
+              headers: {
+                'accept': 'application/json',
+                'Authorization': `Bearer ${token}`
+              }
+            })
+            .then(async (res) => {
+              if (!res.ok) {
+                console.error(`❌ Error en página ${p}: ${res.status}`);
+                return { clientes: [] };
+              }
+              const data = await res.json();
+              return data;
+            })
+          );
+        }
+
+        // Ejecutar todas las peticiones en paralelo
+        const resultados = await Promise.all(promesas);
+
+        // Combinar todos los clientes
+        resultados.forEach((data) => {
+          if (data.clientes && Array.isArray(data.clientes)) {
+            todosLosClientesRaw = [...todosLosClientesRaw, ...data.clientes];
+          } else if (Array.isArray(data)) {
+            todosLosClientesRaw = [...todosLosClientesRaw, ...data];
+          }
+        });
+      }
+
+      console.log(`✅ Total de clientes obtenidos: ${todosLosClientesRaw.length}`);
 
       // Transformar la respuesta al formato Cliente
-      return clientesArray.map((cliente: any) => ({
-        id: cliente.cliente_id || cliente.id || cliente._id || '',
-        nombre: cliente.nombre || '',
-        telefono: cliente.telefono || 'No disponible',
-        email: cliente.correo || cliente.email || 'No disponible',
-        cedula: cliente.cedula || '',
-        ciudad: cliente.ciudad || '',
-        diasSinVenir: cliente.dias_sin_visitar || calcularDiasSinVisitar(cliente.fecha_creacion || cliente.created_at || ''),
-        diasSinComprar: cliente.dias_sin_visitar || 0,
-        ltv: cliente.total_gastado || 0,
-        ticketPromedio: cliente.ticket_promedio || 0,
-        rizotipo: obtenerRizotipoAleatorio(),
-        nota: cliente.notas_historial?.[0]?.contenido || cliente.notas || '',
-        sede_id: cliente.sede_id || '',
-        historialCitas: [],
-        historialCabello: [],
-        historialProductos: []
-      }));
+      return todosLosClientesRaw.map(mapCliente);
 
     } catch (error) {
       console.error('❌ Error en getAllClientes:', error);
       throw error;
     }
   },
+
 
   async getClienteById(token: string, clienteId: string): Promise<Cliente> {
     const response = await fetch(`${API_BASE_URL}clientes/${clienteId}`, {
@@ -264,7 +384,7 @@ export const clientesService = {
       email: cliente.correo || 'No disponible',
       cedula: cliente.cedula || '',
       ciudad: cliente.ciudad || '',
-      diasSinVenir: cliente.dias_sin_visitar || calcularDiasSinVisitar(cliente.fecha_creacion),
+      diasSinVenir: calcularDiasSinVenir(cliente),
       diasSinComprar: cliente.dias_sin_visitar || 0,
       ltv: cliente.total_gastado || 0,
       ticketPromedio: cliente.ticket_promedio || 0,
