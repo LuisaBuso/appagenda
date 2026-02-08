@@ -1,15 +1,12 @@
 # ============================================================
-# routes_cash.py - Endpoints para cierre de caja
-# Ubicación: app/cash/routes_cash.py
+# routes_cash.py - VERSIÓN FINAL CORREGIDA
+# Todos los ObjectId convertidos a string
 # ============================================================
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import Optional, List
 from datetime import datetime, timedelta
-
-# ============================================================
-# IMPORTACIONES CORREGIDAS PARA TU PROYECTO
-# ============================================================
+from bson import ObjectId
 
 # Importar modelos y utilidades del mismo paquete
 from .models_cash import (
@@ -20,13 +17,14 @@ from .models_cash import (
 from .utils_cash import (
     generar_cierre_id, generar_egreso_id, generar_apertura_id,
     obtener_rango_fecha, calcular_diferencia, agrupar_egresos_por_tipo,
-    validar_diferencia_aceptable, construir_filtro_fecha
+    validar_diferencia_aceptable, construir_filtro_fecha,
+    convertir_mongo_a_json  # ← NUEVA FUNCIÓN HELPER
 )
 
-# Importar autenticación desde tu módulo de auth
+# Importar autenticación
 from app.auth.routes import get_current_user
 
-# Importar colecciones directamente desde database
+# Importar colecciones
 from app.database.mongo import (
     db,
     collection_citas as appointments,
@@ -36,16 +34,12 @@ from app.database.mongo import (
 
 router = APIRouter(prefix="/cash", tags=["Cash Management"])
 
-# ============================================================
-# COLECCIONES NUEVAS (crear referencias)
-# ============================================================
-
-# Nuevas colecciones para el módulo de caja
+# Nuevas colecciones
 cash_expenses = db["cash_expenses"]
 cash_closures = db["cash_closures"]
 
 # ============================================================
-# 1. CALCULAR EFECTIVO DEL DÍA (Consulta en tiempo real)
+# 1. CALCULAR EFECTIVO DEL DÍA
 # ============================================================
 
 @router.get("/efectivo-dia", response_model=ResumenEfectivoResponse)
@@ -54,26 +48,16 @@ async def calcular_efectivo_dia(
     fecha: Optional[str] = Query(None, description="Fecha (YYYY-MM-DD), default: hoy"),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Calcula el efectivo del día consultando directamente appointments y sales.
+    """Calcula el efectivo del día consultando directamente appointments y sales."""
     
-    **Proceso:**
-    1. Suma ingresos de citas pagadas en efectivo
-    2. Suma ingresos de ventas pagadas en efectivo
-    3. Suma productos vendidos en citas (efectivo)
-    4. Suma egresos registrados manualmente
-    5. Retorna resumen completo
-    """
-    
-    # Fecha por defecto: hoy
     if not fecha:
         fecha = datetime.now().strftime("%Y-%m-%d")
     
-    # === 1. OBTENER NOMBRE DE SEDE ===
+    # Obtener nombre de sede
     sede = await locales.find_one({"sede_id": sede_id})
     sede_nombre = sede.get("nombre") if sede else "Sede desconocida"
     
-    # === 2. CALCULAR INGRESOS DE CITAS ===
+    # Calcular ingresos de citas
     pipeline_citas = [
         {
             "$match": {
@@ -95,15 +79,11 @@ async def calcular_efectivo_dia(
         }
     ]
     
-    resultado_citas = await appointments.aggregate(
-        pipeline_citas,
-        allowDiskUse=True
-    ).to_list(None)
-    
+    resultado_citas = await appointments.aggregate(pipeline_citas, allowDiskUse=True).to_list(None)
     total_citas = resultado_citas[0]["total"] if resultado_citas else 0
     cantidad_citas = resultado_citas[0]["cantidad"] if resultado_citas else 0
     
-    # === 3. CALCULAR PRODUCTOS EN CITAS ===
+    # Calcular productos en citas
     pipeline_productos = [
         {
             "$match": {
@@ -116,9 +96,7 @@ async def calcular_efectivo_dia(
                 "productos": {"$exists": True, "$ne": []}
             }
         },
-        {
-            "$unwind": "$productos"
-        },
+        {"$unwind": "$productos"},
         {
             "$group": {
                 "_id": None,
@@ -128,35 +106,22 @@ async def calcular_efectivo_dia(
         }
     ]
     
-    resultado_productos = await appointments.aggregate(
-        pipeline_productos,
-        allowDiskUse=True
-    ).to_list(None)
-    
+    resultado_productos = await appointments.aggregate(pipeline_productos, allowDiskUse=True).to_list(None)
     total_productos_citas = resultado_productos[0]["total"] if resultado_productos else 0
     cantidad_productos = resultado_productos[0]["cantidad"] if resultado_productos else 0
     
-    # === 4. CALCULAR VENTAS DE PRODUCTOS (sin cita) ===
+    # Calcular ventas de productos
     fecha_inicio, fecha_fin = obtener_rango_fecha(fecha)
     
     pipeline_ventas = [
         {
             "$match": {
                 "sede_id": sede_id,
-                "fecha_pago": {
-                    "$gte": fecha_inicio,
-                    "$lte": fecha_fin
-                }
+                "fecha_pago": {"$gte": fecha_inicio, "$lte": fecha_fin}
             }
         },
-        {
-            "$unwind": "$historial_pagos"
-        },
-        {
-            "$match": {
-                "historial_pagos.metodo": "efectivo"
-            }
-        },
+        {"$unwind": "$historial_pagos"},
+        {"$match": {"historial_pagos.metodo": "efectivo"}},
         {
             "$group": {
                 "_id": None,
@@ -166,54 +131,35 @@ async def calcular_efectivo_dia(
         }
     ]
     
-    resultado_ventas = await sales.aggregate(
-        pipeline_ventas,
-        allowDiskUse=True
-    ).to_list(None)
-    
+    resultado_ventas = await sales.aggregate(pipeline_ventas, allowDiskUse=True).to_list(None)
     total_ventas = resultado_ventas[0]["total"] if resultado_ventas else 0
     cantidad_ventas = resultado_ventas[0]["cantidad"] if resultado_ventas else 0
     
-    # === 5. CALCULAR EGRESOS ===
-    egresos = await cash_expenses.find({
-        "sede_id": sede_id,
-        "fecha": fecha
-    }).to_list(None)
-    
+    # Calcular egresos
+    egresos = await cash_expenses.find({"sede_id": sede_id, "fecha": fecha}).to_list(None)
     egresos_agrupados = agrupar_egresos_por_tipo(egresos)
     total_egresos = sum(cat["total"] for cat in egresos_agrupados.values())
     
-    # === 6. CALCULAR TOTALES ===
+    # Calcular totales
     total_ingresos = total_citas + total_ventas + total_productos_citas
     efectivo_esperado = total_ingresos - total_egresos
     
-    # === 7. VERIFICAR SI HAY APERTURA DE CAJA ===
-    apertura = await cash_closures.find_one({
-        "sede_id": sede_id,
-        "fecha": fecha,
-        "tipo": "apertura"
-    })
-    
+    # Verificar apertura
+    apertura = await cash_closures.find_one({"sede_id": sede_id, "fecha": fecha, "tipo": "apertura"})
     efectivo_inicial = apertura.get("efectivo_inicial", 0) if apertura else 0
     efectivo_esperado_final = efectivo_inicial + efectivo_esperado
     
-    # === 8. VERIFICAR SI YA HAY CIERRE ===
-    cierre = await cash_closures.find_one({
-        "sede_id": sede_id,
-        "fecha": fecha,
-        "tipo": "cierre"
-    })
-    
+    # Verificar cierre
+    cierre = await cash_closures.find_one({"sede_id": sede_id, "fecha": fecha, "tipo": "cierre"})
     efectivo_contado = cierre.get("efectivo_contado") if cierre else None
     diferencia = cierre.get("diferencia") if cierre else None
     estado = cierre.get("estado") if cierre else "abierto"
     
-    # === 9. CONSTRUIR RESPUESTA ===
     return ResumenEfectivoResponse(
         sede_id=sede_id,
         sede_nombre=sede_nombre,
         fecha=fecha,
-        moneda="USD",  # TODO: Obtener de configuración de sede
+        moneda="USD",
         efectivo_inicial=efectivo_inicial,
         ingresos=DetalleIngresos(
             citas={"total": total_citas, "cantidad": cantidad_citas},
@@ -243,24 +189,13 @@ async def registrar_egreso(
     egreso: RegistroEgresoRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Registra un egreso de efectivo (compra, gasto, retiro).
+    """Registra un egreso de efectivo."""
     
-    **Tipos de egreso:**
-    - `compra_interna`: Compra de insumos, papelería, etc.
-    - `gasto_operativo`: Servicios, mantenimiento, etc.
-    - `retiro_caja`: Retiro de efectivo de la caja
-    - `otro`: Otros gastos
-    """
-    
-    # Fecha por defecto: hoy
     fecha = egreso.fecha or datetime.now().strftime("%Y-%m-%d")
     
-    # Obtener nombre de sede
     sede = await locales.find_one({"sede_id": egreso.sede_id})
     sede_nombre = sede.get("nombre") if sede else None
     
-    # Crear documento
     egreso_doc = {
         "egreso_id": generar_egreso_id(),
         "sede_id": egreso.sede_id,
@@ -280,7 +215,6 @@ async def registrar_egreso(
         "actualizado_en": datetime.now()
     }
     
-    # Insertar en BD
     resultado = await cash_expenses.insert_one(egreso_doc)
     
     if not resultado.inserted_id:
@@ -289,7 +223,6 @@ async def registrar_egreso(
             detail="Error al registrar el egreso"
         )
     
-    # Retornar egreso creado
     return EgresoResponse(
         egreso_id=egreso_doc["egreso_id"],
         sede_id=egreso_doc["sede_id"],
@@ -312,35 +245,26 @@ async def registrar_egreso(
 
 @router.get("/egresos", response_model=List[EgresoResponse])
 async def listar_egresos(
-    sede_id: str = Query(..., description="ID de la sede"),
-    fecha: Optional[str] = Query(None, description="Fecha específica"),
-    fecha_inicio: Optional[str] = Query(None, description="Fecha inicio"),
-    fecha_fin: Optional[str] = Query(None, description="Fecha fin"),
-    tipo: Optional[str] = Query(None, description="Filtrar por tipo"),
+    sede_id: str = Query(...),
+    fecha: Optional[str] = Query(None),
+    fecha_inicio: Optional[str] = Query(None),
+    fecha_fin: Optional[str] = Query(None),
+    tipo: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Lista los egresos con filtros opcionales.
-    """
+    """Lista los egresos con filtros opcionales."""
     
-    # Construir filtro
     filtro = {"sede_id": sede_id}
-    
-    # Filtro de fecha
     filtro.update(construir_filtro_fecha(fecha, fecha_inicio, fecha_fin))
     
-    # Filtro de tipo
     if tipo:
         filtro["tipo"] = tipo
     
-    # Consultar egresos
     egresos_list = await cash_expenses.find(filtro).sort("creado_en", -1).to_list(None)
     
-    # Obtener nombre de sede
     sede = await locales.find_one({"sede_id": sede_id})
     sede_nombre = sede.get("nombre") if sede else None
     
-    # Mapear a response
     return [
         EgresoResponse(
             egreso_id=e["egreso_id"],
@@ -369,15 +293,8 @@ async def apertura_caja(
     apertura: AperturaCajaRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Registra la apertura de caja del día con el efectivo inicial.
+    """Registra la apertura de caja del día."""
     
-    **Reglas:**
-    - Solo se puede abrir una caja por sede por día
-    - Registra el efectivo base con el que se inicia
-    """
-    
-    # Verificar que no exista ya una apertura para esta sede/fecha
     apertura_existente = await cash_closures.find_one({
         "sede_id": apertura.sede_id,
         "fecha": apertura.fecha,
@@ -390,11 +307,9 @@ async def apertura_caja(
             detail=f"Ya existe una apertura de caja para {apertura.sede_id} el {apertura.fecha}"
         )
     
-    # Obtener nombre de sede
     sede = await locales.find_one({"sede_id": apertura.sede_id})
     sede_nombre = sede.get("nombre") if sede else None
     
-    # Crear documento de apertura
     apertura_doc = {
         "apertura_id": generar_apertura_id(apertura.sede_id, apertura.fecha),
         "tipo": "apertura",
@@ -410,7 +325,6 @@ async def apertura_caja(
         "creado_en": datetime.now()
     }
     
-    # Insertar
     resultado = await cash_closures.insert_one(apertura_doc)
     
     if not resultado.inserted_id:
@@ -435,17 +349,8 @@ async def cerrar_caja(
     cierre: CierreCajaRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Cierra la caja del día registrando el efectivo físico contado.
+    """Cierra la caja del día registrando el efectivo físico contado."""
     
-    **Proceso:**
-    1. Calcula el efectivo esperado (ingresos - egresos)
-    2. Compara con el efectivo contado
-    3. Calcula la diferencia (sobrante/faltante)
-    4. Guarda el cierre
-    """
-    
-    # Verificar que no exista ya un cierre para esta sede/fecha
     cierre_existente = await cash_closures.find_one({
         "sede_id": cierre.sede_id,
         "fecha": cierre.fecha,
@@ -458,39 +363,26 @@ async def cerrar_caja(
             detail=f"Ya existe un cierre de caja para {cierre.sede_id} el {cierre.fecha}"
         )
     
-    # Calcular efectivo esperado
     resumen = await calcular_efectivo_dia(
         sede_id=cierre.sede_id,
         fecha=cierre.fecha,
         current_user=current_user
     )
     
-    # Calcular diferencia
-    diferencia = calcular_diferencia(
-        resumen.efectivo_esperado,
-        cierre.efectivo_contado
-    )
-    
-    # Validar diferencia
+    diferencia = calcular_diferencia(resumen.efectivo_esperado, cierre.efectivo_contado)
     es_aceptable, mensaje_validacion = validar_diferencia_aceptable(diferencia)
     
-    # Calcular total del desglose físico si existe
-    total_desglose = 0
     if cierre.desglose_fisico:
         total_desglose = sum(item.subtotal for item in cierre.desglose_fisico)
-        
-        # Verificar que el desglose coincida con el efectivo contado
         if abs(total_desglose - cierre.efectivo_contado) > 0.01:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"El desglose físico (${total_desglose}) no coincide con el efectivo contado (${cierre.efectivo_contado})"
             )
     
-    # Obtener nombre de sede
     sede = await locales.find_one({"sede_id": cierre.sede_id})
     sede_nombre = sede.get("nombre") if sede else None
     
-    # Crear documento de cierre
     cierre_doc = {
         "cierre_id": generar_cierre_id(cierre.sede_id, cierre.fecha),
         "tipo": "cierre",
@@ -498,16 +390,12 @@ async def cerrar_caja(
         "sede_nombre": sede_nombre,
         "fecha": cierre.fecha,
         "moneda": cierre.moneda.value,
-        
-        # Efectivo
         "efectivo_inicial": resumen.efectivo_inicial,
         "total_ingresos": resumen.ingresos.total,
         "total_egresos": resumen.egresos.total,
         "efectivo_esperado": resumen.efectivo_esperado,
         "efectivo_contado": cierre.efectivo_contado,
         "diferencia": diferencia,
-        
-        # Desglose
         "ingresos_detalle": {
             "citas": resumen.ingresos.citas,
             "ventas": resumen.ingresos.ventas,
@@ -519,19 +407,11 @@ async def cerrar_caja(
             "retiros_caja": resumen.egresos.retiros_caja,
             "otros": resumen.egresos.otros
         },
-        
-        # Desglose físico
         "desglose_fisico": [item.dict() for item in cierre.desglose_fisico] if cierre.desglose_fisico else None,
-        
-        # Estado
         "estado": "cerrado",
         "diferencia_aceptable": es_aceptable,
         "mensaje_validacion": mensaje_validacion,
-        
-        # Observaciones
         "observaciones": cierre.observaciones,
-        
-        # Auditoría
         "cerrado_por": current_user["email"],
         "cerrado_por_nombre": current_user.get("nombre"),
         "cerrado_por_rol": current_user.get("rol"),
@@ -540,7 +420,6 @@ async def cerrar_caja(
         "aprobado_en": None
     }
     
-    # Insertar
     resultado = await cash_closures.insert_one(cierre_doc)
     
     if not resultado.inserted_id:
@@ -549,7 +428,6 @@ async def cerrar_caja(
             detail="Error al registrar el cierre de caja"
         )
     
-    # Retornar cierre creado
     return CierreResponse(
         cierre_id=cierre_doc["cierre_id"],
         sede_id=cierre_doc["sede_id"],
@@ -577,34 +455,23 @@ async def cerrar_caja(
 
 @router.get("/cierres", response_model=List[CierreResponse])
 async def listar_cierres(
-    sede_id: str = Query(..., description="ID de la sede"),
-    fecha: Optional[str] = Query(None, description="Fecha específica"),
-    fecha_inicio: Optional[str] = Query(None, description="Fecha inicio"),
-    fecha_fin: Optional[str] = Query(None, description="Fecha fin"),
-    estado: Optional[str] = Query(None, description="Filtrar por estado"),
+    sede_id: str = Query(...),
+    fecha: Optional[str] = Query(None),
+    fecha_inicio: Optional[str] = Query(None),
+    fecha_fin: Optional[str] = Query(None),
+    estado: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Lista los cierres de caja con filtros opcionales.
-    """
+    """Lista los cierres de caja."""
     
-    # Construir filtro
-    filtro = {
-        "sede_id": sede_id,
-        "tipo": "cierre"
-    }
-    
-    # Filtro de fecha
+    filtro = {"sede_id": sede_id, "tipo": "cierre"}
     filtro.update(construir_filtro_fecha(fecha, fecha_inicio, fecha_fin))
     
-    # Filtro de estado
     if estado:
         filtro["estado"] = estado
     
-    # Consultar cierres
     cierres_list = await cash_closures.find(filtro).sort("creado_en", -1).to_list(None)
     
-    # Mapear a response
     return [
         CierreResponse(
             cierre_id=c["cierre_id"],
@@ -630,17 +497,15 @@ async def listar_cierres(
     ]
 
 # ============================================================
-# 7. VER DETALLE DE CIERRE
+# 7. VER DETALLE DE CIERRE (CORREGIDO ✅)
 # ============================================================
 
-@router.get("/cierres/{cierre_id}", response_model=dict)
+@router.get("/cierres/{cierre_id}")
 async def obtener_cierre(
     cierre_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Obtiene el detalle completo de un cierre incluyendo desglose físico.
-    """
+    """Obtiene el detalle completo de un cierre."""
     
     cierre = await cash_closures.find_one({"cierre_id": cierre_id})
     
@@ -650,8 +515,8 @@ async def obtener_cierre(
             detail=f"Cierre {cierre_id} no encontrado"
         )
     
-    # Convertir ObjectId a string
-    cierre["_id"] = str(cierre["_id"])
+    # ✅ CONVERTIR ObjectId a string
+    cierre = convertir_mongo_a_json(cierre)
     
     return cierre
 
@@ -664,18 +529,14 @@ async def eliminar_egreso(
     egreso_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Elimina un egreso. Solo permitido para admin_sede y super_admin.
-    """
+    """Elimina un egreso."""
     
-    # Verificar permisos
     if current_user["rol"] not in ["admin_sede", "super_admin"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tienes permisos para eliminar egresos"
         )
     
-    # Verificar que exista
     egreso = await cash_expenses.find_one({"egreso_id": egreso_id})
     
     if not egreso:
@@ -684,7 +545,6 @@ async def eliminar_egreso(
             detail=f"Egreso {egreso_id} no encontrado"
         )
     
-    # Eliminar
     resultado = await cash_expenses.delete_one({"egreso_id": egreso_id})
     
     if resultado.deleted_count == 0:
@@ -696,26 +556,26 @@ async def eliminar_egreso(
     return None
 
 # ============================================================
-# 9. REPORTE DE PERIODO
+# 9. REPORTE DE PERIODO (CORREGIDO ✅)
 # ============================================================
 
 @router.get("/reporte-periodo")
 async def reporte_periodo(
-    sede_id: str = Query(..., description="ID de la sede"),
-    fecha_inicio: str = Query(..., description="Fecha inicio (YYYY-MM-DD)"),
-    fecha_fin: str = Query(..., description="Fecha fin (YYYY-MM-DD)"),
+    sede_id: str = Query(...),
+    fecha_inicio: str = Query(...),
+    fecha_fin: str = Query(...),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Genera un reporte consolidado para un periodo de fechas.
-    """
+    """Genera un reporte consolidado para un periodo de fechas."""
     
-    # Obtener todos los cierres del periodo
     cierres_list = await cash_closures.find({
         "sede_id": sede_id,
         "fecha": {"$gte": fecha_inicio, "$lte": fecha_fin},
         "tipo": "cierre"
     }).sort("fecha", 1).to_list(None)
+    
+    # ✅ CONVERTIR ObjectId a string en todos los documentos
+    cierres_list = [convertir_mongo_a_json(c) for c in cierres_list]
     
     # Calcular totales
     total_ingresos = sum(c.get("total_ingresos", 0) for c in cierres_list)

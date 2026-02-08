@@ -5,6 +5,8 @@
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import secrets
+from bson import ObjectId
+from datetime import datetime
 
 # ============================================================
 # GENERADORES DE IDs
@@ -304,3 +306,42 @@ def convertir_moneda(monto: float, de: str, a: str, tasas: Dict[str, float]) -> 
         return monto_usd * tasas.get(a, 1)
     else:
         return monto_usd
+
+# ============================================================
+# HELPER PARA SERIALIZACIÓN JSON
+# ============================================================
+
+def convertir_mongo_a_json(doc):
+    """
+    Convierte un documento de MongoDB a formato JSON serializable.
+    - ObjectId → string
+    - datetime → ISO string
+    """
+    if doc is None:
+        return None
+    
+    if isinstance(doc, list):
+        return [convertir_mongo_a_json(item) for item in doc]
+    
+    if isinstance(doc, dict):
+        result = {}
+        for key, value in doc.items():
+            if isinstance(value, ObjectId):
+                result[key] = str(value)
+            elif isinstance(value, datetime):
+                result[key] = value.isoformat()
+            elif isinstance(value, dict):
+                result[key] = convertir_mongo_a_json(value)
+            elif isinstance(value, list):
+                result[key] = [convertir_mongo_a_json(item) for item in value]
+            else:
+                result[key] = value
+        return result
+    
+    if isinstance(doc, ObjectId):
+        return str(doc)
+    
+    if isinstance(doc, datetime):
+        return doc.isoformat()
+    
+    return doc

@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import List, Optional
 from bson import ObjectId
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -194,14 +195,9 @@ async def listar_todos(
                 {"es_global": 1, "_id": 0}
             )
             
-            if not sede_info:
-                raise HTTPException(
-                    status_code=404,
-                    detail="Sede no encontrada"
-                )
             
             # Aplicar filtro de sede
-            if sede_info.get("es_global") == True:
+            if sede_info and sede_info.get("es_global") == True:
                 query["sede_id"] = None  # Sede universal
             else:
                 query["sede_id"] = sede_id  # Sede específica
@@ -210,7 +206,9 @@ async def listar_todos(
         # 🔍 BÚSQUEDA INTELIGENTE (SIN $text search)
         # ============================================================
         if filtro:
-            filtro = filtro.strip()
+            filtro = re.escape(filtro.strip())
+            regex_inicio = {"$regex": f"^{filtro}", "$options": "i"}
+            regex_contiene = {"$regex": filtro, "$options": "i"}
             
             if not filtro:
                 # Filtro vacío después de strip -> ignorar
@@ -227,20 +225,20 @@ async def listar_todos(
                 if len(filtro) <= 2:
                     # Búsqueda corta: solo inicio de palabra (muy rápido)
                     filtro_condiciones = [
-                        {"nombre": {"$regex": f"^{filtro}", "$options": "i"}},
-                        {"cliente_id": {"$regex": f"^{filtro}", "$options": "i"}},
-                        {"telefono": {"$regex": f"^{filtro}", "$options": "i"}},
+                        {"nombre": regex_inicio},
+                        {"cliente_id": regex_inicio},
+                        {"telefono": regex_inicio},
                     ]
                 else:
                     # Búsqueda larga: inicio + contiene (balance velocidad/resultados)
                     filtro_condiciones = [
                         # Prioridad 1: Empieza con el filtro (usa índice)
-                        {"nombre": {"$regex": f"^{filtro}", "$options": "i"}},
-                        {"cliente_id": {"$regex": f"^{filtro}", "$options": "i"}},
-                        {"telefono": {"$regex": f"^{filtro}", "$options": "i"}},
+                        {"nombre": regex_inicio},
+                        {"cliente_id": regex_inicio},
+                        {"telefono": regex_inicio},
                         # Prioridad 2: Contiene el filtro (backup)
-                        {"nombre": {"$regex": filtro, "$options": "i"}},
-                        {"correo": {"$regex": filtro, "$options": "i"}},
+                        {"nombre": regex_contiene},
+                        {"correo": regex_contiene},
                     ]
                 
                 # Combinar con filtro de sede (si existe)
@@ -252,7 +250,7 @@ async def listar_todos(
                         ]
                     }
                 else:
-                    query["$or"] = filtro_condiciones
+                    query = {"$or": filtro_condiciones}
 
         # ============================================================
         # 📊 CONTEO OPTIMIZADO
