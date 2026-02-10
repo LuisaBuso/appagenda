@@ -34,94 +34,187 @@ export interface CrearClienteRequest {
   notas?: string;
 }
 
-// 🔥 OBTENER CLIENTES POR SEDE (Ahora usa el endpoint unificado)
-export async function getClientesPorSede(token: string, sedeId: string): Promise<Cliente[]> {
+type FetchClientesOpts = { filtro?: string; limite?: number; pagina?: number };
+const DEFAULT_LIMIT = 25;
+
+const normalize = (value?: string) =>
+  (value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+const normalizarCliente = (c: any): Cliente => ({
+  _id: c._id,
+  cliente_id: c.cliente_id || c.id || c._id,
+  nombre: c.nombre || "",
+  correo: c.email || c.correo,
+  telefono: c.telefono,
+  cedula: c.cedula,
+  ciudad: c.ciudad,
+  fecha_de_nacimiento: c.fecha_de_nacimiento,
+  sede_id: c.sede_id || "",
+  notas: c.nota || c.notas,
+  fecha_creacion: c.fecha_creacion,
+  notas_historial: c.notas_historial,
+});
+
+const fetchClientesLivianos = async (
+  token: string,
+  opciones?: FetchClientesOpts
+): Promise<Cliente[]> => {
+  const pagina = opciones?.pagina ?? 1;
+  const limite = Math.min(Math.max(opciones?.limite ?? DEFAULT_LIMIT, 1), 100);
+  const filtro = opciones?.filtro?.trim();
+
+  const { clientes } = await clientesService.getClientesPaginados(token, {
+    pagina,
+    limite,
+    filtro,
+  });
+
+  return clientes.map(normalizarCliente);
+};
+
+const priorizarCoincidenciasPorNombre = (
+  clientes: Cliente[],
+  filtro?: string,
+  limite: number = DEFAULT_LIMIT
+) => {
+  if (!filtro) return clientes.slice(0, limite);
+
+  const filtroNorm = normalize(filtro);
+  const buscaEmail = filtro.includes("@");
+
+  // Si el usuario teclea un correo, buscamos por correo/ID/teléfono directamente
+  if (buscaEmail) {
+    const porEmail = clientes.filter(
+      (c) =>
+        normalize(c.correo).includes(filtroNorm) ||
+        normalize(c.cliente_id).includes(filtroNorm) ||
+        normalize(c.telefono).includes(filtroNorm)
+    );
+    return porEmail.slice(0, limite);
+  }
+
+  // Ranking por nombre:
+  // 1) nombre comienza con filtro
+  // 2) alguna palabra del nombre comienza con filtro
+  // 3) nombre contiene filtro
+  const empiezaCon = clientes.filter((c) =>
+    normalize(c.nombre).startsWith(filtroNorm)
+  );
+
+  const palabraEmpieza = clientes.filter((c) => {
+    const palabras = normalize(c.nombre).split(/\s+/);
+    return palabras.some((p) => p.startsWith(filtroNorm));
+  });
+
+  const contiene = clientes.filter(
+    (c) =>
+      !empiezaCon.includes(c) &&
+      !palabraEmpieza.includes(c) &&
+      normalize(c.nombre).includes(filtroNorm)
+  );
+
+  // fallback: otros campos (tel/ID) solo si no hubo coincidencias de nombre
+  const fallbackMatches = clientes.filter((c) => {
+    const coincideTelefono = normalize(c.telefono).includes(filtroNorm);
+    const coincideId = normalize(c.cliente_id).includes(filtroNorm);
+    return coincideTelefono || coincideId;
+  });
+
+  const unidos = [
+    ...empiezaCon,
+    ...palabraEmpieza.filter((c) => !empiezaCon.includes(c)),
+    ...contiene,
+    ...fallbackMatches,
+  ];
+
+  // evitar duplicados respetando el orden
+  const únicos: Cliente[] = [];
+  const vistos = new Set<string>();
+  for (const c of unidos) {
+    const key = c.cliente_id || c._id || c.nombre;
+    if (!vistos.has(key)) {
+      únicos.push(c);
+      vistos.add(key);
+    }
+    if (únicos.length >= limite) break;
+  }
+
+  return únicos.slice(0, limite);
+};
+
+// 🔥 OBTENER CLIENTES POR SEDE (ahora paginado y sin traer los 42k de golpe)
+export async function getClientesPorSede(
+  token: string,
+  sedeId: string,
+  opciones?: FetchClientesOpts
+): Promise<Cliente[]> {
   try {
-    console.log(`🔄 Obteniendo clientes para reservas (sede: ${sedeId})...`);
-    
-    // Usar el servicio unificado que maneja automáticamente sedes globales y locales
-    const clientesData = await clientesService.obtenerClientes(token);
-    
-    // Transformar al formato de este archivo (si es necesario)
-    const clientes: Cliente[] = clientesData.map((c: any) => ({
-      _id: c._id,
-      cliente_id: c.id || c.cliente_id,
-      nombre: c.nombre,
-      correo: c.email || c.correo,
-      telefono: c.telefono,
-      cedula: c.cedula,
-      ciudad: c.ciudad,
-      fecha_de_nacimiento: c.fecha_de_nacimiento,
-      sede_id: c.sede_id,
-      notas: c.nota || c.notas,
-      fecha_creacion: c.fecha_creacion,
-      notas_historial: c.notas_historial
-    }));
-    
+    console.log(
+      `🔄 Obteniendo clientes para reservas (sede: ${sedeId || "auto"})...`
+    );
+
+    const clientes = await fetchClientesLivianos(token, opciones);
+
     console.log(`✅ Clientes cargados para reservas: ${clientes.length}`);
     return clientes;
   } catch (error) {
-    console.error('❌ Error cargando clientes para reservas:', error);
+    console.error("❌ Error cargando clientes para reservas:", error);
     throw error;
   }
 }
 
 // 🔥 BUSCAR CLIENTES (con filtro opcional)
-export async function buscarClientes(token: string, filtro?: string, limite: number = 100): Promise<Cliente[]> {
+export async function buscarClientes(
+  token: string,
+  filtro?: string,
+  limite: number = DEFAULT_LIMIT
+): Promise<Cliente[]> {
   try {
     console.log(`🔍 Buscando clientes con filtro: "${filtro}"`);
-    
-    // Obtener todos los clientes disponibles (el backend ya filtró por sede)
-    const clientes = await getClientesPorSede(token, "");
-    
-    // Filtrar localmente si hay un término de búsqueda
-    if (filtro && filtro.trim()) {
-      const filtroLower = filtro.toLowerCase();
-      const clientesFiltrados = clientes.filter((cliente: Cliente) => 
-        cliente.nombre.toLowerCase().includes(filtroLower) ||
-        (cliente.telefono && cliente.telefono.includes(filtro)) ||
-        (cliente.correo && cliente.correo.toLowerCase().includes(filtroLower)) ||
-        (cliente.cliente_id && cliente.cliente_id.toLowerCase().includes(filtroLower))
-      );
-      
-      console.log(`✅ ${clientesFiltrados.length} clientes encontrados con filtro "${filtro}"`);
-      return clientesFiltrados.slice(0, limite);
-    }
-    
-    console.log(`✅ Retornando ${Math.min(clientes.length, limite)} clientes (sin filtro)`);
-    return clientes.slice(0, limite);
+
+    const clientes = await fetchClientesLivianos(token, {
+      filtro,
+      limite,
+      pagina: 1,
+    });
+
+    const ordenados = priorizarCoincidenciasPorNombre(clientes, filtro, limite);
+
+    console.log(
+      `✅ ${ordenados.length} clientes devueltos desde el backend (sin cargar todo el universo)`
+    );
+    return ordenados;
   } catch (error) {
-    console.error('❌ Error buscando clientes:', error);
+    console.error("❌ Error buscando clientes:", error);
     return [];
   }
 }
 
 // 🔥 BUSCAR CLIENTES POR SEDE Y FILTRO
-export async function buscarClientesPorSede(token: string, sedeId: string, filtro?: string): Promise<Cliente[]> {
+export async function buscarClientesPorSede(
+  token: string,
+  sedeId: string,
+  filtro?: string,
+  limite: number = DEFAULT_LIMIT
+): Promise<Cliente[]> {
   try {
     console.log(`🔍 Buscando clientes con filtro: "${filtro}"`);
-    
-    // Obtener clientes (el backend ya maneja la lógica de sede global vs local)
-    const clientes = await getClientesPorSede(token, sedeId);
-    
-    // Filtrar localmente si hay un filtro
-    if (filtro && filtro.trim()) {
-      const filtroLower = filtro.toLowerCase();
-      const clientesFiltrados = clientes.filter((cliente: Cliente) => 
-        cliente.nombre.toLowerCase().includes(filtroLower) ||
-        (cliente.telefono && cliente.telefono.includes(filtro)) ||
-        (cliente.correo && cliente.correo.toLowerCase().includes(filtroLower)) ||
-        (cliente.cliente_id && cliente.cliente_id.toLowerCase().includes(filtroLower))
-      );
-      
-      console.log(`✅ ${clientesFiltrados.length} clientes encontrados con filtro "${filtro}"`);
-      return clientesFiltrados;
-    }
-    
-    console.log(`✅ ${clientes.length} clientes disponibles`);
-    return clientes;
+
+    const clientes = await getClientesPorSede(token, sedeId, {
+      filtro,
+      limite,
+      pagina: 1,
+    });
+
+    const ordenados = priorizarCoincidenciasPorNombre(clientes, filtro, limite);
+
+    console.log(`✅ ${ordenados.length} clientes disponibles`);
+    return ordenados;
   } catch (error) {
-    console.error('❌ Error buscando clientes por sede:', error);
+    console.error("❌ Error buscando clientes por sede:", error);
     return [];
   }
 }
@@ -144,7 +237,7 @@ export async function buscarClientesConDebounce(
       const resultados = await buscarClientes(token, filtro, 50);
       callback(resultados);
     } catch (error) {
-      console.error('❌ Error en búsqueda con debounce:', error);
+      console.error("❌ Error en búsqueda con debounce:", error);
       callback([]);
     }
   }, delay);

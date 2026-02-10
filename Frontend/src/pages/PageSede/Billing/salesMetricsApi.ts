@@ -26,8 +26,9 @@ export interface SalesMetricsResponse {
     dias: number;
   };
   sede_id: string;
+  moneda_sede: string; // 🆕 NUEVO: Moneda de la sede
   metricas_por_moneda: {
-    USD: SalesMetricsData;
+    [moneda: string]: SalesMetricsData; // 🆕 CAMBIADO: Ya no es solo USD, es dinámico
   };
   debug_info: {
     ventas_registradas: number;
@@ -58,7 +59,7 @@ export async function getSalesMetrics(
   if (params.end_date) queryParams.append('end_date', params.end_date);
 
   const url = `${API_BASE_URL}api/sales-dashboard/ventas/dashboard?${queryParams.toString()}`;
-  console.log('Fetching sales metrics from:', url);
+  console.log('📡 Fetching sales metrics from:', url);
 
   try {
     const response = await fetch(url, {
@@ -70,64 +71,64 @@ export async function getSalesMetrics(
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Error en respuesta de la API:', {
+      console.error('❌ Error en respuesta de la API:', {
         status: response.status,
         statusText: response.statusText,
         error: errorText
       });
       
-      // Devolver estructura vacía
+      // 🆕 CAMBIADO: Ya no retorna estructura con USD por defecto
       return {
         success: false,
-        metricas_por_moneda: {
-          USD: {
-            ventas_totales: 0,
-            ventas_servicios: 0,
-            ventas_productos: 0
-          }
-        }
+        moneda_sede: null,
+        metricas_por_moneda: {}
       };
     }
 
     const data = await response.json();
-    console.log('Respuesta parseada de la API:', data);
+    console.log('✅ Respuesta parseada de la API:', data);
     return data;
   } catch (error) {
-    console.error('Error en fetch:', error);
-    // Devolver estructura vacía en caso de error de red
+    console.error('❌ Error en fetch:', error);
+    // 🆕 CAMBIADO: Estructura vacía sin asumir USD
     return {
       success: false,
-      metricas_por_moneda: {
-        USD: {
-          ventas_totales: 0,
-          ventas_servicios: 0,
-          ventas_productos: 0
-        }
-      }
+      moneda_sede: null,
+      metricas_por_moneda: {}
     };
   }
 }
 
 /**
- * Extrae solo las 3 métricas principales para el componente SalesMetrics
+ * 🆕 NUEVA FUNCIÓN: Extrae métricas usando la moneda correcta de la sede
  */
 export function extractMainMetrics(data: SalesMetricsResponse): {
   ventas: number;
   servicios: number;
   productos: number;
+  moneda: string;
 } {
-  const metricas = data.metricas_por_moneda.USD;
+  // Obtener la moneda de la sede desde la respuesta
+  const moneda = data.moneda_sede || 'USD';
+  
+  // Buscar las métricas en la moneda correcta
+  const metricas = data.metricas_por_moneda[moneda] || {
+    ventas_totales: 0,
+    ventas_servicios: 0,
+    ventas_productos: 0
+  };
   
   return {
     ventas: metricas.ventas_totales,
     servicios: metricas.ventas_servicios,
-    productos: metricas.ventas_productos
+    productos: metricas.ventas_productos,
+    moneda: moneda
   };
 }
 
 /**
  * Helper para formatear moneda
- * Formatea un número como moneda USD con formato es-CO
+ * Formatea un número como moneda con formato es-CO
  */
 export function formatCurrencyMetric(value: number, currency: string = 'USD'): string {
   try {
@@ -138,11 +139,11 @@ export function formatCurrencyMetric(value: number, currency: string = 'USD'): s
       maximumFractionDigits: 0,
     }).format(value);
   } catch (error) {
-    console.error('Error formateando moneda:', error);
-    // Formato de respaldo
+    console.error('❌ Error formateando moneda:', error);
+    // Formato de respaldo usando la misma moneda solicitada
     return new Intl.NumberFormat('es-CO', {
       style: 'currency',
-      currency: 'USD',
+      currency: currency || 'USD',
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(value);
@@ -153,11 +154,28 @@ export function formatCurrencyMetric(value: number, currency: string = 'USD'): s
  * Formato de moneda corto para valores grandes
  * Ej: 1,500,000 → $1.5M
  */
-export function formatCurrencyShort(value: number): string {
+export function formatCurrencyShort(value: number, currency: string = 'USD'): string {
+  const currencySymbol = getCurrencySymbol(currency);
+  
   if (value >= 1000000) {
-    return `$${(value / 1000000).toFixed(1)}M`;
+    return `${currencySymbol}${(value / 1000000).toFixed(1)}M`;
   } else if (value >= 1000) {
-    return `$${(value / 1000).toFixed(1)}K`;
+    return `${currencySymbol}${(value / 1000).toFixed(1)}K`;
   }
-  return formatCurrencyMetric(value);
+  return formatCurrencyMetric(value, currency);
+}
+
+/**
+ * 🆕 NUEVA FUNCIÓN: Obtiene el símbolo de la moneda
+ */
+function getCurrencySymbol(currency: string): string {
+  const symbols: { [key: string]: string } = {
+    'USD': '$',
+    'COP': '$',
+    'MXN': '$',
+    'EUR': '€',
+    'PEN': 'S/',
+    'ARS': '$'
+  };
+  return symbols[currency] || '$';
 }
