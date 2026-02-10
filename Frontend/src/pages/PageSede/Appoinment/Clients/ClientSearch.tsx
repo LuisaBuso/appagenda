@@ -48,54 +48,41 @@ export const ClientSearch: React.FC<ClientSearchProps> = ({
     notas: ''
   });
 
-  // Cargar clientes de la sede
+  // Cargar y buscar clientes (una sola llamada, paginada y con debounce)
   useEffect(() => {
-    const cargarClientesIniciales = async () => {
+    let cancel = false;
+
+    const buscar = async () => {
       if (!user?.access_token || !sedeId) {
         setClientes([]);
+        setLoadingClientes(false);
         return;
       }
-      
+
       setLoadingClientes(true);
       try {
-        const clientesData = await getClientesPorSede(user.access_token, sedeId);
-        setClientes(clientesData);
-      } catch (error) {
-        console.error('Error cargando clientes:', error);
-        setClientes([]);
-      } finally {
-        setLoadingClientes(false);
-      }
-    };
-    
-    cargarClientesIniciales();
-  }, [sedeId, user?.access_token]);
+        const filtro = clientSearch.trim();
+        const resultados = filtro
+          ? await buscarClientesPorSede(user.access_token, sedeId, filtro, 25)
+          : await getClientesPorSede(user.access_token, sedeId, { limite: 25, pagina: 1 });
 
-  // Buscar clientes cuando escribe
-  useEffect(() => {
-    const buscarClientesEnTiempoReal = async () => {
-      if (!user?.access_token || !sedeId) {
-        setClientes([]);
-        return;
-      }
-      
-      try {
-        if (!clientSearch.trim()) {
-          const clientesSede = await getClientesPorSede(user.access_token, sedeId);
-          setClientes(clientesSede);
-        } else {
-          const clientesEncontrados = await buscarClientesPorSede(user.access_token, sedeId, clientSearch);
-          setClientes(clientesEncontrados);
+        if (!cancel) {
+          setClientes(resultados);
         }
       } catch (error) {
         console.error('Error buscando clientes:', error);
-        setClientes([]);
+        if (!cancel) setClientes([]);
+      } finally {
+        if (!cancel) setLoadingClientes(false);
       }
     };
-    
-    const timeoutId = setTimeout(buscarClientesEnTiempoReal, 300);
-    return () => clearTimeout(timeoutId);
-  }, [clientSearch, user?.access_token, sedeId]);
+
+    const timeoutId = setTimeout(buscar, 250);
+    return () => {
+      cancel = true;
+      clearTimeout(timeoutId);
+    };
+  }, [clientSearch, sedeId, user?.access_token]);
 
   // Función para crear nuevo cliente
   const handleCreateClient = async () => {

@@ -235,8 +235,6 @@ export default function CierreCajaPage() {
         sede_id: sedeId,
         fecha_inicio: start,
         fecha_fin: end,
-        start_date: start,
-        end_date: end,
       });
       setResumen(normalizeResumen(reporte));
     } catch (err) {
@@ -272,8 +270,6 @@ export default function CierreCajaPage() {
         sede_id: sedeId,
         fecha_inicio: start,
         fecha_fin: end,
-        start_date: start,
-        end_date: end,
       });
       setEgresos(normalizeEgresos(result));
     } catch (err) {
