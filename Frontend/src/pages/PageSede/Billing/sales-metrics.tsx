@@ -7,6 +7,7 @@ import { getSalesMetrics, formatCurrencyMetric } from "./salesMetricsApi"
 import { Calendar, DollarSign, Package, Users } from "lucide-react"
 import { Button } from "../../../components/ui/button"
 import { Skeleton } from "../../../components/ui/skeleton"
+import { formatDateDMY } from "../../../lib/dateFormat"
 
 interface SalesMetricsProps {
   initialPeriod?: string;
@@ -28,6 +29,7 @@ export function SalesMetrics({
   const [showDateModal, setShowDateModal] = useState(false)
   const [tempDateRange, setTempDateRange] = useState<DateRange>({ start_date: "", end_date: "" })
   const [dateRange, setDateRange] = useState<DateRange>({ start_date: "", end_date: "" })
+  const [currency, setCurrency] = useState<string>('USD') // 🆕 NUEVO: Estado para la moneda
   const [metrics, setMetrics] = useState({
     ventas_totales: 0,
     ventas_servicios: 0,
@@ -60,7 +62,7 @@ export function SalesMetrics({
 
   const loadMetrics = async () => {
     if (!isAuthenticated || !user?.access_token) {
-      console.log('Usuario no autenticado')
+      console.log('⚠️ Usuario no autenticado')
       return
     }
 
@@ -71,7 +73,7 @@ export function SalesMetrics({
       const targetSedeId = sedeId || (user.sede_id as string) || ""
       
       if (!targetSedeId) {
-        console.error('No hay sede definida')
+        console.error('❌ No hay sede definida')
         setError('No se pudo determinar la sede')
         return
       }
@@ -84,7 +86,7 @@ export function SalesMetrics({
       // Si es rango personalizado, agregar fechas
       if (period === "custom") {
         if (!dateRange.start_date || !dateRange.end_date) {
-          console.log("Por favor selecciona un rango de fechas")
+          console.log("⚠️ Por favor selecciona un rango de fechas")
           return
         }
         params.start_date = dateRange.start_date
@@ -102,69 +104,53 @@ export function SalesMetrics({
         throw new Error('La API no devolvió respuesta')
       }
 
-      // Manejar diferentes estructuras de respuesta
+      // 🆕 NUEVO: Extraer la moneda de la sede desde la respuesta
+      const sedeCurrency = data.moneda_sede || 'USD'
+      console.log('💰 Moneda de la sede:', sedeCurrency)
+      setCurrency(sedeCurrency)
+
+      // 🆕 CAMBIADO: Extraer métricas usando la moneda correcta
       let ventasTotales = 0
       let ventasServicios = 0
       let ventasProductos = 0
 
-      // Opción 1: Estructura con metricas_por_moneda.USD
-      if (data.metricas_por_moneda?.USD) {
-        const metricas = data.metricas_por_moneda.USD
+      // Buscar las métricas con la moneda de la sede
+      if (data.metricas_por_moneda && data.metricas_por_moneda[sedeCurrency]) {
+        const metricas = data.metricas_por_moneda[sedeCurrency]
         ventasTotales = metricas.ventas_totales || 0
         ventasServicios = metricas.ventas_servicios || 0
         ventasProductos = metricas.ventas_productos || 0
-      }
-      // Opción 2: Estructura directa (sin USD)
-      else if (data.metricas_por_moneda) {
-        console.log('Estructura directa de metricas_por_moneda encontrada')
-        const metricasPorMoneda = data.metricas_por_moneda as any
         
-        // Verificar si es un objeto con propiedades directas
-        if (metricasPorMoneda.ventas_totales !== undefined) {
-          ventasTotales = metricasPorMoneda.ventas_totales || 0
-          ventasServicios = metricasPorMoneda.ventas_servicios || 0
-          ventasProductos = metricasPorMoneda.ventas_productos || 0
-        } 
-        // Verificar si tiene otras monedas
-        else {
-          const monedas = Object.keys(metricasPorMoneda)
-          console.log('Monedas disponibles:', monedas)
+        console.log(`✅ Métricas encontradas para ${sedeCurrency}:`, metricas)
+      }
+      // 🆕 FALLBACK: Si no hay datos en la moneda esperada, buscar cualquier moneda disponible
+      else if (data.metricas_por_moneda) {
+        const monedasDisponibles = Object.keys(data.metricas_por_moneda)
+        console.log('⚠️ Monedas disponibles:', monedasDisponibles)
+        
+        if (monedasDisponibles.length > 0) {
+          const primeraMoneda = monedasDisponibles[0]
+          const metricas = data.metricas_por_moneda[primeraMoneda]
           
-          if (monedas.length > 0) {
-            const primeraMoneda = metricasPorMoneda[monedas[0]]
-            console.log('Usando moneda alternativa:', monedas[0], primeraMoneda)
-            
-            ventasTotales = primeraMoneda.ventas_totales || 0
-            ventasServicios = primeraMoneda.ventas_servicios || 0
-            ventasProductos = primeraMoneda.ventas_productos || 0
-          } else {
-            // Si metricas_por_moneda existe pero está vacío
-            console.warn('metricas_por_moneda existe pero está vacío o sin propiedades')
-          }
+          console.log(`⚠️ Usando moneda alternativa: ${primeraMoneda}`, metricas)
+          setCurrency(primeraMoneda)
+          
+          ventasTotales = metricas.ventas_totales || 0
+          ventasServicios = metricas.ventas_servicios || 0
+          ventasProductos = metricas.ventas_productos || 0
+        } else {
+          console.warn('⚠️ No hay métricas disponibles en ninguna moneda')
         }
       }
-      // Opción 3: Métricas directamente en la raíz (estructura antigua)
+      // Si no hay metricas_por_moneda pero hay datos en raíz (estructura antigua)
       else if (data.ventas_totales !== undefined) {
-        console.log('Estructura antigua encontrada (métricas en raíz)')
+        console.log('⚠️ Usando estructura antigua (métricas en raíz)')
         ventasTotales = data.ventas_totales || 0
         ventasServicios = data.ventas_servicios || 0
         ventasProductos = data.ventas_productos || 0
       }
-      // Opción 4: Si success es false pero hay datos
-      else if (data.success === false) {
-        console.warn('API devolvió success: false pero puede tener datos', data)
-        // Intentar igual encontrar métricas
-        if (data.metricas_por_moneda?.USD) {
-          const metricas = data.metricas_por_moneda.USD
-          ventasTotales = metricas.ventas_totales || 0
-          ventasServicios = metricas.ventas_servicios || 0
-          ventasProductos = metricas.ventas_productos || 0
-        }
-      }
-      // Si no hay ninguna estructura reconocida
       else {
-        console.warn('No se reconoció la estructura de la respuesta:', data)
-        // No lanzar error, solo usar valores por defecto (0)
+        console.warn('❌ No se reconoció la estructura de la respuesta:', data)
       }
       
       setMetrics({
@@ -173,10 +159,15 @@ export function SalesMetrics({
         ventas_productos: ventasProductos
       })
 
-      console.log('📊 Métricas extraídas:', { ventasTotales, ventasServicios, ventasProductos })
+      console.log('📊 Métricas finales:', { 
+        ventasTotales, 
+        ventasServicios, 
+        ventasProductos,
+        moneda: sedeCurrency
+      })
 
     } catch (error: any) {
-      console.error('Error cargando métricas:', error)
+      console.error('❌ Error cargando métricas:', error)
       setError(`Error al cargar las métricas: ${error.message}`)
       // Resetear métricas a 0 en caso de error
       setMetrics({
@@ -210,12 +201,12 @@ export function SalesMetrics({
 
   const handleApplyDateRange = () => {
     if (!tempDateRange.start_date || !tempDateRange.end_date) {
-      console.log("Por favor selecciona ambas fechas")
+      console.log("⚠️ Por favor selecciona ambas fechas")
       return
     }
     
     if (new Date(tempDateRange.start_date) > new Date(tempDateRange.end_date)) {
-      console.log("La fecha de inicio no puede ser mayor a la fecha de fin")
+      console.log("⚠️ La fecha de inicio no puede ser mayor a la fecha de fin")
       return
     }
     
@@ -229,12 +220,7 @@ export function SalesMetrics({
 
   const formatDateDisplay = (dateString: string) => {
     if (!dateString) return ""
-    const date = new Date(dateString)
-    return date.toLocaleDateString('es-ES', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric'
-    })
+    return formatDateDMY(dateString)
   }
 
   const getPeriodDisplay = () => {
@@ -452,7 +438,7 @@ export function SalesMetrics({
               <Skeleton className="h-8 w-32 bg-gray-200" />
             ) : (
               <p className="text-2xl font-bold text-black">
-                {formatCurrencyMetric(metrics.ventas_totales)}
+                {formatCurrencyMetric(metrics.ventas_totales, currency)}
               </p>
             )}
             
@@ -477,7 +463,7 @@ export function SalesMetrics({
             ) : (
               <>
                 <p className="text-2xl font-bold text-black">
-                  {formatCurrencyMetric(metrics.ventas_servicios)}
+                  {formatCurrencyMetric(metrics.ventas_servicios, currency)}
                 </p>
                 <div className="mt-1 text-xs text-gray-500">
                   {metrics.ventas_totales > 0 && (
@@ -506,7 +492,7 @@ export function SalesMetrics({
             ) : (
               <>
                 <p className="text-2xl font-bold text-black">
-                  {formatCurrencyMetric(metrics.ventas_productos)}
+                  {formatCurrencyMetric(metrics.ventas_productos, currency)}
                 </p>
                 <div className="mt-1 text-xs text-gray-500">
                   {metrics.ventas_totales > 0 && (

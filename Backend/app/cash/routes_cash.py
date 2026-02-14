@@ -8,6 +8,10 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 from bson import ObjectId
 
+# ============================================================
+# IMPORTACIONES CORREGIDAS PARA TU PROYECTO
+# ============================================================
+
 # Importar modelos y utilidades del mismo paquete
 from .models_cash import (
     AperturaCajaRequest, RegistroEgresoRequest, CierreCajaRequest,

@@ -37,7 +37,7 @@ class AperturaCajaRequest(BaseModel):
     sede_id: str = Field(..., description="ID de la sede")
     efectivo_inicial: float = Field(..., ge=0, description="Efectivo inicial en caja")
     fecha: str = Field(..., description="Fecha de apertura (YYYY-MM-DD)")
-    moneda: Moneda = Field(default=Moneda.USD)
+    moneda: Moneda = Field(default=Moneda.COP)
     observaciones: Optional[str] = None
     
     @validator('fecha')
@@ -55,7 +55,7 @@ class RegistroEgresoRequest(BaseModel):
     concepto: str = Field(..., min_length=3, max_length=200, description="Concepto del gasto")
     descripcion: Optional[str] = Field(None, max_length=1000, description="Descripción detallada")
     fecha: Optional[str] = Field(None, description="Fecha del egreso (default: hoy)")
-    moneda: Moneda = Field(default=Moneda.USD)
+    moneda: Moneda = Field(default=Moneda.COP)
     comprobante_numero: Optional[str] = None
     comprobante_tipo: Optional[str] = None
     categoria: Optional[str] = None
@@ -72,7 +72,7 @@ class CierreCajaRequest(BaseModel):
     efectivo_contado: float = Field(..., ge=0, description="Efectivo físico contado")
     desglose_fisico: Optional[List[DesgloseFisicoItem]] = None
     observaciones: Optional[str] = None
-    moneda: Moneda = Field(default=Moneda.USD)
+    moneda: Moneda = Field(default=Moneda.COP)
 
 class ConsultaEfectivoRequest(BaseModel):
     sede_id: str

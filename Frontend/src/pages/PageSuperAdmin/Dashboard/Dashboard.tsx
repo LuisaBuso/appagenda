@@ -8,6 +8,8 @@ import { SalesDonutChart } from "./sales-donut-chart";
 import { ClientIndicators } from "./client-indicators";
 import { Button } from "../../../components/ui/button";
 import { useAuth } from "../../../components/Auth/AuthContext";
+import { formatSedeNombre } from "../../../lib/sede";
+import { formatDateDMY } from "../../../lib/dateFormat";
 import {
   getDashboard,
   getVentasDashboard,
@@ -52,7 +54,6 @@ import {
   TableHeader,
   TableRow,
 } from "../../../components/ui/table";
-import { Progress } from "../../../components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import { formatMoney, extractNumericValue } from "./Api/formatMoney";
 
@@ -78,7 +79,15 @@ export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [error, setError] = useState<string | null>(null);
   const [monedaUsuario, setMonedaUsuario] = useState<string>("COP");
-  const [debugInfo, setDebugInfo] = useState<string>("");
+
+  const getSedeNombre = useCallback(
+    (sedeId: string, fallback: string = "Sede seleccionada") => {
+      if (sedeId === "global") return "Vista Global";
+      const nombre = sedes.find(sede => sede.sede_id === sedeId)?.nombre;
+      return formatSedeNombre(nombre, fallback);
+    },
+    [sedes]
+  );
   
   // Estados para el rango de fechas personalizado
   const [showDateModal, setShowDateModal] = useState(false);
@@ -92,7 +101,6 @@ export default function DashboardPage() {
   const periodOptions = [
     { id: "last_7_days", label: "Últimos 7 días" },
     { id: "last_30_days", label: "Últimos 30 días" },
-    { id: "last_90_days", label: "Últimos 90 días" },
     { id: "month", label: "Mes actual" },
     { id: "custom", label: "Rango personalizado" },
   ];
@@ -150,7 +158,6 @@ export default function DashboardPage() {
     try {
       setLoading(true);
       setError(null);
-      setDebugInfo("");
       // Cargar en paralelo solo lo esencial
       await Promise.all([
         loadSedes(),
@@ -160,7 +167,6 @@ export default function DashboardPage() {
     } catch (error: any) {
       console.error("Error cargando datos iniciales:", error);
       setError("Error al cargar datos iniciales");
-      setDebugInfo(`Error inicial: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -174,7 +180,6 @@ export default function DashboardPage() {
     } catch (error: any) {
       console.error("Error cargando sedes:", error);
       setError("Error al cargar las sedes");
-      setDebugInfo(prev => prev + ` | Error sedes: ${error.message}`);
     } finally {
       setLoadingSedes(false);
     }
@@ -185,22 +190,48 @@ export default function DashboardPage() {
       if (selectedSede !== "global") return;
 
       setError(null);
-      setDebugInfo("Cargando datos globales...");
-      const data = await getDashboard(user!.access_token, {
-        period: selectedPeriod
-      });
-      setGlobalData(data);
-      setDebugInfo(`Datos globales cargados: ${data.success ? 'OK' : 'Error'}`);
+      const ventasParams: any = { period: selectedPeriod };
+      if (selectedPeriod === "custom") {
+        if (!dateRange.start_date || !dateRange.end_date) {
+          setError("Por favor selecciona un rango de fechas");
+          return;
+        }
+        ventasParams.start_date = dateRange.start_date;
+        ventasParams.end_date = dateRange.end_date;
+      }
+
+      let ventasResponse: VentasDashboardResponse | null = null;
+      let analyticsResponse: DashboardResponse | null = null;
+
+      try {
+        ventasResponse = await getVentasDashboard(user!.access_token, ventasParams);
+        setVentasData(ventasResponse);
+      } catch (ventasError: any) {
+        console.warn("Error cargando ventas globales:", ventasError.message);
+      }
+
+      try {
+        const analyticsParams: any = { period: selectedPeriod };
+        if (selectedPeriod === "custom") {
+          analyticsParams.start_date = dateRange.start_date;
+          analyticsParams.end_date = dateRange.end_date;
+        }
+        analyticsResponse = await getDashboard(user!.access_token, analyticsParams);
+        setGlobalData(analyticsResponse);
+      } catch (analyticsError: any) {
+        console.warn("Error cargando analytics globales:", analyticsError.message);
+      }
 
       // Limpiar datos de sede específica
       setDashboardData(null);
-      setVentasData(null);
       setChurnData([]);
 
+      if (!ventasResponse && !analyticsResponse) {
+        setError("No se pudieron cargar datos globales");
+      }
     } catch (error: any) {
       console.error("Error cargando datos globales:", error);
       setError("Error al cargar datos globales");
-      setDebugInfo(`Error global: ${error.message}`);
       setGlobalData(null);
     }
   };
@@ -216,7 +247,6 @@ export default function DashboardPage() {
       }, 5000);
 
       setError(null);
-      setDebugInfo(`Cargando datos para sede: ${selectedSede}, período: ${selectedPeriod}`);
 
       // Configurar parámetros para la API
       const params: any = {
@@ -240,11 +270,9 @@ export default function DashboardPage() {
 
       try {
         ventasResponse = await getVentasDashboard(user!.access_token, params);
-        setDebugInfo(prev => prev + ` | Ventas: ${ventasResponse?.success ? 'OK' : 'Error'}`);
         console.log('Datos de ventas recibidos:', ventasResponse);
       } catch (ventasError: any) {
         console.warn('Error cargando datos de ventas:', ventasError.message);
-        setDebugInfo(prev => prev + ` | Error ventas: ${ventasError.message}`);
       }
 
       // Luego intentar cargar datos de analytics
@@ -253,11 +281,9 @@ export default function DashboardPage() {
           period: selectedPeriod,
           sede_id: selectedSede
         });
-        setDebugInfo(prev => prev + ` | Analytics: ${analyticsResponse?.success ? 'OK' : 'Error'}`);
         console.log('Datos de analytics recibidos:', analyticsResponse);
       } catch (analyticsError: any) {
         console.warn('Error cargando datos de analytics:', analyticsError.message);
-        setDebugInfo(prev => prev + ` | Error analytics: ${analyticsError.message}`);
       }
 
       // Establecer los datos que se cargaron exitosamente
@@ -279,7 +305,6 @@ export default function DashboardPage() {
     } catch (error: any) {
       console.error("Error general cargando dashboard:", error);
       setError(`Error al cargar datos: ${error.message}`);
-      setDebugInfo(prev => prev + ` | Error general: ${error.message}`);
       setDashboardData(null);
       setVentasData(null);
     }
@@ -326,7 +351,6 @@ export default function DashboardPage() {
     setVentasData(null);
     setChurnData([]);
     setError(null);
-    setDebugInfo("");
 
     if (sedeId === "global") {
       loadGlobalData();
@@ -392,15 +416,7 @@ export default function DashboardPage() {
     setTempDateRange(newRange);
   };
 
-  const formatDateDisplay = (dateString: string) => {
-    if (!dateString) return "";
-    const date = new Date(dateString);
-    return date.toLocaleDateString('es-ES', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric'
-    });
-  };
+  const formatDateDisplay = (dateString: string) => formatDateDMY(dateString, "");
 
   const getPeriodDisplay = () => {
     if (selectedPeriod === "custom") {
@@ -624,6 +640,132 @@ export default function DashboardPage() {
     return paymentMethods;
   };
 
+  const VentasOverview = () => (
+    <>
+      {/* KPIs principales */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="border border-gray-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
+              <DollarSign className="w-4 h-4" />
+              Ventas Totales
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {formatCurrency(getMetricasVentas().ventas_totales)}
+            </div>
+            <p className="text-sm text-gray-500 mt-2">
+              {getMetricasVentas().cantidad_ventas || 0} transacciones
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-gray-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
+              <Receipt className="w-4 h-4" />
+              Transacciones
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {getMetricasVentas().cantidad_ventas || 0}
+            </div>
+            <p className="text-sm text-gray-500 mt-2">
+              Ticket promedio: {formatCurrency(getMetricasVentas().ticket_promedio || 0)}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-gray-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
+              <Users className="w-4 h-4" />
+              Servicios
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {formatCurrency(getMetricasVentas().ventas_servicios)}
+            </div>
+            <p className="text-sm text-gray-500 mt-2">
+              {getMetricasVentas().ventas_servicios > 0 && getMetricasVentas().ventas_totales > 0
+                ? `${Math.round((getMetricasVentas().ventas_servicios / getMetricasVentas().ventas_totales) * 100)}% del total`
+                : 'Sin datos'}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-gray-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
+              <Package className="w-4 h-4" />
+              Productos
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {formatCurrency(getMetricasVentas().ventas_productos)}
+            </div>
+            <p className="text-sm text-gray-500 mt-2">
+              {getMetricasVentas().ventas_productos > 0 && getMetricasVentas().ventas_totales > 0
+                ? `${Math.round((getMetricasVentas().ventas_productos / getMetricasVentas().ventas_totales) * 100)}% del total`
+                : 'Sin datos'}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Main Dashboard Grid con gráficos */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* Left Column */}
+        <div className="flex flex-col gap-6">
+          <SalesChart
+            salesData={getSalesChartData()}
+            formatCurrency={formatCurrencyShort}
+            title="Ventas Semanales"
+          />
+
+          <SalesDonutChart
+            donutData={getDonutData()}
+            formatCurrency={formatCurrency}
+            title="Distribución de Ventas"
+          />
+        </div>
+
+        {/* Right Column */}
+        <div className="flex flex-col gap-6">
+          {/* Métodos de Pago */}
+          <Card className="border border-gray-200">
+            <CardHeader className="p-4 pb-2">
+              <CardTitle className="text-sm font-medium text-gray-900 flex items-center gap-2">
+                <CreditCard className="w-4 h-4" />
+                Métodos de Pago
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 pt-2">
+              <div className="grid grid-cols-2 gap-3">
+                {getPaymentMethodData().map((method, index) => (
+                  <div key={index} className="flex flex-col items-center justify-center p-3 bg-gray-50 rounded-lg border border-gray-200">
+                    <div
+                      className="w-3 h-3 rounded-full mb-1"
+                      style={{ backgroundColor: method.color }}
+                    />
+                    <span className="text-xs font-medium">{method.name}</span>
+                    <span className="text-sm font-bold mt-1">
+                      {formatCurrency(method.value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </>
+  );
+
   // Función para convertir TicketPromedioKPI a KPI
   const convertTicketPromedioToKPI = (ticketPromedio: TicketPromedioKPI): KPI => {
     if (typeof ticketPromedio === 'object' && ticketPromedio.valor !== undefined) {
@@ -645,44 +787,6 @@ export default function DashboardPage() {
       }
     }
     return (ticketPromedio as KPI).valor;
-  };
-
-  // Componente para mostrar información de debug
-  const DebugInfo = () => {
-    if (!debugInfo && !ventasData) return null;
-
-    return (
-      <div className="mt-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
-        <div className="flex items-center justify-between mb-2">
-          <h4 className="text-sm font-medium text-gray-700">Información de depuración</h4>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              console.log('Ventas Data:', ventasData);
-              console.log('Dashboard Data:', dashboardData);
-              console.log('Métricas:', getMetricasVentas());
-            }}
-          >
-            Log en consola
-          </Button>
-        </div>
-        <div className="text-xs text-gray-600 space-y-1">
-          <p>Estado: {debugInfo}</p>
-          <p>Moneda usuario: {monedaUsuario}</p>
-          <p>Sede seleccionada: {selectedSede}</p>
-          {ventasData?.metricas_por_moneda && (
-            <p>Monedas disponibles: {Object.keys(ventasData.metricas_por_moneda).join(', ')}</p>
-          )}
-          {ventasData?.descripcion && (
-            <p>Descripción: {ventasData.descripcion}</p>
-          )}
-          {ventasData?.range && (
-            <p>Período: {ventasData.range.start} - {ventasData.range.end}</p>
-          )}
-        </div>
-      </div>
-    );
   };
 
   // Modal de selección de fechas
@@ -839,9 +943,9 @@ export default function DashboardPage() {
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-gray-200 border-t-gray-900 rounded-full animate-spin mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">Cargando datos...</h3>
-          <p className="text-gray-600 mb-4">
-            Estamos obteniendo la información más reciente para {selectedSede !== "global" ? getSedeInfo(selectedSede)?.nombre : "Vista Global"}
-          </p>
+            <p className="text-gray-600 mb-4">
+              Estamos obteniendo la información más reciente para {getSedeNombre(selectedSede)}
+            </p>
           <div className="flex flex-col items-center">
             <div className="w-64 h-2 bg-gray-200 rounded-full overflow-hidden mb-2">
               <div className="h-full bg-gray-900 animate-pulse" style={{ width: "70%" }} />
@@ -882,12 +986,12 @@ export default function DashboardPage() {
                 <BarChart3 className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-gray-900">Dashboard Analytics</h1>
-                <p className="text-sm text-gray-600">
-                  {selectedSede === "global"
-                    ? 'Vista Global'
-                    : `Sede: ${getSedeInfo(selectedSede)?.nombre || 'Seleccionada'}`}
-                </p>
+                  <h1 className="text-xl font-bold text-gray-900">Dashboard Analytics</h1>
+                  <p className="text-sm text-gray-600">
+                    {selectedSede === "global"
+                      ? 'Vista Global'
+                      : `Sede: ${getSedeNombre(selectedSede)}`}
+                  </p>
                 <p className="text-xs text-gray-500 mt-1">
                   Período: {getPeriodDisplay()}
                 </p>
@@ -913,11 +1017,11 @@ export default function DashboardPage() {
               <Select value={selectedSede} onValueChange={handleSedeChange}>
                 <SelectTrigger className="w-[180px] bg-white border border-gray-300">
                   <Building2 className="w-4 h-4 mr-2" />
-                  <SelectValue>
-                    {selectedSede === "global"
-                      ? "Vista Global"
-                      : getSedeInfo(selectedSede)?.nombre || "Sede"}
-                  </SelectValue>
+                    <SelectValue>
+                      {selectedSede === "global"
+                        ? "Vista Global"
+                        : getSedeNombre(selectedSede, "Sede")}
+                    </SelectValue>
                 </SelectTrigger>
                 <SelectContent className="bg-white">
                   <SelectItem value="global">
@@ -933,14 +1037,14 @@ export default function DashboardPage() {
                         <span className="text-sm">Cargando...</span>
                       </div>
                     </SelectItem>
-                  ) : sedes.map((sede) => (
-                    <SelectItem key={sede._id} value={sede.sede_id}>
-                      <div className="flex items-center gap-2">
-                        <div className={`w-2 h-2 rounded-full ${sede.activa ? 'bg-green-500' : 'bg-gray-300'}`} />
-                        {sede.nombre}
-                      </div>
-                    </SelectItem>
-                  ))}
+                    ) : sedes.map((sede) => (
+                      <SelectItem key={sede._id} value={sede.sede_id}>
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${sede.activa ? 'bg-green-500' : 'bg-gray-300'}`} />
+                          {formatSedeNombre(sede.nombre)}
+                        </div>
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
 
@@ -972,7 +1076,7 @@ export default function DashboardPage() {
             {/* Tabs Content */}
             <div className="p-4">
               <TabsContent value="dashboard" className="m-0">
-                {loading && selectedSede === "global" && !globalData ? (
+                {loading && selectedSede === "global" && !globalData && !ventasData ? (
                   <div className="flex items-center justify-center h-64">
                     <div className="text-center">
                       <div className="w-10 h-10 border-3 border-gray-200 border-t-gray-900 rounded-full animate-spin mx-auto mb-4" />
@@ -984,9 +1088,9 @@ export default function DashboardPage() {
                     <div className="text-center">
                       <div className="w-10 h-10 border-3 border-gray-200 border-t-gray-900 rounded-full animate-spin mx-auto mb-4" />
                       <p className="text-gray-600">Cargando datos de la sede...</p>
-                      <p className="text-sm text-gray-500 mt-2">
-                        Sede: {getSedeInfo(selectedSede)?.nombre} • ID: {selectedSede}
-                      </p>
+                        <p className="text-sm text-gray-500 mt-2">
+                          Sede: {getSedeNombre(selectedSede)}
+                        </p>
                     </div>
                   </div>
                 ) : error ? (
@@ -994,7 +1098,6 @@ export default function DashboardPage() {
                     <AlertCircle className="w-16 h-16 mx-auto mb-4 text-gray-400" />
                     <h3 className="text-lg font-medium text-gray-900 mb-2">Error al cargar datos</h3>
                     <p className="text-gray-500 mb-4">{error}</p>
-                    <DebugInfo />
                     <Button
                       onClick={handleRefresh}
                       className="bg-gray-900 hover:bg-gray-800 text-white mt-4"
@@ -1021,7 +1124,7 @@ export default function DashboardPage() {
                                 </p>
                                 {globalData.range && (
                                   <p className="text-sm text-gray-500">
-                                    {new Date(globalData.range.start).toLocaleDateString()} - {new Date(globalData.range.end).toLocaleDateString()}
+                                    {formatDateDMY(globalData.range.start)} - {formatDateDMY(globalData.range.end)}
                                   </p>
                                 )}
                               </div>
@@ -1043,7 +1146,7 @@ export default function DashboardPage() {
                                 {formatCurrency(getSafeTicketPromedioValue(globalData.kpis.ticket_promedio))}
                               </div>
                               <p className="text-sm text-gray-600">
-                                Ticket promedio • {globalData.kpis.debug_info?.total_citas || 0} citas
+                                Ticket promedio del período
                               </p>
                             </CardContent>
                           </Card>
@@ -1070,16 +1173,6 @@ export default function DashboardPage() {
                             formatCurrency={formatCurrencyShort}
                           />
 
-                          <Card>
-                            <CardContent className="p-4">
-                              <div className="text-2xl font-bold text-gray-900 mb-1">
-                                {globalData.kpis.debug_info?.total_citas || 0}%
-                              </div>
-                              <p className="text-sm text-gray-600 mb-3">Capacidad de ocupación</p>
-                              <Progress value={globalData.kpis.debug_info?.total_citas || 0} className="h-1" />
-                            </CardContent>
-                          </Card>
-
                           <ClientIndicators
                             nuevosClientes={globalData.kpis.nuevos_clientes}
                             tasaRecurrencia={globalData.kpis.tasa_recurrencia}
@@ -1088,6 +1181,29 @@ export default function DashboardPage() {
                           />
                         </div>
                       </div>
+                    </div>
+                  ) : ventasData ? (
+                    <div className="space-y-4">
+                      <Card className="border border-gray-200 bg-gray-50">
+                        <CardContent className="p-6">
+                          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                            <div className="flex items-start gap-4">
+                              <div className="p-3 bg-gray-100 rounded-xl">
+                                <Globe className="w-6 h-6 text-gray-800" />
+                              </div>
+                              <div>
+                                <h3 className="text-xl font-bold">Vista Global (Ventas)</h3>
+                                <p className="text-gray-600 mt-2">
+                                  {sedes.length} sedes activas • Período: {getPeriodDisplay()}
+                                </p>
+                              </div>
+                            </div>
+                            <Badge className="bg-gray-900 text-white">Ventas</Badge>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      <VentasOverview />
                     </div>
                   ) : (
                     <div className="text-center py-12">
@@ -1111,7 +1227,7 @@ export default function DashboardPage() {
                             </div>
                             <div>
                               <h3 className="text-xl font-bold">
-                                {getSedeInfo(selectedSede)?.nombre || 'Sede Desconocida'}
+                                {getSedeNombre(selectedSede, "Sede Desconocida")}
                               </h3>
                               <div className="flex flex-wrap gap-4 mt-2 text-sm text-gray-600">
                                 <div className="flex items-center gap-1">
@@ -1122,9 +1238,9 @@ export default function DashboardPage() {
                                   <span className="font-medium">Tel:</span> {getSedeInfo(selectedSede)?.telefono || 'Sin teléfono'}
                                 </div>
                               </div>
-                              <p className="text-sm text-gray-500 mt-2">
-                                Período: {getPeriodDisplay()} • Sede ID: {selectedSede}
-                              </p>
+                                <p className="text-sm text-gray-500 mt-2">
+                                  Período: {getPeriodDisplay()} • Sede: {getSedeNombre(selectedSede)}
+                                </p>
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
@@ -1271,26 +1387,6 @@ export default function DashboardPage() {
                             {/* Información de Clientes (si hay datos de analytics) */}
                             {dashboardData && (
                               <>
-                                <Card className="border border-gray-200">
-                                  <CardContent className="p-4">
-                                    <div className="flex items-center justify-between mb-3">
-                                      <div>
-                                        <div className="text-sm text-gray-600">Capacidad de Ocupación</div>
-                                        <div className="text-2xl font-bold text-gray-900">
-                                          {dashboardData.kpis.debug_info?.total_citas || 0}%
-                                        </div>
-                                      </div>
-                                      <div className="text-right">
-                                        <div className="text-sm text-gray-600">Clientes Totales</div>
-                                        <div className="text-lg font-bold text-gray-900">
-                                          {dashboardData.kpis.debug_info?.total_clientes || 0}
-                                        </div>
-                                      </div>
-                                    </div>
-                                    <Progress value={dashboardData.kpis.debug_info?.total_citas || 0} className="h-2" />
-                                  </CardContent>
-                                </Card>
-
                                 <ClientIndicators
                                   nuevosClientes={dashboardData.kpis.nuevos_clientes}
                                   tasaRecurrencia={dashboardData.kpis.tasa_recurrencia}
@@ -1360,7 +1456,6 @@ export default function DashboardPage() {
                           </div>
                         </div>
 
-                        <DebugInfo />
                       </>
                     ) : dashboardData ? (
                       // Mostrar datos de analytics si no hay datos de ventas
@@ -1402,7 +1497,6 @@ export default function DashboardPage() {
                             </div>
                           </CardContent>
                         </Card>
-                        <DebugInfo />
                       </div>
                     ) : (
                       <div className="text-center py-12">
@@ -1411,7 +1505,6 @@ export default function DashboardPage() {
                         <p className="text-gray-500 mb-4">
                           No se pudieron cargar datos para esta sede.
                         </p>
-                        <DebugInfo />
                         <Button onClick={handleRefresh} className="bg-gray-900 hover:bg-gray-800 text-white mt-4">
                           <RefreshCw className="w-4 h-4 mr-2" />
                           Reintentar
@@ -1467,7 +1560,7 @@ export default function DashboardPage() {
                                 <div className="flex items-start justify-between mb-2">
                                   <div className="flex items-center gap-2">
                                     <Building2 className="w-4 h-4 text-gray-600" />
-                                    <h4 className="font-medium text-gray-900">{sede.nombre}</h4>
+                                    <h4 className="font-medium text-gray-900">{formatSedeNombre(sede.nombre)}</h4>
                                   </div>
                                   {sede.activa ? (
                                     <div className="w-2 h-2 rounded-full bg-green-500" />
@@ -1475,17 +1568,14 @@ export default function DashboardPage() {
                                     <div className="w-2 h-2 rounded-full bg-gray-300" />
                                   )}
                                 </div>
-                                <p className="text-xs text-gray-600 truncate">{sede.direccion}</p>
-                                <p className="text-xs text-gray-600 mt-1">{sede.telefono}</p>
-                                <div className="flex items-center justify-between mt-2">
-                                  <span className="text-xs text-gray-500">
-                                    ID: {sede.sede_id}
-                                  </span>
-                                  {selectedSede === sede.sede_id && (
-                                    <Badge className="bg-gray-900 text-white text-xs">
-                                      Seleccionada
-                                    </Badge>
-                                  )}
+                                  <p className="text-xs text-gray-600 truncate">{sede.direccion}</p>
+                                  <p className="text-xs text-gray-600 mt-1">{sede.telefono}</p>
+                                  <div className="flex items-center justify-between mt-2">
+                                    {selectedSede === sede.sede_id && (
+                                      <Badge className="bg-gray-900 text-white text-xs">
+                                        Seleccionada
+                                      </Badge>
+                                    )}
                                 </div>
                               </CardContent>
                             </Card>
@@ -1506,7 +1596,7 @@ export default function DashboardPage() {
             <div className="bg-white rounded-lg w-full max-w-2xl max-h-[80vh] overflow-hidden border border-gray-200">
               <div className="p-4 border-b border-gray-200 flex items-center justify-between">
                 <div>
-                  <h3 className="font-bold text-lg">Clientes en Riesgo - {getSedeInfo(selectedSede)?.nombre}</h3>
+                  <h3 className="font-bold text-lg">Clientes en Riesgo - {getSedeNombre(selectedSede)}</h3>
                   <p className="text-sm text-gray-600">
                     {churnData.length} clientes detectados con inactividad
                   </p>
@@ -1538,7 +1628,7 @@ export default function DashboardPage() {
                           <div className="text-xs text-gray-500">{cliente.telefono}</div>
                         </TableCell>
                         <TableCell>
-                          {new Date(cliente.ultima_visita).toLocaleDateString()}
+                          {formatDateDMY(cliente.ultima_visita)}
                         </TableCell>
                         <TableCell>
                           <div className={`font-semibold ${cliente.dias_inactivo > 90 ? 'text-red-600' :

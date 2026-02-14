@@ -6,6 +6,7 @@ import { commissionsService } from "./Api/commissionsService";
 import { PendientesResumen } from "../../../types/commissions";
 import { sedeService } from "../Sedes/sedeService";
 import type { Sede } from "../../../types/sede";
+import { formatSedeNombre } from "../../../lib/sede";
 
 // Función para formatear moneda
 const formatMoneda = (monto: number, moneda: string = 'USD'): string => {
@@ -129,7 +130,7 @@ export function ComisionesPendientes() {
             <option value="">-- Selecciona una sede --</option>
             {sedes.map((sede) => (
               <option key={sede._id} value={sede._id}>
-                {sede.nombre} {sede.sede_id ? `(${sede.sede_id})` : ''}
+                {formatSedeNombre(sede.nombre)}
               </option>
             ))}
           </select>
@@ -202,7 +203,7 @@ export function ComisionesPendientes() {
             >
               {sedes.map((sede) => (
                 <option key={sede._id} value={sede._id}>
-                  {sede.nombre}
+                  {formatSedeNombre(sede.nombre)}
                 </option>
               ))}
             </select>
@@ -330,9 +331,6 @@ export function ComisionesPendientes() {
                       <div>
                         <div className="font-medium text-gray-900">
                           {prof.profesional_nombre}
-                        </div>
-                        <div className="text-sm text-gray-500">
-                          ID: {prof.profesional_id}
                         </div>
                       </div>
                     </td>

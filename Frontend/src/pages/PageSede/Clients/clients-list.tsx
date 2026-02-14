@@ -1,7 +1,5 @@
 // components/ClientsList.tsx
 "use client"
-
-import { useState,  } from "react"
 import { 
   Search, 
   Plus, 
@@ -50,46 +48,12 @@ export function ClientsList({
   const clearSearch = () => {
   onSearch?.("")
 }
-  onSearch
-}: ClientsListProps) {
-  const [searchTerm, setSearchTerm] = useState("")
-  const [searchTimeout, setSearchTimeout] = useState<NodeJS.Timeout | null>(null)
-
-  // Manejar búsqueda con debounce
-  const handleSearch = (value: string) => {
-    setSearchTerm(value)
-    
-    if (searchTimeout) {
-      clearTimeout(searchTimeout)
-    }
-    
-    const timeout = setTimeout(() => {
-      if (onSearch) {
-        onSearch(value)
-      } else if (onPageChange) {
-        onPageChange(1, value)
-      }
-    }, 500)
-    
-    setSearchTimeout(timeout)
-  }
-
-  // Limpiar búsqueda
-  const clearSearch = () => {
-    setSearchTerm("")
-    if (onSearch) {
-      onSearch("")
-    } else if (onPageChange) {
-      onPageChange(1, "")
-    }
-  }
 
   // Manejar cambio de página
   const handlePageChange = (page: number) => {
     if (onPageChange) {
       onPageChange(page, searchValue
 )
-      onPageChange(page, searchTerm)
     }
   }
 
@@ -120,7 +84,6 @@ export function ClientsList({
           {onPageChange && (
             <Button 
               onClick={() => onPageChange(1, searchValue)}
-              onClick={() => onPageChange(1, searchTerm)}
               variant="outline"
               className="text-xs border-gray-300 text-gray-700 hover:bg-gray-50"
             >
@@ -167,12 +130,6 @@ export function ClientsList({
               disabled={isLoading}
             />
             {searchValue && (
-              value={searchTerm}
-              onChange={(e) => handleSearch(e.target.value)}
-              className="pl-9 h-8 text-sm border-gray-300"
-              disabled={isLoading}
-            />
-            {searchTerm && (
               <button
                 onClick={clearSearch}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
@@ -189,10 +146,6 @@ export function ClientsList({
           <div className="mt-2 flex flex-wrap gap-1">
             <Badge variant="secondary" className="text-xs">
               Buscando: "{searchValue}"
-        {searchTerm && (
-          <div className="mt-2 flex flex-wrap gap-1">
-            <Badge variant="secondary" className="text-xs">
-              Buscando: "{searchTerm}"
             </Badge>
             <Button
               variant="ghost"
@@ -225,12 +178,6 @@ export function ClientsList({
                 {searchValue ? "Ajusta tu búsqueda" : "Agrega tu primer cliente"}
               </p>
               {!searchValue && (
-                {searchTerm ? "No se encontraron resultados" : "No hay clientes"}
-              </p>
-              <p className="text-xs text-gray-500">
-                {searchTerm ? "Ajusta tu búsqueda" : "Agrega tu primer cliente"}
-              </p>
-              {!searchTerm && (
                 <Button
                   onClick={onAddClient}
                   variant="outline"

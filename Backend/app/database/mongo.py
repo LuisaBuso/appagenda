@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 uri = os.getenv("MONGODB_URI")
-db_name = os.getenv("MONGODB_NAME", "DataAgendaStaging")
+db_name = os.getenv("MONGODB_NAME", "DataAgenda")
 
 if not uri:
     raise RuntimeError("MONGODB_URI no está definida en .env")
@@ -32,5 +32,7 @@ collection_invoices = db["invoices"]  # Nueva colección
 collection_sales = db["sales"]  
 collection_inventarios = db["inventary"]  # Nueva colección
 collection_inventory_motions = db["inventory_motions"]  # Nueva colección
+collection_cash_expenses = db["cash_expenses"]
+collection_cash_closures = db["cash_closures"]
 def connect_to_mongo():
     pass

@@ -1,5 +1,6 @@
 // utils/pdfGenerator.ts
 import { jsPDF } from 'jspdf';
+import { formatDateDMY } from './dateFormat';
 
 export interface FichaPDFData {
   cliente: {
@@ -507,14 +508,7 @@ export async function generarPDFFicha(data: FichaPDFData): Promise<void> {
       }
 
       // 🔥 PIE DE PÁGINA CORRECTO
-      const fechaGeneracion = new Date().toLocaleDateString('es-ES', {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
+      const fechaGeneracion = formatDateDMY(new Date());
 
       // Línea
       pdf.setLineWidth(0.3);

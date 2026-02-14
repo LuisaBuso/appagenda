@@ -11,6 +11,8 @@ import { useState, useEffect } from "react"
 import { API_BASE_URL } from "../../../types/config"
 import { ProductCatalogModal } from "./ProductCatalogModal"
 import { Badge } from "../../../components/ui/badge"
+import { formatSedeNombre } from "../../../lib/sede"
+import { formatDateDMY } from "../../../lib/dateFormat"
 
 // En service-protocol.tsx - REEMPLAZA toda tu interfaz Producto con esto:
 interface Producto {
@@ -537,31 +539,17 @@ export function ServiceProtocol({
   }
 
   const formatFechaHora = (fecha: string) => {
-    try {
-      const date = new Date(fecha)
-      return date.toLocaleDateString('es-ES', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })
-    } catch {
-      return fecha
+    const date = new Date(fecha)
+    if (Number.isNaN(date.getTime())) {
+      return formatDateDMY(fecha, fecha)
     }
+    const horas = String(date.getHours()).padStart(2, "0")
+    const minutos = String(date.getMinutes()).padStart(2, "0")
+    return `${formatDateDMY(date)} ${horas}:${minutos}`
   }
 
   const formatFechaCorta = (fecha: string) => {
-    try {
-      const date = new Date(fecha)
-      return date.toLocaleDateString('es-ES', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric'
-      })
-    } catch {
-      return fecha
-    }
+    return formatDateDMY(fecha, fecha)
   }
 
   const getEstadoColor = (estado: string) => {
@@ -907,7 +895,7 @@ export function ServiceProtocol({
                             </div>
                             <div>
                               <span className="text-gray-700">Sede:</span>
-                              <p className="font-medium truncate">{ficha.sede_nombre}</p>
+                              <p className="font-medium truncate">{formatSedeNombre(ficha.sede_nombre, 'Sede no especificada')}</p>
                             </div>
                             <div>
                             </div>
@@ -1113,7 +1101,7 @@ export function ServiceProtocol({
                             <div className="grid grid-cols-2 gap-3">
                               <div>
                                 <p className="text-sm text-gray-600">Sede</p>
-                                <p className="font-medium">{selectedFicha.sede_nombre}</p>
+                                <p className="font-medium">{formatSedeNombre(selectedFicha.sede_nombre, 'Sede no especificada')}</p>
                               </div>
                               <div>
                                 <p className="text-sm text-gray-600">Tipo de ficha</p>

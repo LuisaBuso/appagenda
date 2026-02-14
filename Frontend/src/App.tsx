@@ -7,7 +7,7 @@ import "./index.css";
 import SuperDashboard from "./pages/PageSuperAdmin/Dashboard/Dashboard";
 import SuperPerformance from "./pages/PageSuperAdmin/Perfomance/Perfomance";
 import SuperAppointment from "./pages/PageSuperAdmin/Appoinment/Appointment";
-import SuperProducts from "./pages/PageSuperAdmin/Products/Products";
+import { ProductsList as SuperProducts } from "./pages/PageSuperAdmin/Products/Products";
 import SuperSede from "./pages/PageSuperAdmin/Sedes/Sede";
 import SuperServices from './pages/PageSuperAdmin/Services/Services';
 import SuperComisiones from "./pages/PageSuperAdmin/Comisiones/Comisiones";
@@ -27,6 +27,7 @@ import SedeServices from './pages/PageSede/Services/Services';
 import SedeStylists from './pages/PageSede/Styslit/Sytlist';
 import SedeCommissions from './pages/PageSede/Comisiones/Comisiones'
 import SedeInvoices from "./pages/PageSede/Sales-invoiced/Sales-invoiced"
+import CierreCajaPage from "./pages/PageSede/CierreCaja/CierreCaja"
 
 /* --- Stylist Pages --- */
 import StylistAppointment from "./pages/PageStylist/Appoinment/Appointment";
@@ -176,6 +177,14 @@ function App() {
               element={
                 <PrivateRoute allowedRoles={["admin_sede"]}>
                   <SedeInvoices />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/sede/cierre-caja"
+              element={
+                <PrivateRoute allowedRoles={["admin_sede"]}>
+                  <CierreCajaPage />
                 </PrivateRoute>
               }
             />

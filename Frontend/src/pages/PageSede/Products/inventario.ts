@@ -33,14 +33,12 @@ export class InventarioService {
 
   // Obtener inventario de una sede específica
   async getInventarioBySede(
-    sede_id: string, 
     sede_id: string,
     stockBajo: boolean = false,
     token: string | null
   ): Promise<InventarioProducto[]> {
     try {
       const url = new URL(`${API_BASE_URL}inventary/inventarios/inventarios/`);
-      
 
       // Agregar parámetros a la URL
       url.searchParams.append('sede_id', sede_id);
@@ -59,7 +57,6 @@ export class InventarioService {
 
       const data: InventarioProducto[] = await response.json();
       return data;
-      
 
     } catch (error) {
       console.error("Error obteniendo inventario de la sede:", error);
@@ -77,7 +74,6 @@ export class InventarioService {
       // Usar el token y sede_id proporcionados, o intentar obtenerlos de sessionStorage
       const actualToken = token || sessionStorage.getItem("access_token");
       const actualSedeId = sede_id || sessionStorage.getItem("beaux-sede_id");
-      
 
       if (!actualSedeId) {
         throw new Error("No se encontró sede_id");
@@ -88,7 +84,6 @@ export class InventarioService {
       }
 
       return await this.getInventarioBySede(actualSedeId, stockBajo, actualToken);
-      
 
     } catch (error) {
       console.error("Error obteniendo inventario del usuario:", error);
@@ -96,36 +91,6 @@ export class InventarioService {
     }
   }
 
-  // Actualizar stock de un producto
-  async actualizarStock(
-    productoId: string, 
-    nuevoStock: number,
-    token?: string | null,
-    sede_id?: string | null
-  ): Promise<boolean> {
-    try {
-      const actualToken = token || sessionStorage.getItem("access_token");
-      const actualSedeId = sede_id || sessionStorage.getItem("beaux-sede_id");
-      
-      if (!actualSedeId) {
-        throw new Error("No se encontró sede_id");
-      }
-
-      const response = await fetch(`${API_BASE_URL}inventary/inventarios/actualizar-stock/`, {
-        method: "POST",
-        headers: this.getHeaders(actualToken),
-        body: JSON.stringify({
-          producto_id: productoId,
-          sede_id: actualSedeId,
-          nuevo_stock: nuevoStock,
-        }),
-      });
-
-      return response.ok;
-      
-    } catch (error) {
-      console.error("Error actualizando stock:", error);
-      return false;
   // Ajuste de stock: backend espera cantidad_ajuste (delta = nuevoValor - valorActual).
   // PATCH .../inventary/inventarios/inventarios/{inventario_id}/ajustar
   async ajustarInventario(
@@ -186,15 +151,6 @@ export class InventarioService {
     try {
       // Obtener todos los productos del inventario
       let productos = await this.getInventarioUsuario(
-        filtros.stockBajo, 
-        token, 
-        sede_id
-      );
-      
-      // Aplicar filtros
-      if (filtros.searchTerm) {
-        const searchLower = filtros.searchTerm.toLowerCase();
-        productos = productos.filter(producto => 
         filtros.stockBajo,
         token,
         sede_id
@@ -209,15 +165,6 @@ export class InventarioService {
           producto.producto_codigo.toLowerCase().includes(searchLower)
         );
       }
-      
-      if (filtros.categoria && filtros.categoria !== "all") {
-        productos = productos.filter(producto => 
-          producto.categoria === filtros.categoria
-        );
-      }
-      
-      return productos;
-      
 
       if (filtros.categoria && filtros.categoria !== "all") {
         productos = productos.filter(producto =>
