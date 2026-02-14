@@ -127,7 +127,7 @@ async def resolve_cita_by_id(cita_id: str) -> Optional[dict]:
         return None
 
 # ============================================================
-# ENDPOINT OBTENER CITAS (con cálculos en tiempo real)
+# ENDPOINT OBTENER CITAS (con cálculos en tiempo real) con fecha
 # ============================================================
 @router.get("/", response_model=dict)
 async def obtener_citas(
