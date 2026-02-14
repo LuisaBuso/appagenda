@@ -5,8 +5,8 @@
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import secrets
-
 from bson import ObjectId
+from datetime import datetime
 
 # ============================================================
 # GENERADORES DE IDs
@@ -306,7 +306,6 @@ def convertir_moneda(monto: float, de: str, a: str, tasas: Dict[str, float]) -> 
         return monto_usd * tasas.get(a, 1)
     else:
         return monto_usd
-    
 
 # ============================================================
 # HELPER PARA SERIALIZACIÓN JSON
