@@ -22,7 +22,7 @@ router = APIRouter(
 
 def verificar_permisos_liquidacion(user: dict):
     """Verifica que el usuario tenga permisos para liquidar"""
-    roles_permitidos = ["superadmin", "admin_sede"]
+    roles_permitidos = ["super_admin", "admin_sede"]
     if user.get("rol") not in roles_permitidos:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -100,7 +100,7 @@ def construir_query_filtros(user: dict, filtros: Optional[dict] = None):
     if filtros.get("profesional_id"):
         query["profesional_id"] = filtros["profesional_id"]
     
-    if filtros.get("sede_id") and user.get("rol") == "superadmin":
+    if filtros.get("sede_id") and user.get("rol") == "super_admin":
         query["sede_id"] = filtros["sede_id"]
     
     if filtros.get("estado"):
