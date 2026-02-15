@@ -1,28 +1,33 @@
 # ============================================================
-# routes_cash.py - VERSIÓN FINAL CORREGIDA
-# Todos los ObjectId convertidos a string
+# routes_cash.py - REFACTORIZADO CON LÓGICA CONTABLE CORRECTA
+# Ubicación: app/cash/routes_cash.py
 # ============================================================
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from typing import Optional, List
-from datetime import datetime, timedelta
-from bson import ObjectId
+from datetime import datetime
 
-# ============================================================
-# IMPORTACIONES CORREGIDAS PARA TU PROYECTO
-# ============================================================
+# Importar lógica contable separada
+from .accounting_logic import (
+    calcular_resumen_dia,
+    obtener_ventas_dia,        # ← NUEVO
+    obtener_egresos_dia,          # ← NUEVO
+    obtener_movimientos_efectivo_dia  # ← NUEVO
+)
 
-# Importar modelos y utilidades del mismo paquete
+# Importar generador de Excel
+from .excel_generator import generar_reporte_excel_caja_completo, generar_nombre_archivo_excel
+
+# Importar modelos y utilidades
 from .models_cash import (
     AperturaCajaRequest, RegistroEgresoRequest, CierreCajaRequest,
-    ResumenEfectivoResponse, EgresoResponse, CierreResponse,
-    DetalleIngresos, DetalleEgresos
+    EgresoResponse, CierreResponse
 )
 from .utils_cash import (
     generar_cierre_id, generar_egreso_id, generar_apertura_id,
-    obtener_rango_fecha, calcular_diferencia, agrupar_egresos_por_tipo,
-    validar_diferencia_aceptable, construir_filtro_fecha,
-    convertir_mongo_a_json  # ← NUEVA FUNCIÓN HELPER
+    calcular_diferencia, validar_diferencia_aceptable,
+    construir_filtro_fecha, convertir_mongo_a_json
 )
 
 # Importar autenticación
@@ -31,161 +36,77 @@ from app.auth.routes import get_current_user
 # Importar colecciones
 from app.database.mongo import (
     db,
-    collection_citas as appointments,
-    collection_sales as sales,
     collection_locales as locales
 )
 
 router = APIRouter(prefix="/cash", tags=["Cash Management"])
 
-# Nuevas colecciones
+# Colecciones
 cash_expenses = db["cash_expenses"]
 cash_closures = db["cash_closures"]
 
 # ============================================================
-# 1. CALCULAR EFECTIVO DEL DÍA
+# 1. CALCULAR EFECTIVO DEL DÍA (REFACTORIZADO ✅)
 # ============================================================
 
-@router.get("/efectivo-dia", response_model=ResumenEfectivoResponse)
-async def calcular_efectivo_dia(
+@router.get("/efectivo-dia")
+async def calcular_efectivo_dia_endpoint(
     sede_id: str = Query(..., description="ID de la sede"),
     fecha: Optional[str] = Query(None, description="Fecha (YYYY-MM-DD), default: hoy"),
     current_user: dict = Depends(get_current_user)
 ):
-    """Calcula el efectivo del día consultando directamente appointments y sales."""
+    """
+    Calcula el efectivo del día con criterio contable correcto.
+    
+    ✅ CRITERIO CONTABLE:
+    - Solo suma pagos con metodo == "efectivo" del historial_pagos
+    - NO suma valor_total completo
+    - NO duplica productos (ya están en historial_pagos)
+    - Discrimina ingresos por método de pago
+    
+    Returns:
+        {
+            "sede_id": "SD-88809",
+            "fecha": "2026-02-09",
+            "efectivo_inicial": 100000,
+            "ingresos_efectivo": {
+                "citas": 127400,
+                "ventas": 77400,
+                "total": 204800
+            },
+            "ingresos_otros_metodos": {
+                "tarjeta": 185000,
+                "transferencia": 0,
+                "total": 185000
+            },
+            "egresos": {...},
+            "efectivo_esperado": 304800,
+            "total_vendido": 389800
+        }
+    """
     
     if not fecha:
         fecha = datetime.now().strftime("%Y-%m-%d")
     
-    # Obtener nombre de sede
-    sede = await locales.find_one({"sede_id": sede_id})
-    sede_nombre = sede.get("nombre") if sede else "Sede desconocida"
+    # Usar lógica contable separada
+    resumen = await calcular_resumen_dia(sede_id, fecha)
     
-    # Calcular ingresos de citas
-    pipeline_citas = [
-        {
-            "$match": {
-                "sede_id": sede_id,
-                "fecha": fecha,
-                "estado_pago": "pagado",
-                "$or": [
-                    {"metodo_pago_actual": "efectivo"},
-                    {"metodo_pago_inicial": "efectivo"}
-                ]
-            }
-        },
-        {
-            "$group": {
-                "_id": None,
-                "total": {"$sum": "$valor_total"},
-                "cantidad": {"$sum": 1}
-            }
-        }
-    ]
+    # Verificar si hay cierre
+    cierre = await cash_closures.find_one({
+        "sede_id": sede_id,
+        "fecha": fecha,
+        "tipo": "cierre"
+    })
     
-    resultado_citas = await appointments.aggregate(pipeline_citas, allowDiskUse=True).to_list(None)
-    total_citas = resultado_citas[0]["total"] if resultado_citas else 0
-    cantidad_citas = resultado_citas[0]["cantidad"] if resultado_citas else 0
+    if cierre:
+        resumen["efectivo_contado"] = cierre.get("efectivo_contado")
+        resumen["diferencia"] = cierre.get("diferencia")
+        resumen["estado"] = cierre.get("estado")
     
-    # Calcular productos en citas
-    pipeline_productos = [
-        {
-            "$match": {
-                "sede_id": sede_id,
-                "fecha": fecha,
-                "$or": [
-                    {"metodo_pago_actual": "efectivo"},
-                    {"metodo_pago_inicial": "efectivo"}
-                ],
-                "productos": {"$exists": True, "$ne": []}
-            }
-        },
-        {"$unwind": "$productos"},
-        {
-            "$group": {
-                "_id": None,
-                "total": {"$sum": "$productos.subtotal"},
-                "cantidad": {"$sum": 1}
-            }
-        }
-    ]
-    
-    resultado_productos = await appointments.aggregate(pipeline_productos, allowDiskUse=True).to_list(None)
-    total_productos_citas = resultado_productos[0]["total"] if resultado_productos else 0
-    cantidad_productos = resultado_productos[0]["cantidad"] if resultado_productos else 0
-    
-    # Calcular ventas de productos
-    fecha_inicio, fecha_fin = obtener_rango_fecha(fecha)
-    
-    pipeline_ventas = [
-        {
-            "$match": {
-                "sede_id": sede_id,
-                "fecha_pago": {"$gte": fecha_inicio, "$lte": fecha_fin}
-            }
-        },
-        {"$unwind": "$historial_pagos"},
-        {"$match": {"historial_pagos.metodo": "efectivo"}},
-        {
-            "$group": {
-                "_id": None,
-                "total": {"$sum": "$historial_pagos.monto"},
-                "cantidad": {"$sum": 1}
-            }
-        }
-    ]
-    
-    resultado_ventas = await sales.aggregate(pipeline_ventas, allowDiskUse=True).to_list(None)
-    total_ventas = resultado_ventas[0]["total"] if resultado_ventas else 0
-    cantidad_ventas = resultado_ventas[0]["cantidad"] if resultado_ventas else 0
-    
-    # Calcular egresos
-    egresos = await cash_expenses.find({"sede_id": sede_id, "fecha": fecha}).to_list(None)
-    egresos_agrupados = agrupar_egresos_por_tipo(egresos)
-    total_egresos = sum(cat["total"] for cat in egresos_agrupados.values())
-    
-    # Calcular totales
-    total_ingresos = total_citas + total_ventas + total_productos_citas
-    efectivo_esperado = total_ingresos - total_egresos
-    
-    # Verificar apertura
-    apertura = await cash_closures.find_one({"sede_id": sede_id, "fecha": fecha, "tipo": "apertura"})
-    efectivo_inicial = apertura.get("efectivo_inicial", 0) if apertura else 0
-    efectivo_esperado_final = efectivo_inicial + efectivo_esperado
-    
-    # Verificar cierre
-    cierre = await cash_closures.find_one({"sede_id": sede_id, "fecha": fecha, "tipo": "cierre"})
-    efectivo_contado = cierre.get("efectivo_contado") if cierre else None
-    diferencia = cierre.get("diferencia") if cierre else None
-    estado = cierre.get("estado") if cierre else "abierto"
-    
-    return ResumenEfectivoResponse(
-        sede_id=sede_id,
-        sede_nombre=sede_nombre,
-        fecha=fecha,
-        moneda="USD",
-        efectivo_inicial=efectivo_inicial,
-        ingresos=DetalleIngresos(
-            citas={"total": total_citas, "cantidad": cantidad_citas},
-            ventas={"total": total_ventas, "cantidad": cantidad_ventas},
-            productos_citas={"total": total_productos_citas, "cantidad": cantidad_productos},
-            total=total_ingresos
-        ),
-        egresos=DetalleEgresos(
-            compras_internas=egresos_agrupados["compras_internas"],
-            gastos_operativos=egresos_agrupados["gastos_operativos"],
-            retiros_caja=egresos_agrupados["retiros_caja"],
-            otros=egresos_agrupados["otros"],
-            total=total_egresos
-        ),
-        efectivo_esperado=efectivo_esperado_final,
-        efectivo_contado=efectivo_contado,
-        diferencia=diferencia,
-        estado=estado
-    )
+    return resumen
 
 # ============================================================
-# 2. REGISTRAR EGRESO
+# 2. REGISTRAR EGRESO (SIN CAMBIOS)
 # ============================================================
 
 @router.post("/egreso", response_model=EgresoResponse, status_code=status.HTTP_201_CREATED)
@@ -244,7 +165,7 @@ async def registrar_egreso(
     )
 
 # ============================================================
-# 3. LISTAR EGRESOS
+# 3. LISTAR EGRESOS (SIN CAMBIOS)
 # ============================================================
 
 @router.get("/egresos", response_model=List[EgresoResponse])
@@ -289,7 +210,7 @@ async def listar_egresos(
     ]
 
 # ============================================================
-# 4. APERTURA DE CAJA
+# 4. APERTURA DE CAJA (SIN CAMBIOS)
 # ============================================================
 
 @router.post("/apertura", status_code=status.HTTP_201_CREATED)
@@ -345,7 +266,7 @@ async def apertura_caja(
     }
 
 # ============================================================
-# 5. CERRAR CAJA
+# 5. CERRAR CAJA (REFACTORIZADO ✅)
 # ============================================================
 
 @router.post("/cierre", response_model=CierreResponse, status_code=status.HTTP_201_CREATED)
@@ -353,7 +274,11 @@ async def cerrar_caja(
     cierre: CierreCajaRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """Cierra la caja del día registrando el efectivo físico contado."""
+    """
+    Cierra la caja del día con criterio contable correcto.
+    
+    ✅ Usa la lógica contable refactorizada
+    """
     
     cierre_existente = await cash_closures.find_one({
         "sede_id": cierre.sede_id,
@@ -367,13 +292,10 @@ async def cerrar_caja(
             detail=f"Ya existe un cierre de caja para {cierre.sede_id} el {cierre.fecha}"
         )
     
-    resumen = await calcular_efectivo_dia(
-        sede_id=cierre.sede_id,
-        fecha=cierre.fecha,
-        current_user=current_user
-    )
+    # Usar lógica contable refactorizada
+    resumen = await calcular_resumen_dia(cierre.sede_id, cierre.fecha)
     
-    diferencia = calcular_diferencia(resumen.efectivo_esperado, cierre.efectivo_contado)
+    diferencia = calcular_diferencia(resumen["efectivo_esperado"], cierre.efectivo_contado)
     es_aceptable, mensaje_validacion = validar_diferencia_aceptable(diferencia)
     
     if cierre.desglose_fisico:
@@ -381,36 +303,25 @@ async def cerrar_caja(
         if abs(total_desglose - cierre.efectivo_contado) > 0.01:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"El desglose físico (${total_desglose}) no coincide con el efectivo contado (${cierre.efectivo_contado})"
+                detail=f"El desglose físico no coincide con el efectivo contado"
             )
-    
-    sede = await locales.find_one({"sede_id": cierre.sede_id})
-    sede_nombre = sede.get("nombre") if sede else None
     
     cierre_doc = {
         "cierre_id": generar_cierre_id(cierre.sede_id, cierre.fecha),
         "tipo": "cierre",
         "sede_id": cierre.sede_id,
-        "sede_nombre": sede_nombre,
+        "sede_nombre": resumen["sede_nombre"],
         "fecha": cierre.fecha,
         "moneda": cierre.moneda.value,
-        "efectivo_inicial": resumen.efectivo_inicial,
-        "total_ingresos": resumen.ingresos.total,
-        "total_egresos": resumen.egresos.total,
-        "efectivo_esperado": resumen.efectivo_esperado,
+        "efectivo_inicial": resumen["efectivo_inicial"],
+        "total_ingresos": resumen["ingresos_efectivo"]["total"],
+        "total_egresos": resumen["egresos"]["total"],
+        "efectivo_esperado": resumen["efectivo_esperado"],
         "efectivo_contado": cierre.efectivo_contado,
         "diferencia": diferencia,
-        "ingresos_detalle": {
-            "citas": resumen.ingresos.citas,
-            "ventas": resumen.ingresos.ventas,
-            "productos_citas": resumen.ingresos.productos_citas
-        },
-        "egresos_detalle": {
-            "compras_internas": resumen.egresos.compras_internas,
-            "gastos_operativos": resumen.egresos.gastos_operativos,
-            "retiros_caja": resumen.egresos.retiros_caja,
-            "otros": resumen.egresos.otros
-        },
+        "ingresos_detalle": resumen["ingresos_efectivo"],
+        "ingresos_otros_metodos": resumen["ingresos_otros_metodos"],
+        "egresos_detalle": resumen["egresos"],
         "desglose_fisico": [item.dict() for item in cierre.desglose_fisico] if cierre.desglose_fisico else None,
         "estado": "cerrado",
         "diferencia_aceptable": es_aceptable,
@@ -454,7 +365,7 @@ async def cerrar_caja(
     )
 
 # ============================================================
-# 6. LISTAR CIERRES
+# 6. LISTAR CIERRES (SIN CAMBIOS)
 # ============================================================
 
 @router.get("/cierres", response_model=List[CierreResponse])
@@ -501,7 +412,7 @@ async def listar_cierres(
     ]
 
 # ============================================================
-# 7. VER DETALLE DE CIERRE (CORREGIDO ✅)
+# 7. VER DETALLE DE CIERRE (SIN CAMBIOS)
 # ============================================================
 
 @router.get("/cierres/{cierre_id}")
@@ -519,13 +430,12 @@ async def obtener_cierre(
             detail=f"Cierre {cierre_id} no encontrado"
         )
     
-    # ✅ CONVERTIR ObjectId a string
     cierre = convertir_mongo_a_json(cierre)
     
     return cierre
 
 # ============================================================
-# 8. ELIMINAR EGRESO
+# 8. ELIMINAR EGRESO (SIN CAMBIOS)
 # ============================================================
 
 @router.delete("/egresos/{egreso_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -560,7 +470,7 @@ async def eliminar_egreso(
     return None
 
 # ============================================================
-# 9. REPORTE DE PERIODO (CORREGIDO ✅)
+# 9. REPORTE DE PERIODO (CORREGIDO)
 # ============================================================
 
 @router.get("/reporte-periodo")
@@ -578,10 +488,8 @@ async def reporte_periodo(
         "tipo": "cierre"
     }).sort("fecha", 1).to_list(None)
     
-    # ✅ CONVERTIR ObjectId a string en todos los documentos
     cierres_list = [convertir_mongo_a_json(c) for c in cierres_list]
     
-    # Calcular totales
     total_ingresos = sum(c.get("total_ingresos", 0) for c in cierres_list)
     total_egresos = sum(c.get("total_egresos", 0) for c in cierres_list)
     total_diferencias = sum(c.get("diferencia", 0) for c in cierres_list)
@@ -601,3 +509,78 @@ async def reporte_periodo(
         },
         "cierres": cierres_list
     }
+
+# ============================================================
+# 10. DESCARGAR REPORTE EXCEL (NUEVO ⭐)
+# ============================================================
+
+@router.get("/reporte-excel")
+async def descargar_reporte_excel(
+    sede_id: str = Query(..., description="ID de la sede"),
+    fecha: str = Query(..., description="Fecha del cierre (YYYY-MM-DD)"),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Descarga el reporte de cierre de caja en formato Excel con 4 hojas:
+    
+    1. Resumen de Caja - Efectivo inicial, ingresos/egresos, saldo final
+    2. Flujo de Ingresos - TODAS las ventas (todos los métodos de pago) desde sales
+    3. Flujo de Egresos - Todos los egresos del día
+    4. Movimientos Efectivo - Solo efectivo con saldo corrido
+    
+    ✅ Usa collection_sales (compatible con datos nuevos y migrados)
+    ✅ Formato contable profesional
+    ✅ Archivo descargable
+    """
+    
+    # 1. Obtener resumen del día
+    resumen = await calcular_resumen_dia(sede_id, fecha)
+    
+    # 2. Obtener información completa de la sede
+    sede = await locales.find_one({"sede_id": sede_id})
+    if not sede:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sede {sede_id} no encontrada"
+        )
+    
+    sede_info = {
+        "razon_social": sede.get("razon_social", "SALÓN RIZOS FELICES CL SAS"),
+        "direccion": sede.get("direccion", ""),
+        "ciudad": sede.get("ciudad", ""),
+        "pais": sede.get("pais", "")
+    }
+    
+    # 3. Obtener todas las ventas del día (todos los métodos) desde SALES
+    ventas = await obtener_ventas_dia(sede_id, fecha)  # ← CAMBIO AQUÍ
+    
+    # 4. Obtener todos los egresos del día
+    egresos = await obtener_egresos_dia(sede_id, fecha)
+    
+    # 5. Obtener movimientos en efectivo con saldo corrido
+    movimientos_efectivo = await obtener_movimientos_efectivo_dia(sede_id, fecha)
+    
+    # 6. Agregar quien genera el reporte
+    resumen["generado_por"] = current_user.get("email")
+    
+    # 7. Generar Excel con 4 hojas
+    excel_file = generar_reporte_excel_caja_completo(
+        resumen=resumen,
+        sede_info=sede_info,
+        facturas=ventas,  # ← Ahora son ventas de sales, no facturas de invoices
+        egresos=egresos,
+        movimientos_efectivo=movimientos_efectivo
+    )
+    
+    # 8. Nombre del archivo
+    nombre_sede = sede.get("nombre", sede_id).replace(" ", "_")
+    filename = generar_nombre_archivo_excel(nombre_sede, fecha)
+    
+    # 9. Retornar como descarga
+    return StreamingResponse(
+        excel_file,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}"
+        }
+    )

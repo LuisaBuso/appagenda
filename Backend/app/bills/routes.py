@@ -260,22 +260,35 @@ async def facturar_cita_o_venta(
     # ====================================
     # 7️⃣ PREPARAR HISTORIAL Y DESGLOSE DE PAGOS
     # ====================================
-    metodo_pago = documento.get("metodo_pago_actual") or documento.get("metodo_pago", "efectivo")
-    
-    historial_pagos = [{
-        "fecha": fecha_actual,
-        "monto": round(total_final, 2),
-        "metodo": metodo_pago,
-        "tipo": "pago_total",
-        "registrado_por": current_user.get("email"),
-        "saldo_despues": 0,
-        "notas": f"Pago total al facturar {tipo}"
-    }]
+    # 1️⃣ Tomar el historial REAL (fuente de verdad)
+    historial_pagos = documento.get("historial_pagos", [])
 
-    desglose_pagos = {
-        metodo_pago: round(total_final, 2),
-        "total": round(total_final, 2)
-    }
+    if not historial_pagos:
+        raise ValueError("No se puede facturar sin historial de pagos")
+    
+    # 2️⃣ Construir desglose a partir del historial
+    desglose_pagos = {}
+    total_pagado = 0.0
+
+    
+    for pago in historial_pagos:
+        metodo = pago.get("metodo")
+        monto = float(pago.get("monto", 0))
+
+        if not metodo or monto <= 0:
+            continue
+
+        desglose_pagos[metodo] = round(
+        desglose_pagos.get(metodo, 0) + monto, 2
+        )
+        total_pagado += monto
+
+    desglose_pagos["total"] = round(total_pagado, 2)
+
+    if round(total_pagado, 2) != round(total_final, 2):
+        raise ValueError(
+            f"Inconsistencia de pagos: pagado={total_pagado}, total_factura={total_final}"
+    )
 
     # ====================================
     # 8️⃣ CREAR/ACTUALIZAR VENTA EN SALES
@@ -372,7 +385,8 @@ async def facturar_cita_o_venta(
         "monto": total_final,
         "profesional_id": profesional_id,
         "profesional_nombre": profesional_nombre,
-        "metodo_pago": metodo_pago,
+        "historial_pagos": historial_pagos,
+        "desglose_pagos": desglose_pagos,
         "facturado_por": current_user.get("email"),
         "estado": "pagado"
     }
