@@ -1,6 +1,7 @@
 """
 Routes para Dashboard de Ventas (Financiero)
 💰 MÉTRICAS REALES: Basadas únicamente en ventas pagadas
+💱 MULTI-MONEDA: Soporte dinámico para COP, USD, MXN
 """
 from fastapi import APIRouter, Query, HTTPException, Depends
 from datetime import datetime, timedelta
@@ -123,6 +124,10 @@ def calcular_metricas_financieras(ventas: List[Dict]) -> Dict:
     """
     Calcula métricas financieras correctas por moneda.
     
+    💱 MULTI-MONEDA: 
+    - Detecta automáticamente COP, USD, MXN
+    - Solo muestra monedas con datos
+    
     🎯 FUENTES:
     - ventas → Total vendido, servicios vs productos, métodos de pago
     
@@ -152,7 +157,12 @@ def calcular_metricas_financieras(ventas: List[Dict]) -> Dict:
                     "transferencia": 0,
                     "tarjeta": 0,
                     "sin_pago": 0,
-                    "otros": 0
+                    "otros": 0,
+                    "addi": 0,
+                    "giftcard": 0,
+                    "link_de_pago": 0,
+                    "tarjeta_credito": 0,
+                    "tarjeta_debito": 0,
                 }
             }
         
@@ -175,7 +185,7 @@ def calcular_metricas_financieras(ventas: List[Dict]) -> Dict:
                 metricas_por_moneda[moneda]["ventas_productos"] += subtotal
         
         # Métodos de pago desde desglose_pagos
-        for metodo in ["efectivo", "transferencia", "tarjeta", "sin_pago", "otros"]:
+        for metodo in ["efectivo", "transferencia","tarjeta", "tarjeta_credito", "tarjeta_debito", "link_de_pago", "giftcard", "addi", "otros"]:
             valor = desglose_pagos.get(metodo, 0)
             if valor > 0:
                 metricas_por_moneda[moneda]["metodos_pago"][metodo] += valor
@@ -234,6 +244,66 @@ def calcular_crecimiento(
     return crecimientos
 
 
+def obtener_info_monedas(monedas_detectadas: List[str], metricas: Dict) -> List[Dict]:
+    """
+    Genera información detallada de las monedas detectadas.
+    
+    💱 Soportadas: COP, USD, MXN
+    """
+    info_monedas_catalogo = {
+        "COP": {
+            "nombre": "Peso Colombiano",
+            "nombre_corto": "Pesos COP",
+            "simbolo": "$",
+            "codigo": "COP",
+            "pais": "Colombia",
+            "bandera": "🇨🇴"
+        },
+        "USD": {
+            "nombre": "Dólar Estadounidense",
+            "nombre_corto": "Dólares",
+            "simbolo": "$",
+            "codigo": "USD",
+            "pais": "Estados Unidos",
+            "bandera": "🇺🇸"
+        },
+        "MXN": {
+            "nombre": "Peso Mexicano",
+            "nombre_corto": "Pesos MXN",
+            "simbolo": "$",
+            "codigo": "MXN",
+            "pais": "México",
+            "bandera": "🇲🇽"
+        }
+    }
+    
+    monedas_info = []
+    for moneda in monedas_detectadas:
+        info_base = info_monedas_catalogo.get(
+            moneda,
+            {
+                "nombre": moneda,
+                "nombre_corto": moneda,
+                "simbolo": "",
+                "codigo": moneda,
+                "pais": "Desconocido",
+                "bandera": "🏳️"
+            }
+        )
+        
+        metricas_moneda = metricas.get(moneda, {})
+        
+        monedas_info.append({
+            **info_base,
+            "ventas_totales": metricas_moneda.get("ventas_totales", 0),
+            "cantidad_ventas": metricas_moneda.get("cantidad_ventas", 0),
+            "ticket_promedio": metricas_moneda.get("ticket_promedio", 0),
+            "crecimiento": metricas_moneda.get("crecimiento_ventas", "0%")
+        })
+    
+    return monedas_info
+
+
 @router.get("/dashboard")
 async def ventas_dashboard(
     period: str = Query(
@@ -258,6 +328,11 @@ async def ventas_dashboard(
     Dashboard de ventas (financiero) con métricas REALES.
     
     🔒 REQUIERE AUTENTICACIÓN
+    
+    💱 MULTI-MONEDA:
+    - Separa automáticamente COP, USD, MXN
+    - Solo muestra monedas con ventas
+    - Métricas independientes por moneda
     
     🎯 FUENTE DE DATOS:
     - collection_sales → Total vendido (desglose_pagos.total)
@@ -398,11 +473,15 @@ async def ventas_dashboard(
         else:
             calidad_datos = "BUENA"
         
+        # ========= INFORMACIÓN DE MONEDAS =========
+        monedas_detectadas = list(metricas_actuales.keys())
+        monedas_info = obtener_info_monedas(monedas_detectadas, metricas_actuales)
+        
         # ========= RESPUESTA =========
         response = {
             "success": True,
-            "tipo_dashboard": "financiero",
-            "descripcion": "Métricas basadas únicamente en ventas pagadas",
+            "tipo_dashboard": "financiero_multimoneda",
+            "descripcion": "Métricas basadas únicamente en ventas pagadas, separadas por moneda",
             "fuentes": {
                 "ventas": "collection_sales (desglose_pagos.total)"
             },
@@ -418,9 +497,16 @@ async def ventas_dashboard(
                 "dias": dias_periodo
             },
             "sede_id": sede_id,
+            "monedas": {
+                "detectadas": monedas_detectadas,
+                "cantidad": len(monedas_detectadas),
+                "resumen": monedas_info,
+                "nota": "Solo se muestran monedas con ventas en el período"
+            },
             "metricas_por_moneda": metricas_actuales,
             "debug_info": {
-                "ventas_registradas": len(ventas_actuales)
+                "ventas_registradas": len(ventas_actuales),
+                "monedas_en_ventas": monedas_detectadas
             },
             "calidad_datos": calidad_datos
         }
@@ -432,6 +518,7 @@ async def ventas_dashboard(
             f"✅ Dashboard ventas generado - "
             f"Período: {dias_periodo} días, "
             f"Ventas: {len(ventas_actuales)}, "
+            f"Monedas: {', '.join(monedas_detectadas)}, "
             f"Calidad: {calidad_datos}"
         )
         
@@ -445,6 +532,47 @@ async def ventas_dashboard(
             status_code=500,
             detail=f"Error al generar dashboard de ventas: {str(e)}"
         )
+
+
+@router.get("/dashboard/monedas")
+async def get_monedas_soportadas():
+    """
+    Lista de monedas soportadas por el dashboard.
+    
+    💱 Las métricas se calculan independientemente para cada moneda.
+    """
+    return {
+        "monedas_soportadas": [
+            {
+                "codigo": "COP",
+                "nombre": "Peso Colombiano",
+                "nombre_corto": "Pesos COP",
+                "simbolo": "$",
+                "pais": "Colombia",
+                "bandera": "🇨🇴",
+                "activa": True
+            },
+            {
+                "codigo": "USD",
+                "nombre": "Dólar Estadounidense",
+                "nombre_corto": "Dólares",
+                "simbolo": "$",
+                "pais": "Estados Unidos",
+                "bandera": "🇺🇸",
+                "activa": True
+            },
+            {
+                "codigo": "MXN",
+                "nombre": "Peso Mexicano",
+                "nombre_corto": "Pesos MXN",
+                "simbolo": "$",
+                "pais": "México",
+                "bandera": "🇲🇽",
+                "activa": True
+            }
+        ],
+        "nota": "El dashboard detecta y muestra dinámicamente solo las monedas con ventas"
+    }
 
 
 @router.get("/dashboard/periods")

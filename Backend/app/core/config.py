@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware  # Importa el middleware CORS
+from contextlib import asynccontextmanager
+from app.cash.scheduler import iniciar_scheduler, detener_scheduler
 from dotenv import load_dotenv
 
 # Importar routers de cada módulo
@@ -30,11 +32,11 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",
         "http://127.0.0.1:3000",
         "https://agenda.rizosfelices.co",
         "https://staging-agenda.rizosfelices.co",
         "https://preview.agenda.rizosfelices.co",
+        "https://previewapi.rizosfelices.co",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -48,6 +50,15 @@ async def read_root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await iniciar_scheduler()
+    yield
+    # Shutdown
+    detener_scheduler()
+
 
 
 # @app.on_event("startup")
