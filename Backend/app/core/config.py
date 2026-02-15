@@ -32,7 +32,6 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",
         "http://127.0.0.1:3000",
         "https://agenda.rizosfelices.co",
         "https://staging-agenda.rizosfelices.co",
@@ -60,7 +59,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     detener_scheduler()
 
-app = FastAPI(lifespan=lifespan)
+
 
 # @app.on_event("startup")
 # async def startup_event():
