@@ -173,6 +173,14 @@ function App() {
                 </PrivateRoute>
               }
             />
+            <Route
+              path="/superadmin/cierre-caja"
+              element={
+                <PrivateRoute allowedRoles={["super_admin"]} allowedCurrencies={["COP"]}>
+                  <CierreCajaPage />
+                </PrivateRoute>
+              }
+            />
 
 
             {/* --- ADMIN SEDE --- */}
