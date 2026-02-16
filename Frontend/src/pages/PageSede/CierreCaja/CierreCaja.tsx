@@ -70,6 +70,7 @@ export default function CierreCajaPage() {
   const [moneda, setMoneda] = useState("COP");
   const [sedeId, setSedeId] = useState<string | null>(null);
   const [sedeNombre, setSedeNombre] = useState<string | null>(null);
+  const monedaSede = String(moneda || "COP").toUpperCase();
 
   const [fechaDesde, setFechaDesde] = useState(getDateNDaysAgo(7));
   const [fechaHasta, setFechaHasta] = useState(getToday());
@@ -114,7 +115,7 @@ export default function CierreCajaPage() {
     setSedeId(sedeStorage);
     setSedeNombre(sedeNombreStorage);
     if (monedaStorage) {
-      setMoneda(monedaStorage);
+      setMoneda(monedaStorage.toUpperCase());
     }
   }, []);
 
@@ -131,19 +132,22 @@ export default function CierreCajaPage() {
     try {
       return new Intl.NumberFormat("es-CO", {
         style: "currency",
-        currency: moneda,
+        currency: monedaSede,
         minimumFractionDigits: 0,
       }).format(value);
     } catch (error) {
-      return `${moneda} ${value.toFixed(0)}`;
+      return `${monedaSede} ${value.toFixed(0)}`;
     }
   };
 
   const normalizeResumen = (data: CashReporteRaw): CashResumen => {
-    const root = unwrapData(data);
+    const root = unwrapData(data) || {};
     const summary = root?.resumen ?? root?.summary ?? root;
+    const periodTotals = root?.totales;
 
     const ingresos =
+      pickNumber(periodTotals, ["ingresos", "total_ingresos", "ventas", "total_ventas"]) ??
+      pickNumber(root?.ingresos_efectivo, ["total"]) ??
       pickNumber(summary, [
         "ingresos_total",
         "total_ingresos",
@@ -156,6 +160,8 @@ export default function CierreCajaPage() {
       ]) ?? 0;
 
     const egresos =
+      pickNumber(periodTotals, ["egresos", "total_egresos"]) ??
+      pickNumber(root?.egresos, ["total"]) ??
       pickNumber(summary, [
         "egresos_total",
         "total_egresos",
@@ -164,6 +170,8 @@ export default function CierreCajaPage() {
       ]) ?? 0;
 
     const balance =
+      pickNumber(periodTotals, ["neto", "balance", "saldo"]) ??
+      pickNumber(root, ["efectivo_esperado"]) ??
       pickNumber(summary, ["balance", "saldo", "neto", "total_balance"]) ??
       ingresos - egresos;
 
@@ -171,7 +179,7 @@ export default function CierreCajaPage() {
       ingresos,
       egresos,
       balance,
-      moneda: summary?.moneda ?? root?.moneda ?? moneda,
+      moneda: summary?.moneda ?? root?.moneda ?? monedaSede,
     };
   };
 
@@ -246,11 +254,11 @@ export default function CierreCajaPage() {
           });
           setResumen(normalizeResumen(efectivo));
         } catch (innerErr) {
-          setResumen({ ingresos: 0, egresos: 0, balance: 0, moneda });
+          setResumen({ ingresos: 0, egresos: 0, balance: 0, moneda: monedaSede });
           setError("No se pudieron cargar los ingresos del período");
         }
       } else {
-        setResumen({ ingresos: 0, egresos: 0, balance: 0, moneda });
+        setResumen({ ingresos: 0, egresos: 0, balance: 0, moneda: monedaSede });
         setError("No se pudieron cargar los ingresos del período");
       }
     } finally {
@@ -301,10 +309,10 @@ export default function CierreCajaPage() {
   };
 
   useEffect(() => {
-    if (sedeId) {
+    if (sedeId && monedaSede === "COP") {
       loadAll();
     }
-  }, [sedeId, fechaDesde, fechaHasta]);
+  }, [sedeId, fechaDesde, fechaHasta, monedaSede]);
 
   const handleCreateEgreso = async () => {
     if (!sedeId) return;
@@ -336,6 +344,7 @@ export default function CierreCajaPage() {
         tipo: egresoTipo,
         concepto: egresoMotivo.trim(),
         fecha: egresoFecha,
+        moneda: monedaSede,
       });
 
       setEgresoMonto("");
@@ -390,6 +399,7 @@ export default function CierreCajaPage() {
         efectivo: montoValue,
         notas: aperturaNota.trim() || undefined,
         observaciones: aperturaNota.trim() || undefined,
+        moneda: monedaSede,
       });
 
       setAperturaMonto("");
@@ -417,20 +427,28 @@ export default function CierreCajaPage() {
     setSuccess(null);
 
     try {
+      const totalIngresos = resumen.ingresos || 0;
+      const totalEgresos = resumen.egresos || egresosTotal;
+      const efectivoEsperado = resumen.balance || balanceCalculado;
+
       await cashService.cierreCaja({
         sede_id: sedeId,
         fecha: cierreFecha,
         notas: cierreNota.trim() || undefined,
         observaciones: cierreNota.trim() || undefined,
-        ingresos_total: resumen.ingresos,
-        total_ingresos: resumen.ingresos,
-        efectivo_total: resumen.ingresos,
-        egresos_total: resumen.egresos || egresosTotal,
-        total_egresos: resumen.egresos || egresosTotal,
-        balance: balanceCalculado,
-        saldo: balanceCalculado,
-        efectivo_cierre: balanceCalculado,
-        efectivo_final: balanceCalculado,
+        moneda: monedaSede,
+        ingresos_total: totalIngresos,
+        total_ingresos: totalIngresos,
+        total_ventas: totalIngresos,
+        efectivo_total: totalIngresos,
+        efectivo_recibido: totalIngresos,
+        egresos_total: totalEgresos,
+        total_egresos: totalEgresos,
+        balance: efectivoEsperado,
+        saldo: efectivoEsperado,
+        efectivo_esperado: efectivoEsperado,
+        efectivo_cierre: efectivoEsperado,
+        efectivo_final: efectivoEsperado,
         efectivo_contado: efectivoContadoValue,
       });
 
@@ -448,6 +466,8 @@ export default function CierreCajaPage() {
     setFechaDesde(getDateNDaysAgo(days));
     setFechaHasta(getToday());
   };
+
+  if (monedaSede !== "COP") return null;
 
   return (
     <div className="flex h-screen bg-gray-50">

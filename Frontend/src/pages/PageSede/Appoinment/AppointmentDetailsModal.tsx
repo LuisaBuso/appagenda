@@ -25,7 +25,7 @@ interface PagoModalData {
   show: boolean;
   tipo: 'pago' | 'abono';
   monto: number;
-  metodoPago: 'efectivo' | 'tarjeta' | 'transferencia';
+  metodoPago: 'efectivo' | 'transferencia' | 'tarjeta' | 'tarjeta_credito' | 'tarjeta_debito' | 'addi';
 }
 
 interface Producto {
@@ -61,6 +61,16 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
   });
   const [registrandoPago, setRegistrandoPago] = useState(false);
   const [productos, setProductos] = useState<Producto[]>([]);
+  const sessionCurrency = typeof window !== 'undefined' ? sessionStorage.getItem("beaux-moneda") : null;
+  const userCurrency = String(user?.moneda || sessionCurrency || appointmentDetails?.rawData?.moneda || "USD").toUpperCase();
+  const isCopCurrency = userCurrency === "COP";
+
+  const sanitizeMetodoPago = (metodo: PagoModalData['metodoPago']): PagoModalData['metodoPago'] => {
+    if (!isCopCurrency && metodo === 'addi') {
+      return 'efectivo';
+    }
+    return metodo;
+  };
 
   useEffect(() => {
     if (open && appointment) {
@@ -75,6 +85,12 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
       }
     }
   }, [open, appointment]);
+
+  useEffect(() => {
+    if (!isCopCurrency && pagoModal.metodoPago === 'addi') {
+      setPagoModal((prev) => ({ ...prev, metodoPago: 'efectivo' }));
+    }
+  }, [isCopCurrency, pagoModal.metodoPago]);
 
   const getPagosData = () => {
     if (!appointmentDetails?.rawData) {
@@ -217,8 +233,9 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
       return;
     }
 
+    const metodoPagoSeguro = sanitizeMetodoPago(pagoModal.metodoPago);
     const confirmacion = confirm(
-      `¿Registrar ${pagoModal.tipo === 'pago' ? 'pago' : 'abono'} de $${pagoModal.monto} por ${pagoModal.metodoPago}?`
+      `¿Registrar ${pagoModal.tipo === 'pago' ? 'pago' : 'abono'} de $${pagoModal.monto} por ${metodoPagoSeguro}?`
     );
 
     if (!confirmacion) return;
@@ -229,7 +246,7 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
         appointmentDetails.id,
         {
           monto: pagoModal.monto,
-          metodo_pago: pagoModal.metodoPago
+          metodo_pago: metodoPagoSeguro
         },
         user.access_token
       );
@@ -241,7 +258,7 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
           abono: response.abono,
           saldo_pendiente: response.saldo_pendiente,
           estado_pago: response.estado_pago,
-          metodo_pago: pagoModal.metodoPago
+          metodo_pago: metodoPagoSeguro
         }
       }));
 
@@ -395,7 +412,7 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                 <label className="block text-[10px] font-medium text-gray-700 mb-0.5">
                   Método de pago *
                 </label>
-                <div className="grid grid-cols-3 gap-1">
+                <div className={`grid grid-cols-2 sm:grid-cols-3 ${isCopCurrency ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-1`}>
                   <button
                     type="button"
                     onClick={() => setPagoModal(prev => ({ ...prev, metodoPago: 'efectivo' }))}
@@ -409,17 +426,6 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setPagoModal(prev => ({ ...prev, metodoPago: 'tarjeta' }))}
-                    className={`p-1 rounded border flex flex-col items-center justify-center gap-0.5 text-[10px] ${
-                      pagoModal.metodoPago === 'tarjeta' ? 'border-black bg-gray-50' : 'border-gray-300 hover:border-gray-400'
-                    }`}
-                    disabled={registrandoPago}
-                  >
-                    <CreditCard className="w-3 h-3 text-gray-700" />
-                    <span className="font-medium">Tarjeta</span>
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => setPagoModal(prev => ({ ...prev, metodoPago: 'transferencia' }))}
                     className={`p-1 rounded border flex flex-col items-center justify-center gap-0.5 text-[10px] ${
                       pagoModal.metodoPago === 'transferencia' ? 'border-black bg-gray-50' : 'border-gray-300 hover:border-gray-400'
@@ -427,8 +433,43 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                     disabled={registrandoPago}
                   >
                     <Landmark className="w-3 h-3 text-gray-700" />
-                    <span className="font-medium">Transferencia</span>
+                    <span className="font-medium">Transfer.</span>
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setPagoModal(prev => ({ ...prev, metodoPago: 'tarjeta_credito' }))}
+                    className={`p-1 rounded border flex flex-col items-center justify-center gap-0.5 text-[10px] ${
+                      pagoModal.metodoPago === 'tarjeta_credito' ? 'border-black bg-gray-50' : 'border-gray-300 hover:border-gray-400'
+                    }`}
+                    disabled={registrandoPago}
+                  >
+                    <CreditCard className="w-3 h-3 text-gray-700" />
+                    <span className="font-medium">T. Crédito</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPagoModal(prev => ({ ...prev, metodoPago: 'tarjeta_debito' }))}
+                    className={`p-1 rounded border flex flex-col items-center justify-center gap-0.5 text-[10px] ${
+                      pagoModal.metodoPago === 'tarjeta_debito' ? 'border-black bg-gray-50' : 'border-gray-300 hover:border-gray-400'
+                    }`}
+                    disabled={registrandoPago}
+                  >
+                    <CreditCard className="w-3 h-3 text-gray-700" />
+                    <span className="font-medium">T. Débito</span>
+                  </button>
+                  {isCopCurrency && (
+                    <button
+                      type="button"
+                      onClick={() => setPagoModal(prev => ({ ...prev, metodoPago: 'addi' }))}
+                      className={`p-1 rounded border flex flex-col items-center justify-center gap-0.5 text-[10px] ${
+                        pagoModal.metodoPago === 'addi' ? 'border-black bg-gray-50' : 'border-gray-300 hover:border-gray-400'
+                      }`}
+                      disabled={registrandoPago}
+                    >
+                      <Wallet className="w-3 h-3 text-gray-700" />
+                      <span className="font-medium">Addi</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
