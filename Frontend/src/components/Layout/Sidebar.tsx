@@ -34,6 +34,7 @@ const navItems: NavItem[] = [
   { title: 'Estilistas', href: '/superadmin/stylists', icon: Users, roles: ['super_admin'] },
   { title: 'Servicios', href: '/superadmin/services', icon: Package, roles: ['super_admin'] },
   { title: 'Ventas Facturadas', href: '/superadmin/sales-invoices', icon: CreditCard, roles: ['super_admin'] },
+  { title: 'Cierre de Caja', href: '/superadmin/cierre-caja', icon: Wallet, roles: ['super_admin'], currencies: ['COP'] },
 
   { title: 'Dashboard', href: '/sede/dashboard', icon: LayoutDashboard, roles: ['admin_sede'] },
   { title: 'Agenda', href: '/sede/appointments', icon: Users, roles: ['admin_sede'] },

@@ -14,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../../components/ui/dialog";
-import { Calendar, Plus, Trash2, Wallet } from "lucide-react";
+import { Calendar, Download, Loader2, Plus, Trash2, Wallet } from "lucide-react";
 import { cashService } from "./api/cashService";
 import type { CashCierre, CashEgreso, CashResumen, CashReporteRaw } from "./types";
 import { formatDateDMY } from "../../../lib/dateFormat";
@@ -40,6 +40,11 @@ const normalizeDateRange = (start?: string, end?: string) => {
     return { start: end, end: start };
   }
   return { start, end };
+};
+
+const isISODate = (value?: string) => {
+  if (!value) return false;
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
 };
 
 const toNumber = (value: any): number => {
@@ -87,6 +92,7 @@ export default function CierreCajaPage() {
   const [loadingResumen, setLoadingResumen] = useState(false);
   const [loadingEgresos, setLoadingEgresos] = useState(false);
   const [loadingCierres, setLoadingCierres] = useState(false);
+  const [loadingReporte, setLoadingReporte] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
@@ -108,9 +114,12 @@ export default function CierreCajaPage() {
   const [cierreEfectivoContado, setCierreEfectivoContado] = useState("0");
 
   useEffect(() => {
-    const sedeStorage = sessionStorage.getItem("beaux-sede_id");
-    const sedeNombreStorage = sessionStorage.getItem("beaux-nombre_local");
-    const monedaStorage = sessionStorage.getItem("beaux-moneda");
+    const sedeStorage =
+      sessionStorage.getItem("beaux-sede_id") || localStorage.getItem("beaux-sede_id");
+    const sedeNombreStorage =
+      sessionStorage.getItem("beaux-nombre_local") || localStorage.getItem("beaux-nombre_local");
+    const monedaStorage =
+      sessionStorage.getItem("beaux-moneda") || localStorage.getItem("beaux-moneda");
 
     setSedeId(sedeStorage);
     setSedeNombre(sedeNombreStorage);
@@ -467,6 +476,61 @@ export default function CierreCajaPage() {
     setFechaHasta(getToday());
   };
 
+  const handleDownloadReporte = async () => {
+    if (!sedeId) {
+      setError("No se encontró la sede actual para descargar el reporte");
+      return;
+    }
+
+    if (!fechaDesde || !fechaHasta) {
+      setError("Selecciona fecha desde y fecha hasta para descargar el reporte");
+      return;
+    }
+
+    const { start, end } = normalizeDateRange(fechaDesde, fechaHasta);
+    if (!isISODate(start) || !isISODate(end)) {
+      setError("Formato de fecha inválido. Usa YYYY-MM-DD");
+      return;
+    }
+
+    setLoadingReporte(true);
+    setError(null);
+    setSuccess(null);
+
+    let objectUrl: string | null = null;
+    try {
+      const { blob, filename } = await cashService.getReporteExcel({
+        sede_id: sedeId,
+        // Compatibilidad con backend actual (requiere 'fecha')
+        fecha: end,
+        fecha_inicio: start,
+        fecha_fin: end,
+      });
+
+      if (!blob || blob.size === 0) {
+        throw new Error("El reporte no contiene datos para el período seleccionado");
+      }
+
+      objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = filename?.trim() || `reporte_cierre_${start}_${end}.xlsx`;
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      setSuccess("Reporte descargado correctamente");
+    } catch (err: any) {
+      setError(err?.message || "No se pudo descargar el reporte");
+    } finally {
+      if (objectUrl) {
+        window.URL.revokeObjectURL(objectUrl);
+      }
+      setLoadingReporte(false);
+    }
+  };
+
   if (monedaSede !== "COP") return null;
 
   return (
@@ -522,13 +586,36 @@ export default function CierreCajaPage() {
                   </Button>
                 </div>
               </div>
-              <Button
-                onClick={loadAll}
-                disabled={loadingResumen || loadingEgresos || loadingCierres}
-                className="bg-gray-900 hover:bg-gray-800 text-white"
-              >
-                Actualizar
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  onClick={loadAll}
+                  disabled={loadingResumen || loadingEgresos || loadingCierres || loadingReporte}
+                  className="bg-gray-900 hover:bg-gray-800 text-white"
+                >
+                  Actualizar
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleDownloadReporte}
+                  disabled={
+                    !sedeId ||
+                    !fechaDesde ||
+                    !fechaHasta ||
+                    loadingReporte ||
+                    loadingResumen ||
+                    loadingEgresos ||
+                    loadingCierres
+                  }
+                  className="border-gray-300 text-gray-900 hover:bg-gray-100"
+                >
+                  {loadingReporte ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="mr-2 h-4 w-4" />
+                  )}
+                  {loadingReporte ? "Descargando..." : "Descargar reporte"}
+                </Button>
+              </div>
             </CardContent>
           </Card>
 
