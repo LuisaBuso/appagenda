@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Sidebar } from "../../../components/Layout/Sidebar";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
-import { Textarea } from "../../../components/ui/textarea";
+// import { Textarea } from "../../../components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import {
   Dialog,
@@ -14,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../../components/ui/dialog";
-import { Calendar, Download, Loader2, Plus, Trash2, Wallet } from "lucide-react";
+import { Calendar, Download, Loader2, Plus, Trash2 } from "lucide-react"; //Wallet +
 import { cashService } from "./api/cashService";
 import type { CashCierre, CashEgreso, CashResumen, CashReporteRaw } from "./types";
 import { formatDateDMY } from "../../../lib/dateFormat";
@@ -105,13 +105,13 @@ export default function CierreCajaPage() {
   const [egresoTipo, setEgresoTipo] = useState("gasto_operativo");
   const [egresoModalOpen, setEgresoModalOpen] = useState(false);
 
-  const [aperturaMonto, setAperturaMonto] = useState("");
-  const [aperturaNota, setAperturaNota] = useState("");
-  const [aperturaFecha, setAperturaFecha] = useState(getToday());
+  // const [aperturaMonto, setAperturaMonto] = useState("");
+  // const [aperturaNota, setAperturaNota] = useState("");
+  // // const [aperturaFecha, setAperturaFecha] = useState(getToday());
 
-  const [cierreNota, setCierreNota] = useState("");
-  const [cierreFecha, setCierreFecha] = useState(getToday());
-  const [cierreEfectivoContado, setCierreEfectivoContado] = useState("0");
+  // const [cierreNota, setCierreNota] = useState("");
+  // const [cierreFecha, setCierreFecha] = useState(getToday());
+  // const [cierreEfectivoContado, setCierreEfectivoContado] = useState("0");
 
   useEffect(() => {
     const sedeStorage =
@@ -386,90 +386,90 @@ export default function CierreCajaPage() {
     }
   };
 
-  const handleApertura = async () => {
-    if (!sedeId) return;
+  // const handleApertura = async () => {
+  //   if (!sedeId) return;
 
-    const montoValue = toNumber(aperturaMonto);
-    if (!montoValue || montoValue <= 0) {
-      setError("El monto inicial debe ser mayor a 0");
-      return;
-    }
+  //   const montoValue = toNumber(aperturaMonto);
+  //   if (!montoValue || montoValue <= 0) {
+  //     setError("El monto inicial debe ser mayor a 0");
+  //     return;
+  //   }
 
-    setLoadingAction(true);
-    setError(null);
-    setSuccess(null);
+  //   setLoadingAction(true);
+  //   setError(null);
+  //   setSuccess(null);
 
-    try {
-      await cashService.aperturaCaja({
-        sede_id: sedeId,
-        fecha: aperturaFecha,
-        monto_inicial: montoValue,
-        efectivo_inicial: montoValue,
-        efectivo: montoValue,
-        notas: aperturaNota.trim() || undefined,
-        observaciones: aperturaNota.trim() || undefined,
-        moneda: monedaSede,
-      });
+  //   try {
+  //     await cashService.aperturaCaja({
+  //       sede_id: sedeId,
+  //       // fecha: aperturaFecha,
+  //       monto_inicial: montoValue,
+  //       efectivo_inicial: montoValue,
+  //       efectivo: montoValue,
+  //       notas: aperturaNota.trim() || undefined,
+  //       observaciones: aperturaNota.trim() || undefined,
+  //       moneda: monedaSede,
+  //     });
 
-      setAperturaMonto("");
-      setAperturaNota("");
-      setSuccess("Caja abierta correctamente");
-      await loadCierres();
-    } catch (err: any) {
-      setError(err?.message || "No se pudo abrir la caja");
-    } finally {
-      setLoadingAction(false);
-    }
-  };
+  //     setAperturaMonto("");
+  //     setAperturaNota("");
+  //     setSuccess("Caja abierta correctamente");
+  //     await loadCierres();
+  //   } catch (err: any) {
+  //     setError(err?.message || "No se pudo abrir la caja");
+  //   } finally {
+  //     setLoadingAction(false);
+  //   }
+  // };
 
-  const handleCierre = async () => {
-    if (!sedeId) return;
+  // const handleCierre = async () => {
+  //   if (!sedeId) return;
 
-    const efectivoContadoValue = toNumber(cierreEfectivoContado);
-    if (Number.isNaN(efectivoContadoValue) || efectivoContadoValue < 0) {
-      setError("El efectivo contado debe ser mayor o igual a 0");
-      return;
-    }
+  //   const efectivoContadoValue = toNumber(cierreEfectivoContado);
+  //   if (Number.isNaN(efectivoContadoValue) || efectivoContadoValue < 0) {
+  //     setError("El efectivo contado debe ser mayor o igual a 0");
+  //     return;
+  //   }
 
-    setLoadingAction(true);
-    setError(null);
-    setSuccess(null);
+  //   setLoadingAction(true);
+  //   setError(null);
+  //   setSuccess(null);
 
-    try {
-      const totalIngresos = resumen.ingresos || 0;
-      const totalEgresos = resumen.egresos || egresosTotal;
-      const efectivoEsperado = resumen.balance || balanceCalculado;
+  //   try {
+  //     const totalIngresos = resumen.ingresos || 0;
+  //     const totalEgresos = resumen.egresos || egresosTotal;
+  //     const efectivoEsperado = resumen.balance || balanceCalculado;
 
-      await cashService.cierreCaja({
-        sede_id: sedeId,
-        fecha: cierreFecha,
-        notas: cierreNota.trim() || undefined,
-        observaciones: cierreNota.trim() || undefined,
-        moneda: monedaSede,
-        ingresos_total: totalIngresos,
-        total_ingresos: totalIngresos,
-        total_ventas: totalIngresos,
-        efectivo_total: totalIngresos,
-        efectivo_recibido: totalIngresos,
-        egresos_total: totalEgresos,
-        total_egresos: totalEgresos,
-        balance: efectivoEsperado,
-        saldo: efectivoEsperado,
-        efectivo_esperado: efectivoEsperado,
-        efectivo_cierre: efectivoEsperado,
-        efectivo_final: efectivoEsperado,
-        efectivo_contado: efectivoContadoValue,
-      });
+  //     await cashService.cierreCaja({
+  //       sede_id: sedeId,
+  //       fecha: cierreFecha,
+  //       notas: cierreNota.trim() || undefined,
+  //       observaciones: cierreNota.trim() || undefined,
+  //       moneda: monedaSede,
+  //       ingresos_total: totalIngresos,
+  //       total_ingresos: totalIngresos,
+  //       total_ventas: totalIngresos,
+  //       efectivo_total: totalIngresos,
+  //       efectivo_recibido: totalIngresos,
+  //       egresos_total: totalEgresos,
+  //       total_egresos: totalEgresos,
+  //       balance: efectivoEsperado,
+  //       saldo: efectivoEsperado,
+  //       efectivo_esperado: efectivoEsperado,
+  //       efectivo_cierre: efectivoEsperado,
+  //       efectivo_final: efectivoEsperado,
+  //       efectivo_contado: efectivoContadoValue,
+  //     });
 
-      setCierreNota("");
-      setSuccess("Caja cerrada correctamente");
-      await loadAll();
-    } catch (err: any) {
-      setError(err?.message || "No se pudo cerrar la caja");
-    } finally {
-      setLoadingAction(false);
-    }
-  };
+  //     setCierreNota("");
+  //     setSuccess("Caja cerrada correctamente");
+  //     await loadAll();
+  //   } catch (err: any) {
+  //     setError(err?.message || "No se pudo cerrar la caja");
+  //   } finally {
+  //     setLoadingAction(false);
+  //   }
+  // };
 
   const applyQuickRange = (days: number) => {
     setFechaDesde(getDateNDaysAgo(days));
@@ -656,7 +656,7 @@ export default function CierreCajaPage() {
             </Card>
           </div>
 
-          {/* Apertura y Cierre */}
+          {/* Apertura y Cierre
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card className="border-gray-200">
               <CardHeader className="pb-2">
@@ -743,7 +743,7 @@ export default function CierreCajaPage() {
                 </Button>
               </CardContent>
             </Card>
-          </div>
+          </div> */}
 
           {/* Egresos y cierres */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
