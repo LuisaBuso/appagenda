@@ -317,11 +317,23 @@ async def crear_cita(
 
     servicios_procesados = []
     servicios_info = []  # Para email
+    servicios_ids_vistos = set()
     valor_total = 0
     duracion_total = 0
     nombres_servicios = []  # Para denormalizar
 
     for servicio_item in cita.servicios:
+        if servicio_item.servicio_id in servicios_ids_vistos:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Servicio duplicado en la cita: {servicio_item.servicio_id}"
+            )
+        servicios_ids_vistos.add(servicio_item.servicio_id)
+
+        cantidad = int(servicio_item.cantidad or 1)
+        if cantidad < 1:
+            raise HTTPException(status_code=400, detail="La cantidad debe ser mayor o igual a 1")
+
         servicio_db = await collection_servicios.find_one({"servicio_id": servicio_item.servicio_id})
         if not servicio_db:
             raise HTTPException(status_code=404, detail=f"Servicio {servicio_item.servicio_id} no encontrado")
@@ -341,16 +353,27 @@ async def crear_cita(
             es_personalizado = False
 
         # Acumular totales
-        valor_total += precio
-        duracion_total += servicio_db.get("duracion_minutos", 0)
-        nombres_servicios.append(servicio_db.get("nombre"))
+        subtotal = round(precio * cantidad, 2)
+        valor_total += subtotal
+        duracion_total += int(servicio_db.get("duracion_minutos", 0) or 0) * cantidad
+        nombre_servicio = servicio_db.get("nombre", "Servicio")
+        nombres_servicios.append(f"{nombre_servicio} x{cantidad}" if cantidad > 1 else nombre_servicio)
+        servicios_info.append({
+            "servicio_id": servicio_item.servicio_id,
+            "nombre": nombre_servicio,
+            "precio_unitario": round(precio, 2),
+            "cantidad": cantidad,
+            "subtotal": subtotal
+        })
 
         # ⭐ GUARDAR SERVICIO (estructura mejorada)
         servicio_guardado = {
             "servicio_id": servicio_item.servicio_id,
-            "nombre": servicio_db.get("nombre"),  # ⭐ NUEVO
+            "nombre": nombre_servicio,  # ⭐ NUEVO
             "precio_personalizado": es_personalizado,  # ⭐ BOOLEANO
-            "precio": round(precio, 2)  # ⭐ SIEMPRE guardar el precio usado
+            "precio": round(precio, 2),  # ⭐ SIEMPRE guardar el precio unitario usado
+            "cantidad": cantidad,
+            "subtotal": subtotal
         }
         servicios_procesados.append(servicio_guardado)
 
@@ -983,19 +1006,59 @@ async def editar_cita(
     if not cita_actual:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
 
+    cita_object_id = cita_actual.get("_id")
+    if not cita_object_id:
+        raise HTTPException(status_code=500, detail="La cita no tiene _id válido")
+
     # ====================================
     # ⭐ SI SE EDITAN SERVICIOS (nueva estructura)
     # ====================================
     if "servicios" in cambios:
+        estado_actual = str(cita_actual.get("estado", "")).strip().lower()
+        estados_no_editables = {"cancelada", "completada", "finalizada", "no asistio", "no_asistio"}
+        if estado_actual in estados_no_editables:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No se pueden editar servicios cuando la cita está en estado '{cita_actual.get('estado')}'"
+            )
+
+        if not isinstance(cambios["servicios"], list) or len(cambios["servicios"]) == 0:
+            raise HTTPException(status_code=400, detail="Debe enviar al menos un servicio")
+
         sede = await collection_locales.find_one({"sede_id": cita_actual.get("sede_id")})
+        if not sede:
+            raise HTTPException(status_code=404, detail="Sede de la cita no encontrada")
+
         moneda_sede = sede.get("moneda", "COP")
         
         servicios_procesados = []
-        valor_total = 0
+        servicios_ids_vistos = set()
+        valor_servicios = 0
+        duracion_total = 0
+        nombres_servicios = []
         
         for servicio_item in cambios["servicios"]:
+            if not isinstance(servicio_item, dict):
+                raise HTTPException(status_code=400, detail="Formato inválido en servicios")
+
             servicio_id = servicio_item.get("servicio_id")
+            if not servicio_id:
+                raise HTTPException(status_code=400, detail="Cada servicio debe incluir servicio_id")
+
+            if servicio_id in servicios_ids_vistos:
+                raise HTTPException(status_code=400, detail=f"Servicio duplicado en la cita: {servicio_id}")
+            servicios_ids_vistos.add(servicio_id)
+
             precio_personalizado = servicio_item.get("precio_personalizado")
+            cantidad_raw = servicio_item.get("cantidad", 1)
+
+            try:
+                cantidad = int(cantidad_raw)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"Cantidad inválida para servicio {servicio_id}")
+
+            if cantidad < 1:
+                raise HTTPException(status_code=400, detail="La cantidad debe ser mayor o igual a 1")
             
             # Buscar servicio en BD
             servicio_db = await collection_servicios.find_one({"servicio_id": servicio_id})
@@ -1013,22 +1076,37 @@ async def editar_cita(
                 precio = float(precios[moneda_sede])
                 es_personalizado = False
             
-            valor_total += precio
+            subtotal = round(precio * cantidad, 2)
+            valor_servicios += subtotal
+            duracion_servicio = int(servicio_db.get("duracion_minutos", 0) or 0)
+            duracion_total += duracion_servicio * cantidad
+            nombre_servicio = servicio_db.get("nombre", "Servicio")
+            nombres_servicios.append(f"{nombre_servicio} x{cantidad}" if cantidad > 1 else nombre_servicio)
             
             servicios_procesados.append({
                 "servicio_id": servicio_id,
-                "nombre": servicio_db.get("nombre"),
+                "nombre": nombre_servicio,
                 "precio_personalizado": es_personalizado,
-                "precio": round(precio, 2)
+                "precio": round(precio, 2),
+                "cantidad": cantidad,
+                "subtotal": subtotal
             })
         
+        total_productos = round(
+            sum(float(p.get("subtotal", 0) or 0) for p in cita_actual.get("productos", [])),
+            2
+        )
+        nuevo_valor_total = round(valor_servicios + total_productos, 2)
+
         # Actualizar servicios y totales
         cambios["servicios"] = servicios_procesados
-        cambios["valor_total"] = round(valor_total, 2)
+        cambios["valor_total"] = nuevo_valor_total
+        cambios["servicio_nombre"] = ", ".join(nombres_servicios) if nombres_servicios else "Sin servicio"
+        cambios["servicio_duracion"] = duracion_total
         
         # Recalcular saldo
-        abono_actual = cita_actual.get("abono", 0)
-        nuevo_saldo = round(valor_total - abono_actual, 2)
+        abono_actual = float(cita_actual.get("abono", 0) or 0)
+        nuevo_saldo = round(nuevo_valor_total - abono_actual, 2)
         cambios["saldo_pendiente"] = nuevo_saldo
         
         # Recalcular estado de pago
@@ -1048,7 +1126,7 @@ async def editar_cita(
     # Ejecutar actualización
     # ====================================
     result = await collection_citas.update_one(
-        {"_id": ObjectId(cita_id)},
+        {"_id": cita_object_id},
         {"$set": cambios}
     )
 
@@ -1056,7 +1134,7 @@ async def editar_cita(
         raise HTTPException(status_code=404, detail="Cita no encontrada")
 
     # Obtener cita actualizada
-    cita_actualizada = await collection_citas.find_one({"_id": ObjectId(cita_id)})
+    cita_actualizada = await collection_citas.find_one({"_id": cita_object_id})
     normalize_cita_doc(cita_actualizada)
     
     return {"success": True, "cita": cita_actualizada}
