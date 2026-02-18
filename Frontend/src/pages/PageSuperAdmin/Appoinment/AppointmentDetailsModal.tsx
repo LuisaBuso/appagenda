@@ -7,12 +7,13 @@ import {
   CreditCard as CardIcon, Wallet, CalendarDays,
   Tag, Users, X, Bug, Landmark,
   Phone, Mail, DollarSign, AlertCircle,
-  ShoppingBag
+  ShoppingBag, Trash2
 } from 'lucide-react';
 import Modal from '../../../components/ui/modal';
 import { useAuth } from '../../../components/Auth/AuthContext';
 import { updateCita, registrarPagoCita } from './citasApi';
 import { formatDateDMY } from '../../../lib/dateFormat';
+import { getServicios, type Servicio as ServicioCatalogo } from '../../../components/Quotes/serviciosApi';
 
 interface AppointmentDetailsModalProps {
   open: boolean;
@@ -43,6 +44,103 @@ interface Producto {
   profesional_id: string;
 }
 
+interface ServicioSeleccionado {
+  servicio_id: string;
+  nombre: string;
+  precio_unitario: number;
+  cantidad: number;
+  subtotal: number;
+  precio_personalizado: number | null;
+  usa_precio_personalizado: boolean;
+}
+
+interface ServicioDisponible {
+  servicio_id: string;
+  nombre: string;
+  precio: number;
+}
+
+const ESTADOS_NO_EDITABLES_SERVICIOS = new Set([
+  'cancelada',
+  'completada',
+  'finalizada',
+  'no asistio',
+  'no_asistio'
+]);
+
+const toNumber = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const roundMoney = (value: number): number => {
+  return Math.round(value * 100) / 100;
+};
+
+const extraerMensajeError = (error: any, fallback: string): string => {
+  const rawMessage = error?.message ?? error;
+
+  if (!rawMessage) return fallback;
+  if (typeof rawMessage === 'string') return rawMessage;
+
+  if (Array.isArray(rawMessage)) {
+    const joined = rawMessage
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object' && typeof item.msg === 'string') return item.msg;
+        return JSON.stringify(item);
+      })
+      .join(' | ');
+    return joined || fallback;
+  }
+
+  if (typeof rawMessage === 'object') {
+    if (typeof rawMessage.detail === 'string') return rawMessage.detail;
+    const entries = Object.entries(rawMessage)
+      .map(([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`)
+      .join(' | ');
+    return entries || fallback;
+  }
+
+  return fallback;
+};
+
+const normalizarServiciosCita = (servicios: any[] | undefined): ServicioSeleccionado[] => {
+  if (!Array.isArray(servicios)) return [];
+
+  return servicios
+    .filter((servicio) => servicio && servicio.servicio_id)
+    .map((servicio) => {
+      const precioUnitario = roundMoney(toNumber(servicio.precio));
+      const cantidad = Math.max(1, Math.trunc(toNumber(servicio.cantidad) || 1));
+      const usaPrecioPersonalizado = Boolean(servicio.precio_personalizado);
+      const subtotalRaw = servicio.subtotal !== undefined
+        ? toNumber(servicio.subtotal)
+        : precioUnitario * cantidad;
+
+      return {
+        servicio_id: String(servicio.servicio_id),
+        nombre: String(servicio.nombre || 'Servicio'),
+        precio_unitario: precioUnitario,
+        cantidad,
+        subtotal: roundMoney(subtotalRaw),
+        precio_personalizado: usaPrecioPersonalizado ? precioUnitario : null,
+        usa_precio_personalizado: usaPrecioPersonalizado
+      };
+    });
+};
+
+const normalizarComparacionServicios = (servicios: ServicioSeleccionado[]) => {
+  return [...servicios]
+    .map((servicio) => ({
+      servicio_id: servicio.servicio_id,
+      cantidad: servicio.cantidad,
+      precio_unitario: roundMoney(servicio.precio_unitario),
+      usa_precio_personalizado: servicio.usa_precio_personalizado
+    }))
+    .sort((a, b) => a.servicio_id.localeCompare(b.servicio_id));
+};
+
 const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
   open,
   onClose,
@@ -61,6 +159,14 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
   });
   const [registrandoPago, setRegistrandoPago] = useState(false);
   const [productos, setProductos] = useState<Producto[]>([]);
+  const [serviciosDisponibles, setServiciosDisponibles] = useState<ServicioDisponible[]>([]);
+  const [serviciosSeleccionados, setServiciosSeleccionados] = useState<ServicioSeleccionado[]>([]);
+  const [serviciosOriginales, setServiciosOriginales] = useState<ServicioSeleccionado[]>([]);
+  const [selectedServiceId, setSelectedServiceId] = useState('');
+  const [loadingServiciosDisponibles, setLoadingServiciosDisponibles] = useState(false);
+  const [savingServicios, setSavingServicios] = useState(false);
+  const [serviceError, setServiceError] = useState<string | null>(null);
+
   const sessionCurrency = typeof window !== 'undefined' ? sessionStorage.getItem("beaux-moneda") : null;
   const userCurrency = String(user?.moneda || sessionCurrency || appointmentDetails?.rawData?.moneda || "USD").toUpperCase();
   const isCopCurrency = userCurrency === "COP";
@@ -75,6 +181,8 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
   useEffect(() => {
     if (open && appointment) {
       setAppointmentDetails(appointment);
+      setServiceError(null);
+      setSelectedServiceId('');
       // Extraer productos de la cita
       if (appointment.rawData?.productos) {
         setProductos(appointment.rawData.productos);
@@ -83,6 +191,12 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
       } else {
         setProductos([]);
       }
+
+      const serviciosIniciales = normalizarServiciosCita(
+        appointment.rawData?.servicios || appointment.servicios || []
+      );
+      setServiciosSeleccionados(serviciosIniciales);
+      setServiciosOriginales(serviciosIniciales);
     }
   }, [open, appointment]);
 
@@ -91,6 +205,62 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
       setPagoModal((prev) => ({ ...prev, metodoPago: 'efectivo' }));
     }
   }, [isCopCurrency, pagoModal.metodoPago]);
+
+  useEffect(() => {
+    if (!open || !user?.access_token) return;
+
+    let isCancelled = false;
+    const cargarServiciosDisponibles = async () => {
+      setLoadingServiciosDisponibles(true);
+      try {
+        const catalogoServicios: ServicioCatalogo[] = await getServicios(user.access_token);
+
+        if (isCancelled) return;
+
+        const serviciosMapeados = catalogoServicios
+          .filter((servicio) => servicio?.activo !== false)
+          .map((servicio) => ({
+            servicio_id: String(servicio.servicio_id || servicio._id),
+            nombre: String(servicio.nombre || 'Servicio'),
+            precio: roundMoney(
+              servicio.precio_local !== undefined ? toNumber(servicio.precio_local) : toNumber(servicio.precio)
+            )
+          }))
+          .sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+        setServiciosDisponibles(serviciosMapeados);
+      } catch (error: any) {
+        if (isCancelled) return;
+        setServiciosDisponibles([]);
+        setServiceError(extraerMensajeError(error, 'No se pudieron cargar los servicios disponibles.'));
+      } finally {
+        if (!isCancelled) {
+          setLoadingServiciosDisponibles(false);
+        }
+      }
+    };
+
+    cargarServiciosDisponibles();
+    return () => {
+      isCancelled = true;
+    };
+  }, [open, user?.access_token]);
+
+  const estadoCitaActual = String(appointmentDetails?.estado || '').toLowerCase().trim();
+  const isEstadoNoEditableServicios = ESTADOS_NO_EDITABLES_SERVICIOS.has(estadoCitaActual);
+
+  const totalServicios = roundMoney(
+    serviciosSeleccionados.reduce((total, servicio) => total + roundMoney(servicio.subtotal), 0)
+  );
+  const totalProductos = roundMoney(
+    productos.reduce((total, producto) => total + toNumber(producto.subtotal), 0)
+  );
+  const totalCitaCalculado = roundMoney(totalServicios + totalProductos);
+
+  const hasUnsavedServiceChanges = JSON.stringify(normalizarComparacionServicios(serviciosSeleccionados))
+    !== JSON.stringify(normalizarComparacionServicios(serviciosOriginales));
+
+  const isServiceActionsDisabled = updating || savingServicios || isEstadoNoEditableServicios;
 
   const getPagosData = () => {
     if (!appointmentDetails?.rawData) {
@@ -209,7 +379,7 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
 
     } catch (error: any) {
       console.error('Error actualizando estado:', error);
-      alert(`❌ Error: ${error.message || 'No se pudo actualizar el estado'}`);
+      alert(`❌ Error: ${extraerMensajeError(error, 'No se pudo actualizar el estado')}`);
     } finally {
       setUpdating(false);
     }
@@ -277,9 +447,123 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
 
     } catch (error: any) {
       console.error('Error registrando pago:', error);
-      alert(`❌ Error: ${error.message || 'No se pudo registrar el pago'}`);
+      alert(`❌ Error: ${extraerMensajeError(error, 'No se pudo registrar el pago')}`);
     } finally {
       setRegistrandoPago(false);
+    }
+  };
+
+  const handleAgregarServicio = () => {
+    if (!selectedServiceId) return;
+
+    if (serviciosSeleccionados.some((servicio) => servicio.servicio_id === selectedServiceId)) {
+      setServiceError('El servicio ya está agregado en la cita.');
+      return;
+    }
+
+    const servicioCatalogo = serviciosDisponibles.find((servicio) => servicio.servicio_id === selectedServiceId);
+    if (!servicioCatalogo) {
+      setServiceError('No se encontró el servicio seleccionado.');
+      return;
+    }
+
+    const nuevoServicio: ServicioSeleccionado = {
+      servicio_id: servicioCatalogo.servicio_id,
+      nombre: servicioCatalogo.nombre,
+      precio_unitario: servicioCatalogo.precio,
+      cantidad: 1,
+      subtotal: roundMoney(servicioCatalogo.precio),
+      precio_personalizado: null,
+      usa_precio_personalizado: false
+    };
+
+    setServiciosSeleccionados((prev) => [...prev, nuevoServicio]);
+    setSelectedServiceId('');
+    setServiceError(null);
+  };
+
+  const handleEliminarServicio = (servicioId: string) => {
+    setServiciosSeleccionados((prev) => prev.filter((servicio) => servicio.servicio_id !== servicioId));
+    setServiceError(null);
+  };
+
+  const handleActualizarCantidad = (servicioId: string, cantidadInput: string) => {
+    const cantidad = Math.max(1, Math.trunc(toNumber(cantidadInput) || 1));
+
+    setServiciosSeleccionados((prev) =>
+      prev.map((servicio) => {
+        if (servicio.servicio_id !== servicioId) return servicio;
+        const subtotal = roundMoney(servicio.precio_unitario * cantidad);
+        return {
+          ...servicio,
+          cantidad,
+          subtotal
+        };
+      })
+    );
+  };
+
+  const handleGuardarServicios = async () => {
+    if (!appointmentDetails?.id || !user?.access_token) {
+      alert('No se puede guardar: falta información de autenticación.');
+      return;
+    }
+
+    if (isEstadoNoEditableServicios) {
+      alert('No se pueden editar servicios en el estado actual de la cita.');
+      return;
+    }
+
+    if (serviciosSeleccionados.length === 0) {
+      setServiceError('Debes mantener al menos un servicio en la cita.');
+      return;
+    }
+
+    setSavingServicios(true);
+    setServiceError(null);
+
+    try {
+      const serviciosPayload = serviciosSeleccionados.map((servicio) => ({
+        servicio_id: servicio.servicio_id,
+        precio_personalizado: servicio.usa_precio_personalizado ? servicio.precio_unitario : null,
+        cantidad: servicio.cantidad
+      }));
+
+      const response = await updateCita(
+        appointmentDetails.id,
+        { servicios: serviciosPayload },
+        user.access_token
+      );
+
+      const citaActualizada = response?.cita || {};
+      const serviciosActualizados = normalizarServiciosCita(citaActualizada.servicios || []);
+
+      setServiciosSeleccionados(serviciosActualizados);
+      setServiciosOriginales(serviciosActualizados);
+
+      setAppointmentDetails((prev: any) => ({
+        ...prev,
+        servicio_nombre: citaActualizada.servicio_nombre || prev?.servicio_nombre,
+        rawData: {
+          ...prev?.rawData,
+          ...citaActualizada,
+          servicios: citaActualizada.servicios || prev?.rawData?.servicios || [],
+          valor_total: citaActualizada.valor_total ?? prev?.rawData?.valor_total,
+          saldo_pendiente: citaActualizada.saldo_pendiente ?? prev?.rawData?.saldo_pendiente,
+          estado_pago: citaActualizada.estado_pago ?? prev?.rawData?.estado_pago
+        }
+      }));
+
+      alert('Servicios actualizados correctamente.');
+      if (onRefresh) {
+        setTimeout(() => onRefresh(), 400);
+      }
+    } catch (error: any) {
+      const mensaje = extraerMensajeError(error, 'No se pudieron guardar los servicios.');
+      setServiceError(mensaje);
+      alert(`Error al guardar servicios: ${mensaje}`);
+    } finally {
+      setSavingServicios(false);
     }
   };
 
@@ -319,13 +603,17 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
   const getPrecio = () => {
     if (!appointmentDetails) return '0';
 
-    const precio =
+    const precioGuardado =
       appointmentDetails.valor_total ||
       appointmentDetails.rawData?.valor_total ||
       appointmentDetails.precio ||
       '0';
 
-    return precio;
+    const precioNumericoGuardado = toNumber(precioGuardado);
+    const usarTotalCalculado = serviciosSeleccionados.length > 0 || hasUnsavedServiceChanges;
+    const total = usarTotalCalculado ? totalCitaCalculado : precioNumericoGuardado;
+
+    return roundMoney(total).toString();
   };
 
   const getTotalProductos = () => {
@@ -544,9 +832,6 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                     <h4 className="text-xs font-bold text-gray-900 truncate">
                       {producto.nombre}
                     </h4>
-                    <span className="text-[10px] px-1 py-0.5 bg-gray-100 text-gray-700 rounded">
-                      {producto.producto_id}
-                    </span>
                   </div>
                   
                   <div className="grid grid-cols-2 gap-1 text-[10px] mb-1">
@@ -581,6 +866,144 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
               </div>
             </div>
           ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderServiciosEditor = () => {
+    const serviciosDisponiblesParaAgregar = serviciosDisponibles.filter(
+      (servicio) => !serviciosSeleccionados.some((seleccionado) => seleccionado.servicio_id === servicio.servicio_id)
+    );
+
+    return (
+      <div className="space-y-2">
+        {serviceError && (
+          <div className="p-2 border border-red-200 bg-red-50 rounded text-xs text-red-700">
+            {serviceError}
+          </div>
+        )}
+
+        {isEstadoNoEditableServicios && (
+          <div className="p-2 border border-gray-300 bg-gray-50 rounded text-xs text-gray-700">
+            Esta cita no permite edición de servicios por su estado actual.
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-1.5">
+          <select
+            value={selectedServiceId}
+            onChange={(e) => setSelectedServiceId(e.target.value)}
+            disabled={isServiceActionsDisabled || loadingServiciosDisponibles}
+            className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-0 focus:border-black disabled:bg-gray-100"
+          >
+            <option value="">
+              {loadingServiciosDisponibles ? 'Cargando servicios...' : 'Seleccionar servicio para agregar'}
+            </option>
+            {serviciosDisponiblesParaAgregar.map((servicio) => (
+              <option key={servicio.servicio_id} value={servicio.servicio_id}>
+                {servicio.nombre} - ${servicio.precio}
+              </option>
+            ))}
+          </select>
+
+          <button
+            type="button"
+            onClick={handleAgregarServicio}
+            disabled={
+              isServiceActionsDisabled ||
+              loadingServiciosDisponibles ||
+              !selectedServiceId ||
+              serviciosDisponiblesParaAgregar.length === 0
+            }
+            className="px-2 py-1 border border-gray-300 text-gray-700 rounded hover:bg-gray-50 flex items-center justify-center gap-1 font-medium text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Plus className="w-3 h-3" />
+            Agregar servicio
+          </button>
+        </div>
+
+        {serviciosSeleccionados.length === 0 ? (
+          <div className="text-center py-3 text-gray-400 text-xs border border-dashed border-gray-300 rounded">
+            No hay servicios seleccionados en esta cita.
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {serviciosSeleccionados.map((servicio) => (
+              <div key={servicio.servicio_id} className="p-2 border border-gray-200 rounded">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-gray-900 truncate">{servicio.nombre}</p>
+                    <p className="text-[10px] text-gray-600">
+                      Precio unitario: ${servicio.precio_unitario}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleEliminarServicio(servicio.servicio_id)}
+                    disabled={isServiceActionsDisabled}
+                    className="p-1 text-gray-500 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Eliminar servicio"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 mt-1.5">
+                  <div>
+                    <label className="block text-[10px] text-gray-600 mb-0.5">Cantidad</label>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={servicio.cantidad}
+                      onChange={(e) => handleActualizarCantidad(servicio.servicio_id, e.target.value)}
+                      disabled={isServiceActionsDisabled}
+                      className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:ring-0 focus:border-black disabled:bg-gray-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] text-gray-600 mb-0.5">Subtotal</label>
+                    <div className="border border-gray-200 rounded px-2 py-1 text-xs font-semibold text-gray-900 bg-gray-50">
+                      ${servicio.subtotal}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="bg-gray-50 p-2 rounded grid grid-cols-2 gap-1 text-xs">
+          <div className="text-gray-700">
+            Total servicios: <span className="font-bold text-gray-900">${totalServicios}</span>
+          </div>
+          <div className="text-gray-700 text-right">
+            Total estimado cita: <span className="font-bold text-gray-900">${totalCitaCalculado}</span>
+          </div>
+        </div>
+
+        <div className="flex justify-end items-center gap-2">
+          {hasUnsavedServiceChanges && (
+            <span className="text-[10px] text-gray-600">Hay cambios sin guardar</span>
+          )}
+          <button
+            type="button"
+            onClick={handleGuardarServicios}
+            disabled={isServiceActionsDisabled || !hasUnsavedServiceChanges || serviciosSeleccionados.length === 0}
+            className="px-2 py-1 bg-black text-white rounded hover:bg-gray-800 font-medium text-xs disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+          >
+            {savingServicios ? (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Guardando...
+              </>
+            ) : (
+              'Guardar cambios'
+            )}
+          </button>
         </div>
       </div>
     );
@@ -775,6 +1198,17 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                   </div>
                 </div>
 
+                {/* Servicios de la cita */}
+                <div className="bg-white border border-gray-200 rounded p-2">
+                  <div className="flex items-center gap-1.5 mb-2 pb-1.5 border-b border-gray-200">
+                    <Tag className="w-3 h-3 text-gray-700 flex-shrink-0" />
+                    <h3 className="text-sm font-bold text-gray-900 truncate">
+                      Servicios de la cita {serviciosSeleccionados.length > 0 && `(${serviciosSeleccionados.length})`}
+                    </h3>
+                  </div>
+                  {renderServiciosEditor()}
+                </div>
+
                 {/* Productos y Extras - MODIFICADO */}
                 <div className="bg-white border border-gray-200 rounded p-2">
                   <div className="flex items-center gap-1.5 mb-2 pb-1.5 border-b border-gray-200">
@@ -803,7 +1237,7 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                           monto: pagosData.saldoPendiente,
                           metodoPago: 'efectivo'
                         })}
-                        disabled={pagosData.estaPagadoCompleto || registrandoPago}
+                        disabled={pagosData.estaPagadoCompleto || registrandoPago || hasUnsavedServiceChanges}
                         className="px-2 py-1 bg-black text-white rounded hover:bg-gray-800 flex items-center justify-center gap-1 font-medium text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <DollarSign className="w-2.5 h-2.5" />  
@@ -816,7 +1250,7 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                           monto: 0,
                           metodoPago: 'efectivo'
                         })}
-                        disabled={pagosData.estaPagadoCompleto || registrandoPago}
+                        disabled={pagosData.estaPagadoCompleto || registrandoPago || hasUnsavedServiceChanges}
                         className="px-2 py-1 border border-gray-300 text-gray-700 rounded hover:bg-gray-50 flex items-center justify-center gap-1 font-medium text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <Plus className="w-2.5 h-2.5" />
@@ -824,6 +1258,12 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                       </button>
                     </div>
                   </div>
+
+                  {hasUnsavedServiceChanges && (
+                    <div className="mb-2 p-1.5 text-[10px] text-gray-700 bg-gray-50 border border-gray-200 rounded">
+                      Guarda los cambios de servicios antes de registrar pagos o abonos.
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5 mb-3">
                     <div className="bg-gray-50 p-1.5 rounded text-center">
