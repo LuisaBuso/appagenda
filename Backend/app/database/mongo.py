@@ -33,6 +33,7 @@ collection_sales = db["sales"]
 collection_inventarios = db["inventary"]  # Nueva colección
 collection_inventory_motions = db["inventory_motions"]  # Nueva colección
 collection_cash_expenses = db["cash_expenses"]
+collection_cash_ingresos = db["cash_ingresos"]
 collection_cash_closures = db["cash_closures"]
 def connect_to_mongo():
     pass

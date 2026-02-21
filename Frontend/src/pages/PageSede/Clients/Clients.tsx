@@ -140,33 +140,11 @@ export default function ClientsPage() {
 
   const handleAddClient = () => setIsModalOpen(true)
 
-  const handleSaveClient = async (clienteData: any) => {
+  const handleSaveClient = async () => {
     if (!user?.access_token) return
     try {
       setIsSaving(true)
       setError(null)
-
-      let sedeIdToUse = clienteData.sede_id
-      if (!sedeIdToUse && sedes.length > 0) {
-        sedeIdToUse = sedes[0].id || sedes[0]._id
-      }
-
-      if (!sedeIdToUse) {
-        throw new Error("No hay sedes disponibles")
-      }
-
-      const createData = {
-        nombre: clienteData.nombre,
-        correo: clienteData.email || "",
-        telefono: clienteData.telefono || "",
-        notas: clienteData.nota || "",
-        sede_id: sedeIdToUse,
-        cedula: clienteData.cedula || "",
-        ciudad: clienteData.ciudad || "",
-        fecha_de_nacimiento: clienteData.fecha_de_nacimiento || ""
-      }
-
-      await (clientesService.createCliente as any)(user.access_token, createData)
       await loadClientes(1, searchTerm)
       setIsModalOpen(false)
 

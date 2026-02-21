@@ -25,7 +25,7 @@ class ProductoVenta(BaseModel):
 
 
 class VentaDirecta(BaseModel):
-    cliente_id: str
+    cliente_id: Optional[str] = None
     sede_id: str
     productos: List[ProductoVenta]
     metodo_pago: str  # efectivo, tarjeta, transferencia, etc.
@@ -58,10 +58,16 @@ async def crear_venta_directa(
     rol_usuario = current_user["rol"]
     email_usuario = current_user.get("email")
 
-    # === Validar cliente ===
-    cliente = await collection_clients.find_one({"cliente_id": venta.cliente_id})
-    if not cliente:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    # === Cliente opcional (venta de mostrador) ===
+    cliente_id = venta.cliente_id.strip() if isinstance(venta.cliente_id, str) else None
+    if cliente_id == "":
+        cliente_id = None
+
+    cliente = None
+    if cliente_id:
+        cliente = await collection_clients.find_one({"cliente_id": cliente_id})
+        if not cliente:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     # === Validar sede ===
     sede = await collection_locales.find_one({"sede_id": venta.sede_id})
@@ -174,11 +180,15 @@ async def crear_venta_directa(
         "sede_id": venta.sede_id,
         "moneda": moneda_sede,
         "tipo_comision": "sin_comision",  # ⭐ Ventas directas no comisionan
-        "cliente_id": venta.cliente_id,
-        "nombre_cliente": cliente.get("nombre", "") + " " + cliente.get("apellido", ""),
-        "cedula_cliente": cliente.get("cedula", ""),
-        "email_cliente": cliente.get("correo", ""),
-        "telefono_cliente": cliente.get("telefono", ""),
+        "cliente_id": cliente_id,
+        "nombre_cliente": (
+            (cliente.get("nombre", "") + " " + cliente.get("apellido", "")).strip()
+            if cliente
+            else ""
+        ),
+        "cedula_cliente": cliente.get("cedula", "") if cliente else "",
+        "email_cliente": cliente.get("correo", "") if cliente else "",
+        "telefono_cliente": cliente.get("telefono", "") if cliente else "",
         "items": items,
         "historial_pagos": historial_pagos,
         "desglose_pagos": desglose_pagos,
@@ -201,7 +211,11 @@ async def crear_venta_directa(
         "data": {
             "venta_id": venta_id,
             "identificador": identificador,
-            "cliente": cliente.get("nombre"),
+            "cliente": (
+                (cliente.get("nombre", "") + " " + cliente.get("apellido", "")).strip()
+                if cliente
+                else None
+            ),
             "productos": len(items),
             "total": total_venta,
             "abono": abono,

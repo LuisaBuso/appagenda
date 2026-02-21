@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
+import logging
 
 # Importar lógica contable separada
 from .accounting_logic import (
@@ -21,11 +22,11 @@ from .excel_generator import generar_reporte_excel_caja_completo, generar_nombre
 
 # Importar modelos y utilidades
 from .models_cash import (
-    AperturaCajaRequest, RegistroEgresoRequest, CierreCajaRequest,
-    EgresoResponse, CierreResponse
+    AperturaCajaRequest, RegistroEgresoRequest, RegistroIngresoRequest, CierreCajaRequest,
+    EgresoResponse, IngresoResponse, CierreResponse
 )
 from .utils_cash import (
-    generar_cierre_id, generar_egreso_id, generar_apertura_id,
+    generar_cierre_id, generar_egreso_id, generar_ingreso_id, generar_apertura_id,
     calcular_diferencia, validar_diferencia_aceptable,
     construir_filtro_fecha, convertir_mongo_a_json
 )
@@ -40,10 +41,12 @@ from app.database.mongo import (
 )
 
 router = APIRouter(prefix="/cash", tags=["Cash Management"])
+logger = logging.getLogger(__name__)
 
 # Colecciones
 cash_expenses = db["cash_expenses"]
 cash_closures = db["cash_closures"]
+cash_incomes = db["cash_ingresos"]
 
 # ============================================================
 # 1. CALCULAR EFECTIVO DEL DÍA (REFACTORIZADO ✅)
@@ -105,6 +108,44 @@ async def calcular_efectivo_dia_endpoint(
     
     return resumen
 
+
+def _parse_date(value: str, field_name: str) -> datetime:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"'{field_name}' debe tener formato YYYY-MM-DD"
+        ) from exc
+
+
+def _normalize_range(fecha_inicio: str, fecha_fin: str) -> tuple[str, str]:
+    inicio_dt = _parse_date(fecha_inicio, "fecha_inicio")
+    fin_dt = _parse_date(fecha_fin, "fecha_fin")
+    if inicio_dt <= fin_dt:
+        return fecha_inicio, fecha_fin
+    return fecha_fin, fecha_inicio
+
+
+def _as_datetime(value: Any, fallback: Optional[datetime] = None) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                continue
+    return fallback or datetime.now()
+
+
+def _as_date_string(value: Any, fallback: Optional[str] = None) -> str:
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, str) and value.strip():
+        return value.strip()[:10]
+    return fallback or datetime.now().strftime("%Y-%m-%d")
+
 # ============================================================
 # 2. REGISTRAR EGRESO (SIN CAMBIOS)
 # ============================================================
@@ -165,49 +206,175 @@ async def registrar_egreso(
     )
 
 # ============================================================
-# 3. LISTAR EGRESOS (SIN CAMBIOS)
+# 3. REGISTRAR INGRESO MANUAL (NUEVO)
+# ============================================================
+
+@router.post("/ingreso", response_model=IngresoResponse, status_code=status.HTTP_201_CREATED)
+async def registrar_ingreso(
+    ingreso: RegistroIngresoRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Registra un ingreso manual de caja."""
+    fecha = ingreso.fecha or datetime.now().strftime("%Y-%m-%d")
+
+    sede = await locales.find_one({"sede_id": ingreso.sede_id})
+    if not sede:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sede {ingreso.sede_id} no encontrada"
+        )
+
+    ingreso_doc = {
+        "ingreso_id": generar_ingreso_id(),
+        "sede_id": ingreso.sede_id,
+        "fecha": fecha,
+        "monto": ingreso.monto,
+        "metodo_pago": ingreso.metodo_pago.value,
+        "motivo": ingreso.motivo,
+        "moneda": ingreso.moneda.value,
+        "registrado_por": current_user.get("user_id") or current_user["email"],
+        "registrado_por_nombre": current_user.get("nombre"),
+        "registrado_por_email": current_user.get("email"),
+        "registrado_por_rol": current_user.get("rol"),
+        "creado_en": datetime.now(),
+        "actualizado_en": datetime.now(),
+    }
+
+    resultado = await cash_incomes.insert_one(ingreso_doc)
+    if not resultado.inserted_id:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al registrar el ingreso"
+        )
+
+    return IngresoResponse(
+        ingreso_id=ingreso_doc["ingreso_id"],
+        sede_id=ingreso_doc["sede_id"],
+        sede_nombre=sede.get("nombre"),
+        monto=ingreso_doc["monto"],
+        metodo_pago=ingreso_doc["metodo_pago"],
+        motivo=ingreso_doc["motivo"],
+        moneda=ingreso_doc["moneda"],
+        fecha=ingreso_doc["fecha"],
+        registrado_por=str(ingreso_doc["registrado_por"]),
+        registrado_por_nombre=ingreso_doc.get("registrado_por_nombre"),
+        creado_en=ingreso_doc["creado_en"],
+    )
+
+# ============================================================
+# 4. LISTAR INGRESOS MANUALES (NUEVO)
+# ============================================================
+
+@router.get("/ingresos", response_model=List[IngresoResponse])
+async def listar_ingresos(
+    sede_id: str = Query(...),
+    fecha_inicio: str = Query(...),
+    fecha_fin: str = Query(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Lista ingresos manuales por rango de fechas."""
+    try:
+        inicio, fin = _normalize_range(fecha_inicio, fecha_fin)
+        filtro = {
+            "sede_id": sede_id,
+            "fecha": {"$gte": inicio, "$lte": fin}
+        }
+        ingresos_list = await cash_incomes.find(filtro).sort("creado_en", -1).to_list(None)
+
+        if not ingresos_list:
+            return []
+
+        sede = await locales.find_one({"sede_id": sede_id})
+        sede_nombre = sede.get("nombre") if sede else None
+
+        return [
+            IngresoResponse(
+                ingreso_id=i.get("ingreso_id") or str(i.get("_id")),
+                sede_id=i.get("sede_id") or sede_id,
+                sede_nombre=sede_nombre,
+                monto=float(i.get("monto", 0) or 0),
+                metodo_pago=str(i.get("metodo_pago", "otros")),
+                motivo=i.get("motivo") or i.get("descripcion") or "Ingreso manual",
+                moneda=str(i.get("moneda", "COP")),
+                fecha=_as_date_string(i.get("fecha"), inicio),
+                registrado_por=str(i.get("registrado_por") or i.get("registrado_por_email") or "sistema"),
+                registrado_por_nombre=i.get("registrado_por_nombre"),
+                creado_en=_as_datetime(i.get("creado_en"), _as_datetime(i.get("fecha"))),
+            )
+            for i in ingresos_list
+        ]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Error listando ingresos manuales")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al listar ingresos: {str(exc)}"
+        ) from exc
+
+# ============================================================
+# 5. LISTAR EGRESOS
 # ============================================================
 
 @router.get("/egresos", response_model=List[EgresoResponse])
 async def listar_egresos(
     sede_id: str = Query(...),
-    fecha: Optional[str] = Query(None),
-    fecha_inicio: Optional[str] = Query(None),
-    fecha_fin: Optional[str] = Query(None),
+    fecha_inicio: str = Query(...),
+    fecha_fin: str = Query(...),
     tipo: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user)
 ):
-    """Lista los egresos con filtros opcionales."""
-    
-    filtro = {"sede_id": sede_id}
-    filtro.update(construir_filtro_fecha(fecha, fecha_inicio, fecha_fin))
-    
-    if tipo:
-        filtro["tipo"] = tipo
-    
-    egresos_list = await cash_expenses.find(filtro).sort("creado_en", -1).to_list(None)
-    
-    sede = await locales.find_one({"sede_id": sede_id})
-    sede_nombre = sede.get("nombre") if sede else None
-    
-    return [
-        EgresoResponse(
-            egreso_id=e["egreso_id"],
-            sede_id=e["sede_id"],
-            sede_nombre=sede_nombre,
-            tipo=e["tipo"],
-            concepto=e["concepto"],
-            descripcion=e.get("descripcion"),
-            monto=e["monto"],
-            moneda=e["moneda"],
-            fecha=e["fecha"],
-            registrado_por=e["registrado_por"],
-            registrado_por_nombre=e.get("registrado_por_nombre"),
-            comprobante_numero=e.get("comprobante_numero"),
-            creado_en=e["creado_en"]
-        )
-        for e in egresos_list
-    ]
+    """Lista los egresos por rango de fechas."""
+    try:
+        inicio, fin = _normalize_range(fecha_inicio, fecha_fin)
+        filtro: Dict[str, Any] = {
+            "sede_id": sede_id,
+            "fecha": {"$gte": inicio, "$lte": fin},
+            # Excluir documentos de ingreso y flujo migrado de efectivo.
+            "$or": [
+                {"categoria": {"$exists": False}},
+                {"categoria": None},
+                {"categoria": {"$in": ["EGRESO", "egreso"]}},
+                {"tipo": {"$in": ["compra_interna", "gasto_operativo", "retiro_caja", "otro", "Egresos"]}},
+            ],
+        }
+
+        if tipo:
+            filtro["tipo"] = tipo
+
+        egresos_list = await cash_expenses.find(filtro).sort("creado_en", -1).to_list(None)
+        if not egresos_list:
+            return []
+
+        sede = await locales.find_one({"sede_id": sede_id})
+        sede_nombre = sede.get("nombre") if sede else None
+
+        return [
+            EgresoResponse(
+                egreso_id=e.get("egreso_id") or str(e.get("_id")),
+                sede_id=e.get("sede_id") or sede_id,
+                sede_nombre=sede_nombre,
+                tipo=e.get("tipo") or "otro",
+                concepto=e.get("concepto") or e.get("descripcion") or e.get("motivo") or "Sin concepto",
+                descripcion=e.get("descripcion") or e.get("motivo"),
+                monto=float(e.get("monto", 0) or 0),
+                moneda=str(e.get("moneda", "COP")),
+                fecha=_as_date_string(e.get("fecha"), inicio),
+                registrado_por=str(e.get("registrado_por") or e.get("usuario_modificacion") or "sistema"),
+                registrado_por_nombre=e.get("registrado_por_nombre"),
+                comprobante_numero=e.get("comprobante_numero") or e.get("nro_comprobante"),
+                creado_en=_as_datetime(e.get("creado_en"), _as_datetime(e.get("fecha"))),
+            )
+            for e in egresos_list
+        ]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Error listando egresos")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al listar egresos: {str(exc)}"
+        ) from exc
 
 # ============================================================
 # 4. APERTURA DE CAJA (SIN CAMBIOS)
@@ -314,7 +481,8 @@ async def cerrar_caja(
         "fecha": cierre.fecha,
         "moneda": cierre.moneda.value,
         "efectivo_inicial": resumen["efectivo_inicial"],
-        "total_ingresos": resumen["ingresos_efectivo"]["total"],
+        "total_ingresos": resumen["total_vendido"],
+        "total_ingresos_efectivo": resumen["ingresos_efectivo"]["total"],
         "total_egresos": resumen["egresos"]["total"],
         "efectivo_esperado": resumen["efectivo_esperado"],
         "efectivo_contado": cierre.efectivo_contado,
@@ -481,25 +649,27 @@ async def reporte_periodo(
     current_user: dict = Depends(get_current_user)
 ):
     """Genera un reporte consolidado para un periodo de fechas."""
-    
+    inicio, fin = _normalize_range(fecha_inicio, fecha_fin)
+    reporte = await _build_period_report_data(sede_id, inicio, fin)
+    resumen = reporte["resumen"]
+
     cierres_list = await cash_closures.find({
         "sede_id": sede_id,
-        "fecha": {"$gte": fecha_inicio, "$lte": fecha_fin},
+        "fecha": {"$gte": inicio, "$lte": fin},
         "tipo": "cierre"
     }).sort("fecha", 1).to_list(None)
-    
     cierres_list = [convertir_mongo_a_json(c) for c in cierres_list]
-    
-    total_ingresos = sum(c.get("total_ingresos", 0) for c in cierres_list)
-    total_egresos = sum(c.get("total_egresos", 0) for c in cierres_list)
-    total_diferencias = sum(c.get("diferencia", 0) for c in cierres_list)
-    
+
+    total_ingresos = float(resumen.get("total_vendido", 0) or 0)
+    total_egresos = float(resumen.get("egresos", {}).get("total", 0) or 0)
+    total_diferencias = sum(float(c.get("diferencia", 0) or 0) for c in cierres_list)
+
     return {
         "sede_id": sede_id,
         "periodo": {
-            "inicio": fecha_inicio,
-            "fin": fecha_fin,
-            "dias": len(cierres_list)
+            "inicio": inicio,
+            "fin": fin,
+            "dias": len(_build_date_list(inicio, fin))
         },
         "totales": {
             "ingresos": total_ingresos,
@@ -507,6 +677,7 @@ async def reporte_periodo(
             "neto": total_ingresos - total_egresos,
             "diferencias_acumuladas": total_diferencias
         },
+        "resumen": resumen,
         "cierres": cierres_list
     }
 

@@ -13,6 +13,7 @@ import SuperServices from './pages/PageSuperAdmin/Services/Services';
 import SuperComisiones from "./pages/PageSuperAdmin/Comisiones/Comisiones";
 import SuperStylist from "./pages/PageSuperAdmin/Styslit/Sytlist";
 import SuperClients from "./pages/PageSuperAdmin/Clients/Clients";
+import SuperSystemUsers from "./pages/PageSuperAdmin/SystemUsers/SystemUsers";
 import SuperPay from "./pages/PageSuperAdmin/Appoinment/PaymentMethods/PaymentMethods"
 import SuperInvoices from "./pages/PageSuperAdmin/Sales-invoiced/Sales-invoiced"
 
@@ -170,6 +171,14 @@ function App() {
               element={
                 <PrivateRoute allowedRoles={["super_admin"]}>
                   <SuperClients />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/superadmin/system-users"
+              element={
+                <PrivateRoute allowedRoles={["super_admin", "superadmin"]}>
+                  <SuperSystemUsers />
                 </PrivateRoute>
               }
             />

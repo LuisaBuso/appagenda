@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
-import { ScrollArea } from "../../../components/ui/scroll-area";
 import { Badge } from "../../../components/ui/badge";
 import { useAuth } from "../../../components/Auth/AuthContext";
 import {
@@ -78,7 +77,6 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
   const [cartByProductId, setCartByProductId] = useState<Record<string, CartItem>>({});
   const [quantityInputs, setQuantityInputs] = useState<Record<string, string>>({});
   const [searchTerm, setSearchTerm] = useState("");
-  const [clienteId, setClienteId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(DEFAULT_PAYMENT_METHOD);
   const [paymentBreakdown, setPaymentBreakdown] = useState<Record<PaymentBreakdownMethod, number>>(
     buildEmptyPaymentBreakdown()
@@ -168,7 +166,6 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
     setCartByProductId({});
     setQuantityInputs({});
     setSearchTerm("");
-    setClienteId("");
     setPaymentMethod(DEFAULT_PAYMENT_METHOD);
     setPaymentBreakdown(buildEmptyPaymentBreakdown());
     setSaleId(null);
@@ -453,7 +450,6 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
     const created = await createDirectSale({
       token,
       sedeId,
-      clienteId: clienteId.trim() || undefined,
       total: cartTotal,
       paymentMethod: safeInitialPaymentMethod,
       items: toSaleLineItems(),
@@ -556,8 +552,9 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="flex h-[90vh] w-full max-w-7xl flex-col overflow-hidden rounded-xl bg-white">
+    <div className="fixed inset-0 z-50 bg-black/60 p-3 sm:p-4">
+      <div className="mx-auto flex h-full items-center justify-center">
+        <div className="flex w-full max-w-7xl max-h-[90vh] flex-col overflow-hidden rounded-xl bg-white">
         <div className="flex items-center justify-between border-b border-gray-200 p-5">
           <div>
             <h2 className="text-2xl font-bold text-gray-900">Venta directa</h2>
@@ -577,19 +574,8 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 border-b border-gray-200 px-5 py-4 lg:grid-cols-3">
-          <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
-              Cliente ID (opcional)
-            </label>
-            <Input
-              value={clienteId}
-              onChange={(event) => setClienteId(event.target.value)}
-              placeholder="Ej: CL-90411"
-              disabled={Boolean(saleId) || isBusy}
-            />
-          </div>
-
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="grid grid-cols-1 gap-4 border-b border-gray-200 px-5 py-4 lg:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
               Método principal
@@ -615,28 +601,28 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
           </div>
         </div>
 
-        {(productsError || actionError || successMessage) && (
-          <div className="space-y-2 border-b border-gray-200 px-5 py-3">
-            {productsError && (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {productsError}
-              </div>
-            )}
-            {actionError && (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {actionError}
-              </div>
-            )}
-            {successMessage && (
-              <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
-                {successMessage}
-              </div>
-            )}
-          </div>
-        )}
+          {(productsError || actionError || successMessage) && (
+            <div className="space-y-2 border-b border-gray-200 px-5 py-3">
+              {productsError && (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {productsError}
+                </div>
+              )}
+              {actionError && (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {actionError}
+                </div>
+              )}
+              {successMessage && (
+                <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                  {successMessage}
+                </div>
+              )}
+            </div>
+          )}
 
-        <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          <div className="flex min-h-0 flex-1 flex-col border-r border-gray-200">
+          <div className="flex flex-col lg:flex-row">
+            <div className="flex flex-1 flex-col border-gray-200 lg:border-r">
             <div className="border-b border-gray-200 p-4">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-500" />
@@ -649,7 +635,7 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
               </div>
             </div>
 
-            <ScrollArea className="flex-1 p-4">
+            <div className="p-4">
               {isLoadingProducts ? (
                 <div className="flex h-40 flex-col items-center justify-center text-gray-600">
                   <Loader2 className="mb-2 h-6 w-6 animate-spin" />
@@ -717,10 +703,10 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
                   })}
                 </div>
               )}
-            </ScrollArea>
+            </div>
           </div>
 
-          <div className="flex w-full min-h-0 flex-col bg-gray-50 lg:w-[420px]">
+            <div className="flex w-full flex-col bg-gray-50 lg:w-[420px]">
             <div className="border-b border-gray-200 p-4">
               <h3 className="flex items-center gap-2 text-lg font-bold text-gray-900">
                 <ShoppingCart className="h-5 w-5" />
@@ -733,7 +719,7 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
               )}
             </div>
 
-            <ScrollArea className="flex-1 p-4">
+            <div className="p-4">
               {cartItems.length === 0 ? (
                 <div className="flex h-40 flex-col items-center justify-center text-center text-gray-600">
                   <ShoppingCart className="mb-2 h-8 w-8 text-gray-400" />
@@ -806,7 +792,7 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
                   })}
                 </div>
               )}
-            </ScrollArea>
+            </div>
 
             <div className="border-t border-gray-200 bg-white p-4">
               <div className="mb-4 flex items-center justify-between">
@@ -972,6 +958,8 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
               )}
             </div>
           </div>
+        </div>
+        </div>
         </div>
       </div>
     </div>
