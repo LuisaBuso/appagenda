@@ -32,6 +32,7 @@ const navItems: NavItem[] = [
   { title: 'Comisiones', href: '/superadmin/commissions', icon: CreditCard, roles: ['super_admin'] },
   { title: 'Sedes', href: '/superadmin/sedes', icon: Home, roles: ['super_admin'] },
   { title: 'Estilistas', href: '/superadmin/stylists', icon: Users, roles: ['super_admin'] },
+  { title: 'Usuarios Sistema', href: '/superadmin/system-users', icon: Users, roles: ['super_admin', 'superadmin'] },
   { title: 'Servicios', href: '/superadmin/services', icon: Package, roles: ['super_admin'] },
   { title: 'Ventas Facturadas', href: '/superadmin/sales-invoices', icon: CreditCard, roles: ['super_admin'] },
   { title: 'Cierre de Caja', href: '/superadmin/cierre-caja', icon: Wallet, roles: ['super_admin'], currencies: ['COP'] },

@@ -107,8 +107,14 @@ export const cashService = {
   getEfectivoDia: (params?: Record<string, any>) =>
     request<any>("GET", "/efectivo-dia", params),
 
+  getIngresos: (params?: Record<string, any>) =>
+    request<any>("GET", "/ingresos", params),
+
   getEgresos: (params?: Record<string, any>) =>
     request<any>("GET", "/egresos", params),
+
+  createIngreso: (body: Record<string, any>) =>
+    request<any>("POST", "/ingreso", undefined, body),
 
   createEgreso: (body: Record<string, any>) =>
     request<any>("POST", "/egreso", undefined, body),

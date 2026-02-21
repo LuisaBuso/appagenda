@@ -16,8 +16,9 @@ import {
 } from "../../../components/ui/dialog";
 import { Calendar, Download, Loader2, Plus, Trash2 } from "lucide-react"; //Wallet +
 import { cashService } from "./api/cashService";
-import type { CashCierre, CashEgreso, CashResumen, CashReporteRaw } from "./types";
+import type { CashCierre, CashEgreso, CashIngreso, CashResumen, CashReporteRaw } from "./types";
 import { formatDateDMY } from "../../../lib/dateFormat";
+import { toast } from "../../../hooks/use-toast";
 
 const toLocalDateString = (date: Date) => {
   const year = date.getFullYear();
@@ -86,10 +87,12 @@ export default function CierreCajaPage() {
     balance: 0,
     moneda: "COP",
   });
+  const [ingresos, setIngresos] = useState<CashIngreso[]>([]);
   const [egresos, setEgresos] = useState<CashEgreso[]>([]);
   const [cierres, setCierres] = useState<CashCierre[]>([]);
 
   const [loadingResumen, setLoadingResumen] = useState(false);
+  const [loadingIngresos, setLoadingIngresos] = useState(false);
   const [loadingEgresos, setLoadingEgresos] = useState(false);
   const [loadingCierres, setLoadingCierres] = useState(false);
   const [loadingReporte, setLoadingReporte] = useState(false);
@@ -99,6 +102,12 @@ export default function CierreCajaPage() {
   const [success, setSuccess] = useState<string | null>(null);
 
   // Form states
+  const [ingresoMonto, setIngresoMonto] = useState("");
+  const [ingresoMetodoPago, setIngresoMetodoPago] = useState("efectivo");
+  const [ingresoMotivo, setIngresoMotivo] = useState("");
+  const [ingresoFecha, setIngresoFecha] = useState(getToday());
+  const [ingresoModalOpen, setIngresoModalOpen] = useState(false);
+
   const [egresoMonto, setEgresoMonto] = useState("");
   const [egresoMotivo, setEgresoMotivo] = useState("");
   const [egresoFecha, setEgresoFecha] = useState(getToday());
@@ -128,6 +137,10 @@ export default function CierreCajaPage() {
     }
   }, []);
 
+  const ingresosManualesTotal = useMemo(() => {
+    return ingresos.reduce((sum, ingreso) => sum + (ingreso.monto || 0), 0);
+  }, [ingresos]);
+
   const egresosTotal = useMemo(() => {
     return egresos.reduce((sum, egreso) => sum + (egreso.monto || 0), 0);
   }, [egresos]);
@@ -138,8 +151,9 @@ export default function CierreCajaPage() {
   }, [resumen.ingresos, resumen.egresos, egresosTotal]);
 
   const formatMoney = (value: number) => {
+    const locale = monedaSede === "USD" ? "en-US" : monedaSede === "MXN" ? "es-MX" : "es-CO";
     try {
-      return new Intl.NumberFormat("es-CO", {
+      return new Intl.NumberFormat(locale, {
         style: "currency",
         currency: monedaSede,
         minimumFractionDigits: 0,
@@ -180,9 +194,8 @@ export default function CierreCajaPage() {
 
     const balance =
       pickNumber(periodTotals, ["neto", "balance", "saldo"]) ??
-      pickNumber(root, ["efectivo_esperado"]) ??
       pickNumber(summary, ["balance", "saldo", "neto", "total_balance"]) ??
-      ingresos - egresos;
+      (ingresos - egresos);
 
     return {
       ingresos,
@@ -206,6 +219,26 @@ export default function CierreCajaPage() {
         monto: toNumber(item.monto ?? item.valor ?? item.total ?? item.importe ?? 0),
         motivo: item.motivo ?? item.nota ?? item.descripcion ?? item.observacion ?? "Sin motivo",
         fecha: item.fecha ?? item.created_at ?? item.creado_en ?? item.fecha_egreso ?? getToday(),
+        creado_en: item.creado_en,
+      };
+    });
+  };
+
+  const normalizeIngresos = (data: any): CashIngreso[] => {
+    const root = unwrapData(data);
+    const lista =
+      root?.ingresos ?? root?.items ?? root?.data ?? (Array.isArray(root) ? root : []);
+
+    if (!Array.isArray(lista)) return [];
+
+    return lista.map((item, index) => {
+      return {
+        id: item._id || item.id || item.ingreso_id || String(index),
+        sede_id: item.sede_id,
+        monto: toNumber(item.monto ?? item.valor ?? item.total ?? item.importe ?? 0),
+        motivo: item.motivo ?? item.descripcion ?? item.observacion ?? "Ingreso manual",
+        metodo_pago: item.metodo_pago ?? item.metodo ?? "otros",
+        fecha: item.fecha ?? item.created_at ?? item.creado_en ?? getToday(),
         creado_en: item.creado_en,
       };
     });
@@ -297,6 +330,28 @@ export default function CierreCajaPage() {
     }
   };
 
+  const loadIngresos = async () => {
+    if (!sedeId) return;
+    const { start, end } = normalizeDateRange(fechaDesde, fechaHasta);
+    if (!start || !end) return;
+    setLoadingIngresos(true);
+    setError(null);
+
+    try {
+      const result = await cashService.getIngresos({
+        sede_id: sedeId,
+        fecha_inicio: start,
+        fecha_fin: end,
+      });
+      setIngresos(normalizeIngresos(result));
+    } catch (err) {
+      setIngresos([]);
+      setError("No se pudieron cargar los ingresos manuales");
+    } finally {
+      setLoadingIngresos(false);
+    }
+  };
+
   const loadCierres = async () => {
     if (!sedeId) return;
     setLoadingCierres(true);
@@ -314,14 +369,60 @@ export default function CierreCajaPage() {
   };
 
   const loadAll = async () => {
-    await Promise.all([loadResumen(), loadEgresos(), loadCierres()]);
+    await Promise.all([loadResumen(), loadIngresos(), loadEgresos(), loadCierres()]);
   };
 
   useEffect(() => {
-    if (sedeId && monedaSede === "COP") {
+    if (sedeId) {
       loadAll();
     }
   }, [sedeId, fechaDesde, fechaHasta, monedaSede]);
+
+  const handleCreateIngreso = async () => {
+    if (!sedeId) return;
+
+    const montoValue = toNumber(ingresoMonto);
+    if (!montoValue || montoValue <= 0) {
+      setError("El monto del ingreso debe ser mayor a 0");
+      return;
+    }
+
+    if (!ingresoMotivo.trim()) {
+      setError("El motivo del ingreso es obligatorio");
+      return;
+    }
+
+    setLoadingAction(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      await cashService.createIngreso({
+        sede_id: sedeId,
+        monto: montoValue,
+        metodo_pago: ingresoMetodoPago,
+        motivo: ingresoMotivo.trim(),
+        fecha: ingresoFecha,
+        moneda: monedaSede,
+      });
+
+      setIngresoMonto("");
+      setIngresoMetodoPago("efectivo");
+      setIngresoMotivo("");
+      setIngresoFecha(getToday());
+      setSuccess("Ingreso registrado correctamente");
+      toast({
+        title: "Ingreso registrado",
+        description: "El ingreso manual se guardó correctamente.",
+      });
+      setIngresoModalOpen(false);
+      await loadAll();
+    } catch (err: any) {
+      setError(err?.message || "No se pudo registrar el ingreso");
+    } finally {
+      setLoadingAction(false);
+    }
+  };
 
   const handleCreateEgreso = async () => {
     if (!sedeId) return;
@@ -531,8 +632,6 @@ export default function CierreCajaPage() {
     }
   };
 
-  if (monedaSede !== "COP") return null;
-
   return (
     <div className="flex h-screen bg-gray-50">
       <Sidebar />
@@ -589,7 +688,7 @@ export default function CierreCajaPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   onClick={loadAll}
-                  disabled={loadingResumen || loadingEgresos || loadingCierres || loadingReporte}
+                  disabled={loadingResumen || loadingIngresos || loadingEgresos || loadingCierres || loadingReporte}
                   className="bg-gray-900 hover:bg-gray-800 text-white"
                 >
                   Actualizar
@@ -603,6 +702,7 @@ export default function CierreCajaPage() {
                     !fechaHasta ||
                     loadingReporte ||
                     loadingResumen ||
+                    loadingIngresos ||
                     loadingEgresos ||
                     loadingCierres
                   }
@@ -629,7 +729,7 @@ export default function CierreCajaPage() {
                 <div className="text-2xl font-bold text-gray-900">
                   {loadingResumen ? "..." : formatMoney(resumen.ingresos || 0)}
                 </div>
-                <p className="text-xs text-gray-500">Ventas facturadas del período</p>
+                <p className="text-xs text-gray-500">Ventas + ingresos manuales</p>
               </CardContent>
             </Card>
             <Card className="border-gray-200">
@@ -745,32 +845,76 @@ export default function CierreCajaPage() {
             </Card>
           </div> */}
 
-          {/* Egresos y cierres */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          {/* Ingresos, egresos y cierres */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card className="border-gray-200 bg-gradient-to-br from-white via-gray-50 to-gray-100 shadow-sm">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm text-gray-700 flex items-center gap-2">
                   <Plus className="w-4 h-4" />
-                  Registrar egreso
+                  Movimientos manuales
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="rounded-lg border border-gray-200 bg-white/70 p-4 shadow-sm">
                   <div className="text-xs uppercase tracking-wide text-gray-500">Acción rápida</div>
                   <p className="mt-2 text-sm text-gray-700">
-                    Registra compras internas, gastos operativos o retiros de caja con fecha y motivo.
+                    Registra ingresos o egresos manuales para reflejar ajustes de caja en tiempo real.
                   </p>
+                </div>
+                <div className="flex items-center justify-between text-xs text-gray-500">
+                  <span>Total ingresos manuales</span>
+                  <span className="font-semibold text-gray-700">{formatMoney(ingresosManualesTotal)}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs text-gray-500">
                   <span>Total egresos del período</span>
                   <span className="font-semibold text-gray-700">{formatMoney(egresosTotal)}</span>
                 </div>
-                <Button
-                  onClick={() => setEgresoModalOpen(true)}
-                  className="bg-gray-900 hover:bg-gray-800 text-white w-full"
-                >
-                  Registrar egreso
-                </Button>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <Button
+                    onClick={() => setIngresoModalOpen(true)}
+                    className="bg-emerald-700 hover:bg-emerald-600 text-white w-full"
+                  >
+                    Registrar ingreso
+                  </Button>
+                  <Button
+                    onClick={() => setEgresoModalOpen(true)}
+                    className="bg-gray-900 hover:bg-gray-800 text-white w-full"
+                  >
+                    Registrar egreso
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-gray-200">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-gray-700">Listado de ingresos manuales</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {loadingIngresos ? (
+                  <div className="text-sm text-gray-500">Cargando ingresos...</div>
+                ) : ingresos.length === 0 ? (
+                  <div className="text-sm text-gray-500">No hay ingresos manuales registrados.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {ingresos.map((ingreso) => (
+                      <div
+                        key={ingreso.id}
+                        className="flex items-center justify-between rounded-md border border-gray-200 p-3"
+                      >
+                        <div>
+                          <div className="text-sm font-medium text-gray-900">{ingreso.motivo}</div>
+                          <div className="text-xs text-gray-500">
+                            {formatDate(ingreso.fecha)} · {String(ingreso.metodo_pago || "otros").replace(/_/g, " ")}
+                          </div>
+                        </div>
+                        <div className="text-sm font-semibold text-emerald-700">
+                          {formatMoney(ingreso.monto)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -851,6 +995,78 @@ export default function CierreCajaPage() {
               </CardContent>
             </Card>
           </div>
+
+          <Dialog open={ingresoModalOpen} onOpenChange={setIngresoModalOpen}>
+            <DialogContent className="max-w-lg overflow-hidden border-gray-200 bg-white p-0">
+              <div className="bg-emerald-700 px-6 py-5 text-white">
+                <DialogHeader className="space-y-1 text-left">
+                  <DialogTitle className="text-lg font-semibold">Registrar ingreso</DialogTitle>
+                  <DialogDescription className="text-emerald-50">
+                    Completa los datos para guardar el ingreso manual en la caja de la sede.
+                  </DialogDescription>
+                </DialogHeader>
+              </div>
+
+              <div className="space-y-4 px-6 py-5">
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Monto</label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={ingresoMonto}
+                    onChange={(e) => setIngresoMonto(e.target.value)}
+                    placeholder="0"
+                  />
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Método de pago</label>
+                    <select
+                      value={ingresoMetodoPago}
+                      onChange={(e) => setIngresoMetodoPago(e.target.value)}
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <option value="efectivo">Efectivo</option>
+                      <option value="tarjeta_credito">Tarjeta crédito</option>
+                      <option value="tarjeta_debito">Tarjeta débito</option>
+                      <option value="pos">POS</option>
+                      <option value="transferencia">Transferencia</option>
+                      <option value="link_de_pago">Link de pago</option>
+                      <option value="giftcard">Giftcard</option>
+                      <option value="addi">Addi</option>
+                      <option value="abonos">Abonos</option>
+                      <option value="otros">Otros</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Motivo</label>
+                    <Input
+                      value={ingresoMotivo}
+                      onChange={(e) => setIngresoMotivo(e.target.value)}
+                      placeholder="Ej: ajuste de caja"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Fecha</label>
+                    <Input type="date" value={ingresoFecha} onChange={(e) => setIngresoFecha(e.target.value)} />
+                  </div>
+                </div>
+              </div>
+
+              <DialogFooter className="border-t border-gray-100 bg-gray-50 px-6 py-4">
+                <Button variant="outline" onClick={() => setIngresoModalOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={handleCreateIngreso}
+                  disabled={loadingAction}
+                  className="bg-emerald-700 hover:bg-emerald-600 text-white"
+                >
+                  Guardar ingreso
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           <Dialog open={egresoModalOpen} onOpenChange={setEgresoModalOpen}>
             <DialogContent className="max-w-lg overflow-hidden border-gray-200 bg-white p-0">

@@ -115,6 +115,7 @@ async def create_user(
         "fecha_creacion": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "activo": True,
         "creado_por": current_user["email"],
+        "user_type": "staff" if rol == "estilista" else "system",
     }
 
     await collection.insert_one(nuevo_usuario)
@@ -250,7 +251,8 @@ async def create_initial_superadmin(
         "franquicia_id": None,
         "sede_id": None,
         "fecha_creacion": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "activo": True
+        "activo": True,
+        "user_type": "system",
     }
 
     # Insertar en la colección
