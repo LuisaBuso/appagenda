@@ -49,6 +49,7 @@ const ALL_PAYMENT_BREAKDOWN_METHODS = [
   "transferencia",
   "tarjeta_credito",
   "tarjeta_debito",
+  "giftcard",
   "addi",
 ] as const;
 type PaymentBreakdownMethod = (typeof ALL_PAYMENT_BREAKDOWN_METHODS)[number];
@@ -58,6 +59,7 @@ const ALL_PAYMENT_METHOD_OPTIONS: Array<{ value: PaymentMethod; label: string }>
   { value: "transferencia", label: "Transferencia" },
   { value: "tarjeta_credito", label: "Tarjeta de Crédito" },
   { value: "tarjeta_debito", label: "Tarjeta de Débito" },
+  { value: "giftcard", label: "Gift Card" },
   { value: "addi", label: "Addi" },
   { value: "tarjeta", label: "Tarjeta (legacy)" },
 ];
@@ -67,6 +69,7 @@ const buildEmptyPaymentBreakdown = (): Record<PaymentBreakdownMethod, number> =>
   transferencia: 0,
   tarjeta_credito: 0,
   tarjeta_debito: 0,
+  giftcard: 0,
   addi: 0,
 });
 
@@ -80,6 +83,7 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
   const [quantityInputs, setQuantityInputs] = useState<Record<string, string>>({});
   const [searchTerm, setSearchTerm] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(DEFAULT_PAYMENT_METHOD);
+  const [giftCardCode, setGiftCardCode] = useState("");
   const [paymentBreakdown, setPaymentBreakdown] = useState<Record<PaymentBreakdownMethod, number>>(
     buildEmptyPaymentBreakdown()
   );
@@ -134,6 +138,8 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
   const paymentBreakdownDelta = roundMoney(cartTotal - paymentBreakdownTotal);
   const paymentBreakdownOverpaid = hasCustomPaymentBreakdown && paymentBreakdownDelta < -0.009;
   const paymentBreakdownIncomplete = hasCustomPaymentBreakdown && paymentBreakdownDelta > 0.009;
+  const hasGiftCardInBreakdown = (paymentBreakdown.giftcard || 0) > 0;
+  const requiresGiftCardInput = paymentMethod === "giftcard" || hasGiftCardInBreakdown;
 
   const filteredProducts = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
@@ -169,6 +175,7 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
     setQuantityInputs({});
     setSearchTerm("");
     setPaymentMethod(DEFAULT_PAYMENT_METHOD);
+    setGiftCardCode("");
     setPaymentBreakdown(buildEmptyPaymentBreakdown());
     setSaleId(null);
     setProductsError(null);
@@ -228,6 +235,12 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
       }));
     }
   }, [isCopCurrency, paymentBreakdown.addi]);
+
+  useEffect(() => {
+    if (!requiresGiftCardInput && giftCardCode) {
+      setGiftCardCode("");
+    }
+  }, [requiresGiftCardInput, giftCardCode]);
 
   const formatCurrency = (value: number): string => {
     try {
@@ -469,7 +482,10 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
     }
   };
 
-  const createSale = async (initialPaymentMethod: PaymentMethod = paymentMethod): Promise<string> => {
+  const createSale = async (
+    initialPaymentMethod: PaymentMethod = paymentMethod,
+    giftCardCodeOverride?: string
+  ): Promise<string> => {
     if (saleId) {
       return saleId;
     }
@@ -486,11 +502,17 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
 
     setIsCreatingSale(true);
     const safeInitialPaymentMethod = sanitizePaymentMethodForCurrency(initialPaymentMethod);
+    const codigoGiftcard = (giftCardCodeOverride ?? giftCardCode).trim();
+    if (safeInitialPaymentMethod === "giftcard" && !codigoGiftcard) {
+      throw new Error("Debes ingresar el codigo de la Gift Card para crear la venta.");
+    }
+
     const created = await createDirectSale({
       token,
       sedeId,
       total: cartTotal,
       paymentMethod: safeInitialPaymentMethod,
+      giftCardCode: safeInitialPaymentMethod === "giftcard" ? codigoGiftcard : undefined,
       items: toSaleLineItems(),
     });
     setSaleId(created.saleId);
@@ -502,6 +524,9 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
     setActionError(null);
     setSuccessMessage(null);
     try {
+      if (paymentMethod === "giftcard" && !giftCardCode.trim()) {
+        throw new Error("Ingresa el codigo de la Gift Card.");
+      }
       const createdSaleId = await createSale();
       setSuccess(`Venta creada correctamente. ID: ${createdSaleId}`);
     } catch (error) {
@@ -548,11 +573,18 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
         return;
       }
 
+      const codigoGiftcard = giftCardCode.trim();
+      const needsGiftCardCode = plannedPayments.some((payment) => payment.method === "giftcard");
+      if (needsGiftCardCode && !codigoGiftcard) {
+        setError("Ingresa el codigo de la Gift Card para continuar.");
+        return;
+      }
+
       setIsProcessingPayment(true);
       setActionError(null);
       setSuccessMessage(null);
 
-      const targetSaleId = await createSale(plannedPayments[0].method);
+      const targetSaleId = await createSale(plannedPayments[0].method, codigoGiftcard);
       if (!targetSaleId?.trim()) {
         throw new Error("No se pudo determinar el ID de la venta creada.");
       }
@@ -563,6 +595,7 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
           saleId: targetSaleId,
           amount: payment.amount,
           paymentMethod: payment.method,
+          giftCardCode: payment.method === "giftcard" ? codigoGiftcard : undefined,
         });
       }
 
@@ -644,6 +677,24 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
             </Badge>
           </div>
         </div>
+
+          {requiresGiftCardInput && (
+            <div className="border-b border-gray-200 px-5 py-4">
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                Codigo Gift Card
+              </label>
+              <Input
+                value={giftCardCode}
+                onChange={(event) => setGiftCardCode(event.target.value)}
+                placeholder="Ej: RFC-GCP-1234"
+                className="h-9 max-w-md"
+                disabled={isBusy}
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Obligatorio cuando el pago principal o el desglose incluye Gift Card.
+              </p>
+            </div>
+          )}
 
           {(productsError || actionError || successMessage) && (
             <div className="space-y-2 border-b border-gray-200 px-5 py-3">
@@ -870,6 +921,8 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
                             ? "Tarjeta de Débito"
                             : method === "transferencia"
                             ? "Transferencia"
+                            : method === "giftcard"
+                            ? "Gift Card"
                             : method === "addi"
                             ? "Addi"
                             : "Efectivo"
