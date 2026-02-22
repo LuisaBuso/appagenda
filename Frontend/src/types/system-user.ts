@@ -6,6 +6,7 @@ export interface SystemUser {
   email: string;
   role: SystemUserRole;
   sede_id?: string | null;
+  sede_nombre?: string | null;
   especialidades?: string[];
   activo: boolean;
   user_type: "system" | "staff" | string;
