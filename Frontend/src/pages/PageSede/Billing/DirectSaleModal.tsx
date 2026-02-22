@@ -25,6 +25,7 @@ import {
   registerDirectSalePayment,
   verifyDirectSaleInBillingReport,
 } from "./directSalesApi";
+import { handleFacturarRequest, type FacturarTipo } from "./facturarApi";
 
 interface DirectSaleModalProps {
   isOpen: boolean;
@@ -36,6 +37,7 @@ interface CartItem {
   productId: string;
   inventoryId: string;
   name: string;
+  category?: string;
   quantity: number;
   unitPrice: number;
   stockAvailable: number;
@@ -287,6 +289,42 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
       unitPrice: item.unitPrice,
     }));
 
+  const calculateProductsTotal = (): number => roundMoney(cartTotal);
+
+  const calculateFinalTotal = (): number => roundMoney(cartTotal);
+
+  const handleFacturar = async ({
+    id,
+    tipo,
+  }: {
+    id: string;
+    tipo: FacturarTipo;
+  }) => {
+    const productosParaFacturar = cartItems.map((item) => ({
+      producto_id: item.productId,
+      nombre: item.name,
+      precio: roundMoney(item.unitPrice),
+      cantidad: item.quantity,
+      categoria: item.category || "",
+    }));
+
+    return handleFacturarRequest({
+      id,
+      tipo,
+      token,
+      productos: productosParaFacturar,
+      total_productos: calculateProductsTotal(),
+      total_final: calculateFinalTotal(),
+    });
+  };
+
+  const handleFacturarVenta = async (ventaId: string) => {
+    return handleFacturar({
+      id: ventaId,
+      tipo: "venta",
+    });
+  };
+
   const addProductToCart = async (product: InventoryProduct) => {
     if (isCatalogLocked) {
       setError("La venta ya fue creada. Solo puedes eliminar productos antes de registrar el pago.");
@@ -331,6 +369,7 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
           productId: product.productId,
           inventoryId: product.inventoryId,
           name: productDetail.name,
+          category: product.category,
           quantity: nextQuantity,
           unitPrice: productDetail.unitPrice,
           stockAvailable: productDetail.stockAvailable,
@@ -514,6 +553,9 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
       setSuccessMessage(null);
 
       const targetSaleId = await createSale(plannedPayments[0].method);
+      if (!targetSaleId?.trim()) {
+        throw new Error("No se pudo determinar el ID de la venta creada.");
+      }
 
       for (const payment of plannedPayments) {
         await registerDirectSalePayment({
@@ -533,7 +575,9 @@ export function DirectSaleModal({ isOpen, onClose, onSaleCompleted }: DirectSale
         });
       }
 
-      setSuccess(`Venta ${targetSaleId} cobrada y cerrada correctamente.`);
+      await handleFacturarVenta(targetSaleId);
+
+      setSuccess(`Venta ${targetSaleId} cobrada y cerrada correctamente. Factura generada correctamente.`);
       onSaleCompleted?.(targetSaleId);
       setTimeout(() => {
         handleCloseModal();

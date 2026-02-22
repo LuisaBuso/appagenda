@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { createBloqueo } from "./bloqueosApi";
 import { useAuth } from "../../components/Auth/AuthContext";
 import { getSedes, type Sede } from "../Branch/sedesApi";
@@ -11,6 +11,16 @@ interface BloqueosProps {
   fecha?: string;
   horaInicio?: string;
 }
+
+const DIAS_SEMANA = [
+  { value: 1, label: "Lunes" },
+  { value: 2, label: "Martes" },
+  { value: 3, label: "Miércoles" },
+  { value: 4, label: "Jueves" },
+  { value: 5, label: "Viernes" },
+  { value: 6, label: "Sábado" },
+  { value: 0, label: "Domingo" },
+];
 
 const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaInicio }) => {
   const { user } = useAuth();
@@ -33,6 +43,9 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
   
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState("");
+  const [isRecurrent, setIsRecurrent] = useState(false);
+  const [selectedDays, setSelectedDays] = useState<number[]>([]);
+  const [repeatUntil, setRepeatUntil] = useState("");
 
   // Cargar sedes según el tipo de usuario y estilistaId
   const cargarSedes = useCallback(async () => {
@@ -218,6 +231,36 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
     });
   }, [estilistaId, esEstilista]);
 
+  const handleToggleDay = useCallback((day: number) => {
+    setSelectedDays((prev) =>
+      prev.includes(day) ? prev.filter((item) => item !== day) : [...prev, day]
+    );
+  }, []);
+
+  const bloqueoRecurrenteEstimado = useMemo(() => {
+    if (!isRecurrent || !formData.fecha || !repeatUntil || selectedDays.length === 0) {
+      return 0;
+    }
+
+    if (repeatUntil < formData.fecha) {
+      return 0;
+    }
+
+    const inicio = new Date(`${formData.fecha}T00:00:00`);
+    const fin = new Date(`${repeatUntil}T00:00:00`);
+    let total = 0;
+
+    const cursor = new Date(inicio);
+    while (cursor <= fin) {
+      if (selectedDays.includes(cursor.getDay())) {
+        total += 1;
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    return total;
+  }, [isRecurrent, formData.fecha, repeatUntil, selectedDays]);
+
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user?.access_token) {
@@ -245,33 +288,76 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
       return;
     }
 
+    if (isRecurrent) {
+      if (selectedDays.length === 0) {
+        setMensaje("❌ Selecciona al menos un día para la recurrencia");
+        return;
+      }
+
+      if (!repeatUntil) {
+        setMensaje("❌ Debes seleccionar la fecha límite de repetición");
+        return;
+      }
+
+      if (repeatUntil < formData.fecha) {
+        setMensaje("❌ La fecha límite no puede ser menor que la fecha inicial");
+        return;
+      }
+
+      if (bloqueoRecurrenteEstimado <= 0) {
+        setMensaje("❌ No hay fechas válidas para crear bloqueos con esa configuración");
+        return;
+      }
+    }
+
     try {
       setLoading(true);
       setMensaje("");
       
-      const dataToSend = {
+      const payloadBase = {
         profesional_id: formData.profesional_id.trim(),
         sede_id: formData.sede_id.trim(),
-        fecha: formData.fecha,
         hora_inicio: formData.hora_inicio,
         hora_fin: formData.hora_fin,
         motivo: formData.motivo.trim() || "Bloqueo de agenda",
       };
 
+      const dataToSend = isRecurrent
+        ? {
+            ...payloadBase,
+            recurrente: true,
+            dias_semana: [...selectedDays].sort((a, b) => a - b),
+            fecha_inicio: formData.fecha,
+            fecha_fin: repeatUntil,
+          }
+        : {
+            ...payloadBase,
+            fecha: formData.fecha,
+          };
+
       console.log("📤 Enviando bloqueo:", dataToSend);
       
-      await createBloqueo(dataToSend, user.access_token);
-      setMensaje("✅ Bloqueo creado exitosamente");
+      const response = await createBloqueo(dataToSend, user.access_token);
+
+      if (isRecurrent) {
+        const creados = Number(response?.resumen?.creados ?? 0);
+        const omitidos = Number(response?.resumen?.omitidos ?? 0);
+        setMensaje(
+          `✅ Bloqueos recurrentes creados correctamente (${creados} creados${omitidos > 0 ? `, ${omitidos} omitidos` : ""})`
+        );
+      } else {
+        setMensaje("✅ Bloqueo creado exitosamente");
+      }
 
       // Cerrar después de éxito
-      setTimeout(onClose, 1000);
+      setTimeout(onClose, 1200);
     } catch (err: any) {
       console.error("Error al crear bloqueo:", err);
       setMensaje(`❌ ${err.message || "Error al guardar el bloqueo"}`);
     } finally {
       setLoading(false);
     }
-  }, [formData, user, onClose]);
+  }, [formData, user, onClose, isRecurrent, selectedDays, repeatUntil, bloqueoRecurrenteEstimado]);
 
   // Calcular hora mínima para fin
   const minHoraFin = formData.hora_inicio;
@@ -442,6 +528,62 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
           />
         </div>
 
+        {/* Recurrencia */}
+        <div className="p-3 border border-gray-300 rounded-lg bg-gray-50 space-y-3">
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-800">
+            <input
+              type="checkbox"
+              checked={isRecurrent}
+              onChange={(e) => setIsRecurrent(e.target.checked)}
+              className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500"
+            />
+            ¿Bloqueo recurrente?
+          </label>
+
+          {isRecurrent && (
+            <>
+              <div>
+                <p className="text-sm font-medium text-gray-800 mb-2">Repetir en días</p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {DIAS_SEMANA.map((day) => (
+                    <label
+                      key={day.value}
+                      className="flex items-center gap-2 text-sm text-gray-700 bg-white border border-gray-200 rounded px-2 py-1.5"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedDays.includes(day.value)}
+                        onChange={() => handleToggleDay(day.value)}
+                        className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500"
+                      />
+                      {day.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-800 mb-1">
+                  Repetir hasta
+                </label>
+                <input
+                  type="date"
+                  value={repeatUntil}
+                  onChange={(e) => setRepeatUntil(e.target.value)}
+                  min={formData.fecha || new Date().toISOString().split("T")[0]}
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-gray-500 transition-colors bg-white"
+                />
+              </div>
+
+              <div className="rounded border border-gray-200 bg-white p-2 text-xs text-gray-700">
+                Se crearán <span className="font-semibold">{bloqueoRecurrenteEstimado}</span> bloqueos entre{" "}
+                <span className="font-semibold">{formData.fecha || "fecha inicial"}</span> y{" "}
+                <span className="font-semibold">{repeatUntil || "fecha final"}</span>.
+              </div>
+            </>
+          )}
+        </div>
+
         {/* Horas */}
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -495,7 +637,7 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
             disabled={loading || loadingSedes || loadingEstilistas}
             className="px-6 py-2.5 rounded-lg bg-black text-white font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {loading ? "Creando bloqueo..." : "Crear bloqueo"}
+            {loading ? "Creando bloqueo..." : isRecurrent ? "Crear bloqueos" : "Crear bloqueo"}
           </button>
         </div>
       </form>

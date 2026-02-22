@@ -238,6 +238,7 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
   const [fechaEditada, setFechaEditada] = useState('');
   const [horaInicioEditada, setHoraInicioEditada] = useState('');
   const [horaFinEditada, setHoraFinEditada] = useState('');
+  const [horaFinManual, setHoraFinManual] = useState(false);
   const [profesionalEditadoId, setProfesionalEditadoId] = useState('');
   const [horarioOriginal, setHorarioOriginal] = useState({
     fecha: '',
@@ -286,6 +287,7 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
       setFechaEditada(fechaInicial);
       setHoraInicioEditada(horaInicioInicial);
       setHoraFinEditada(horaFinInicial);
+      setHoraFinManual(false);
       setProfesionalEditadoId(profesionalInicial);
       setHorarioOriginal({
         fecha: fechaInicial,
@@ -528,8 +530,14 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
     return `${String(newHours).padStart(2, '0')}:${String(newMinutes).padStart(2, '0')}`;
   };
 
+  const convertirHoraAMinutos = (hora: string): number => {
+    const [hours, minutes] = String(hora || '').split(':').map((value) => Number(value));
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return NaN;
+    return (hours * 60) + minutes;
+  };
+
   useEffect(() => {
-    if (!horaInicioEditada) return;
+    if (!horaInicioEditada || horaFinManual) return;
 
     const duracionParaCalculo = duracionTotalServicios > 0
       ? duracionTotalServicios
@@ -541,7 +549,7 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
     if (horaFinCalculada !== horaFinEditada) {
       setHoraFinEditada(horaFinCalculada);
     }
-  }, [horaInicioEditada, duracionTotalServicios, horaFinEditada]);
+  }, [horaInicioEditada, duracionTotalServicios, horaFinEditada, horaFinManual]);
 
   const getPagosData = () => {
     if (!appointmentDetails?.rawData) {
@@ -919,7 +927,14 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
     }
 
     if (!fechaEditada || !horaInicioEditada || !horaFinEditada || !profesionalEditadoId) {
-      setServiceError('Debes completar fecha, hora de inicio y profesional.');
+      setServiceError('Debes completar fecha, hora de inicio, hora de fin y profesional.');
+      return;
+    }
+
+    const horaInicioMinutos = convertirHoraAMinutos(horaInicioEditada);
+    const horaFinMinutos = convertirHoraAMinutos(horaFinEditada);
+    if (!Number.isFinite(horaInicioMinutos) || !Number.isFinite(horaFinMinutos) || horaFinMinutos <= horaInicioMinutos) {
+      setServiceError('La hora de fin debe ser mayor que la hora de inicio.');
       return;
     }
 
@@ -1722,26 +1737,53 @@ const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
                         <input
                           type="time"
                           value={horaInicioEditada}
-                          onChange={(e) => setHoraInicioEditada(e.target.value)}
+                          onChange={(e) => {
+                            setHoraInicioEditada(e.target.value);
+                          }}
                           disabled={isServiceActionsDisabled}
                           className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:ring-0 focus:border-black disabled:bg-gray-100"
                         />
                       </div>
 
                       <div>
-                        <label className="text-xs text-gray-500 font-medium mb-0.5 block">Hora fin (auto)</label>
+                        <div className="mb-0.5 flex items-center justify-between gap-2">
+                          <label className="text-xs text-gray-500 font-medium block">Hora fin</label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!horaInicioEditada) return;
+
+                              const duracionActual = convertirHoraAMinutos(horaFinEditada) - convertirHoraAMinutos(horaInicioEditada);
+                              const duracionParaAuto = duracionTotalServicios > 0
+                                ? duracionTotalServicios
+                                : (Number.isFinite(duracionActual) && duracionActual > 0 ? duracionActual : 30);
+                              setHoraFinEditada(sumarMinutosAHora(horaInicioEditada, duracionParaAuto));
+                              setHoraFinManual(false);
+                            }}
+                            disabled={isServiceActionsDisabled || !horaInicioEditada}
+                            className="text-[10px] text-gray-600 hover:text-gray-900 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            Auto
+                          </button>
+                        </div>
                         <input
                           type="time"
                           value={horaFinEditada}
-                          readOnly
-                          disabled
-                          className="w-full border border-gray-200 rounded px-2 py-1 text-xs bg-gray-50 text-gray-700"
+                          onChange={(e) => {
+                            setHoraFinEditada(e.target.value);
+                            setHoraFinManual(true);
+                          }}
+                          disabled={isServiceActionsDisabled}
+                          className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:ring-0 focus:border-black disabled:bg-gray-100"
                         />
                       </div>
                     </div>
 
                     <div className="text-[10px] text-gray-600">
                       Duración total estimada: <span className="font-semibold">{duracionTotalServicios} min</span>
+                    </div>
+                    <div className="text-[10px] text-gray-500">
+                      Hora fin actual: {horaFinManual ? 'manual' : 'automática'}
                     </div>
                     <div className="text-[10px] text-gray-500">
                       Fecha actual guardada: {formatFechaSegura(appointmentDetails.rawData?.fecha) || 'No definida'}
