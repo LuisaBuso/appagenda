@@ -11,16 +11,12 @@ import { formatSedeNombre } from "../../../lib/sede";
 
 const roleBadgeClasses: Record<string, string> = {
   superadmin: "bg-gray-900 text-white",
-  admin: "bg-gray-100 text-gray-800",
   admin_sede: "bg-blue-50 text-blue-700",
-  call_center: "bg-green-50 text-green-700",
 };
 
 const roleLabels: Record<string, string> = {
   superadmin: "superadmin",
-  admin: "admin",
   admin_sede: "adminsede",
-  call_center: "call center",
 };
 
 export default function SystemUsersPage() {
@@ -231,14 +227,6 @@ export default function SystemUsersPage() {
                   <div>
                     <p className="text-gray-500 mb-1">Tipo de usuario</p>
                     <p className="text-gray-900 font-medium">{selectedUser.user_type || "system"}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-500 mb-1">Comisión</p>
-                    <p className="text-gray-900 font-medium">
-                      {selectedUser.comision === null || selectedUser.comision === undefined
-                        ? "No definida"
-                        : `${selectedUser.comision}%`}
-                    </p>
                   </div>
                   <div>
                     <p className="text-gray-500 mb-1">Especialidades</p>
