@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { createBloqueo } from "./bloqueosApi";
 import { useAuth } from "../../components/Auth/AuthContext";
 import { getSedes, type Sede } from "../Branch/sedesApi";
@@ -10,20 +10,9 @@ interface BloqueosProps {
   estilistaId?: string;
   fecha?: string;
   horaInicio?: string;
-  compact?: boolean;
 }
 
-const DIAS_SEMANA = [
-  { value: 1, label: "Lunes" },
-  { value: 2, label: "Martes" },
-  { value: 3, label: "Miércoles" },
-  { value: 4, label: "Jueves" },
-  { value: 5, label: "Viernes" },
-  { value: 6, label: "Sábado" },
-  { value: 0, label: "Domingo" },
-];
-
-const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaInicio, compact = false }) => {
+const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaInicio }) => {
   const { user } = useAuth();
   const [sedes, setSedes] = useState<Sede[]>([]);
   const [estilistas, setEstilistas] = useState<Estilista[]>([]);
@@ -32,7 +21,6 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
   
   // Determinar si el usuario actual es un estilista
   const esEstilista = user?.role === 'estilista';
-  const useCompactView = compact || esEstilista;
   
   const [formData, setFormData] = useState({
     profesional_id: estilistaId || "",
@@ -45,9 +33,6 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
   
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState("");
-  const [isRecurrent, setIsRecurrent] = useState(false);
-  const [selectedDays, setSelectedDays] = useState<number[]>([]);
-  const [repeatUntil, setRepeatUntil] = useState("");
 
   // Cargar sedes según el tipo de usuario y estilistaId
   const cargarSedes = useCallback(async () => {
@@ -233,36 +218,6 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
     });
   }, [estilistaId, esEstilista]);
 
-  const handleToggleDay = useCallback((day: number) => {
-    setSelectedDays((prev) =>
-      prev.includes(day) ? prev.filter((item) => item !== day) : [...prev, day]
-    );
-  }, []);
-
-  const bloqueoRecurrenteEstimado = useMemo(() => {
-    if (!isRecurrent || !formData.fecha || !repeatUntil || selectedDays.length === 0) {
-      return 0;
-    }
-
-    if (repeatUntil < formData.fecha) {
-      return 0;
-    }
-
-    const inicio = new Date(`${formData.fecha}T00:00:00`);
-    const fin = new Date(`${repeatUntil}T00:00:00`);
-    let total = 0;
-
-    const cursor = new Date(inicio);
-    while (cursor <= fin) {
-      if (selectedDays.includes(cursor.getDay())) {
-        total += 1;
-      }
-      cursor.setDate(cursor.getDate() + 1);
-    }
-
-    return total;
-  }, [isRecurrent, formData.fecha, repeatUntil, selectedDays]);
-
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user?.access_token) {
@@ -290,76 +245,33 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
       return;
     }
 
-    if (isRecurrent) {
-      if (selectedDays.length === 0) {
-        setMensaje("❌ Selecciona al menos un día para la recurrencia");
-        return;
-      }
-
-      if (!repeatUntil) {
-        setMensaje("❌ Debes seleccionar la fecha límite de repetición");
-        return;
-      }
-
-      if (repeatUntil < formData.fecha) {
-        setMensaje("❌ La fecha límite no puede ser menor que la fecha inicial");
-        return;
-      }
-
-      if (bloqueoRecurrenteEstimado <= 0) {
-        setMensaje("❌ No hay fechas válidas para crear bloqueos con esa configuración");
-        return;
-      }
-    }
-
     try {
       setLoading(true);
       setMensaje("");
       
-      const payloadBase = {
+      const dataToSend = {
         profesional_id: formData.profesional_id.trim(),
         sede_id: formData.sede_id.trim(),
+        fecha: formData.fecha,
         hora_inicio: formData.hora_inicio,
         hora_fin: formData.hora_fin,
         motivo: formData.motivo.trim() || "Bloqueo de agenda",
       };
 
-      const dataToSend = isRecurrent
-        ? {
-            ...payloadBase,
-            recurrente: true,
-            dias_semana: [...selectedDays].sort((a, b) => a - b),
-            fecha_inicio: formData.fecha,
-            fecha_fin: repeatUntil,
-          }
-        : {
-            ...payloadBase,
-            fecha: formData.fecha,
-          };
-
       console.log("📤 Enviando bloqueo:", dataToSend);
       
-      const response = await createBloqueo(dataToSend, user.access_token);
-
-      if (isRecurrent) {
-        const creados = Number(response?.resumen?.creados ?? 0);
-        const omitidos = Number(response?.resumen?.omitidos ?? 0);
-        setMensaje(
-          `✅ Bloqueos recurrentes creados correctamente (${creados} creados${omitidos > 0 ? `, ${omitidos} omitidos` : ""})`
-        );
-      } else {
-        setMensaje("✅ Bloqueo creado exitosamente");
-      }
+      await createBloqueo(dataToSend, user.access_token);
+      setMensaje("✅ Bloqueo creado exitosamente");
 
       // Cerrar después de éxito
-      setTimeout(onClose, 1200);
+      setTimeout(onClose, 1000);
     } catch (err: any) {
       console.error("Error al crear bloqueo:", err);
       setMensaje(`❌ ${err.message || "Error al guardar el bloqueo"}`);
     } finally {
       setLoading(false);
     }
-  }, [formData, user, onClose, isRecurrent, selectedDays, repeatUntil, bloqueoRecurrenteEstimado]);
+  }, [formData, user, onClose]);
 
   // Calcular hora mínima para fin
   const minHoraFin = formData.hora_inicio;
@@ -383,36 +295,22 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
     }
   };
 
-  const fieldLabelClass = useCompactView
-    ? "block text-xs font-medium text-gray-700 mb-1"
-    : "block text-sm font-medium text-gray-800 mb-1";
-
-  const controlClass = useCompactView
-    ? "w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-gray-500 focus:border-gray-500 transition-colors"
-    : "w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-gray-500 transition-colors";
-
-  const readonlyControlClass = useCompactView
-    ? "w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50"
-    : "w-full p-3 border border-gray-300 rounded-lg bg-gray-50";
-
   return (
-    <div className={useCompactView ? "p-5 text-sm" : "p-5"}>
-      <h2 className={`${useCompactView ? "text-lg mb-3" : "text-2xl mb-4"} font-bold text-gray-900`}>
-        Bloqueo de horario
-      </h2>
+    <div className="">
+      <h2 className="text-2xl font-bold mb-4 text-gray-900">Bloqueo de horario</h2>
 
       {/* Información del usuario */}
-      <div className={`${useCompactView ? "mb-3 p-2.5 rounded-md" : "mb-4 p-3 rounded-lg"} bg-gray-100 border border-gray-300`}>
-        <p className={useCompactView ? "text-xs text-gray-700" : "text-sm text-gray-800"}>
+      <div className="mb-4 p-3 bg-gray-100 rounded-lg border border-gray-300">
+        <p className="text-sm text-gray-800">
           <span className="font-semibold">Usuario:</span> {user?.email}
         </p>
-        <p className={useCompactView ? "text-xs text-gray-700" : "text-sm text-gray-800"}>
+        <p className="text-sm text-gray-800">
           <span className="font-semibold">Rol:</span> {getRolDisplay()}
         </p>
         
         {(estilistaId || esEstilista) && (
           <div className="mt-2 pt-2 border-t border-gray-300">
-            <p className={`${useCompactView ? "text-[11px]" : "text-xs"} text-gray-700`}>
+            <p className="text-xs text-gray-700">
               <span className="font-semibold">⚠️ Modo especial:</span> 
               {estilistaId ? " Creando bloqueo para estilista específico" : 
                esEstilista ? " Creando bloqueo para tu propio horario" : ""}
@@ -421,17 +319,17 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
         )}
       </div>
 
-      <form onSubmit={handleSubmit} className={useCompactView ? "space-y-3" : "space-y-4"}>
+      <form onSubmit={handleSubmit} className="space-y-4">
         {/* Motivo */}
         <div>
-          <label className={fieldLabelClass}>
+          <label className="block text-sm font-medium text-gray-800 mb-1">
             Motivo del bloqueo
           </label>
           <input
             type="text"
             value={formData.motivo}
             onChange={(e) => handleInputChange('motivo', e.target.value)}
-            className={controlClass}
+            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-gray-500 transition-colors"
             placeholder="Ej: Capacitación, Reunión, Descanso, Vacaciones"
             required
           />
@@ -439,17 +337,17 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
 
         {/* Sede - Solo editable para Super Admin Y cuando no hay restricciones */}
         <div>
-          <label className={fieldLabelClass}>
+          <label className="block text-sm font-medium text-gray-800 mb-1">
             Sede
           </label>
           {user?.role === 'admin_sede' || estilistaId || esEstilista ? (
             // Para Admin Sede, estilistaId o usuario estilista: solo mostrar (no editable)
-            <div className={readonlyControlClass}>
+            <div className="w-full p-3 border border-gray-300 rounded-lg bg-gray-50">
               <div className="flex items-center justify-between">
-                <span className={`${useCompactView ? "text-sm" : "text-gray-900"} font-medium`}>
+                <span className="text-gray-900 font-medium">
                   {nombreSedeActual || "Cargando sede..."}
                 </span>
-                <span className={`${useCompactView ? "text-[11px]" : "text-xs"} text-gray-600`}>
+                <span className="text-xs text-gray-600">
                   {esEstilista ? "(Tu sede)" : 
                    estilistaId ? "(Sede del estilista)" : "(Tu sede)"}
                 </span>
@@ -466,7 +364,7 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
               value={formData.sede_id}
               onChange={(e) => handleInputChange('sede_id', e.target.value)}
               required
-              className={controlClass}
+              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-gray-500 transition-colors"
               disabled={loadingSedes || !!estilistaId || esEstilista}
               >
                 <option value="">{loadingSedes ? "Cargando sedes..." : "Seleccionar sede"}</option>
@@ -481,17 +379,17 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
 
         {/* Estilista - Si hay estilistaId o es estilista, mostrar como read-only */}
         <div>
-          <label className={fieldLabelClass}>
+          <label className="block text-sm font-medium text-gray-800 mb-1">
             Estilista
           </label>
           {estilistaId || esEstilista ? (
             // Mostrar como read-only si se pasó estilistaId o el usuario es estilista
-            <div className={readonlyControlClass}>
+            <div className="w-full p-3 border border-gray-300 rounded-lg bg-gray-50">
               <div className="flex items-center justify-between">
-                <span className={`${useCompactView ? "text-sm" : "text-gray-900"} font-medium`}>
+                <span className="text-gray-900 font-medium">
                   {nombreEstilistaActual || "Cargando estilista..."}
                 </span>
-                <span className={`${useCompactView ? "text-[11px]" : "text-xs"} text-gray-600`}>
+                <span className="text-xs text-gray-600">
                   {esEstilista ? "(Tú)" : "(Pre-seleccionado)"}
                 </span>
               </div>
@@ -507,7 +405,7 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
               value={formData.profesional_id}
               onChange={(e) => handleInputChange('profesional_id', e.target.value)}
               required
-              className={controlClass}
+              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-gray-500 transition-colors"
               disabled={!formData.sede_id || loadingEstilistas}
             >
               <option value="">
@@ -531,7 +429,7 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
 
         {/* Fecha */}
         <div>
-          <label className={fieldLabelClass}>
+          <label className="block text-sm font-medium text-gray-800 mb-1">
             Fecha
           </label>
           <input
@@ -540,70 +438,14 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
             onChange={(e) => handleInputChange('fecha', e.target.value)}
             required
             min={new Date().toISOString().split('T')[0]}
-            className={controlClass}
+            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-gray-500 transition-colors"
           />
-        </div>
-
-        {/* Recurrencia */}
-        <div className={`${useCompactView ? "p-2.5 rounded-md space-y-2.5" : "p-3 rounded-lg space-y-3"} border border-gray-300 bg-gray-50`}>
-          <label className={`flex items-center gap-2 ${useCompactView ? "text-xs" : "text-sm"} font-medium text-gray-800`}>
-            <input
-              type="checkbox"
-              checked={isRecurrent}
-              onChange={(e) => setIsRecurrent(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500"
-            />
-            ¿Bloqueo recurrente?
-          </label>
-
-          {isRecurrent && (
-            <>
-              <div>
-                <p className={`${useCompactView ? "text-xs mb-1.5" : "text-sm mb-2"} font-medium text-gray-800`}>Repetir en días</p>
-                <div className={`grid grid-cols-2 ${useCompactView ? "gap-1.5" : "gap-2"} sm:grid-cols-4`}>
-                  {DIAS_SEMANA.map((day) => (
-                    <label
-                      key={day.value}
-                      className={`flex items-center gap-2 ${useCompactView ? "text-xs px-2 py-1.5 rounded-md" : "text-sm px-2 py-1.5 rounded"} text-gray-700 bg-white border border-gray-200`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedDays.includes(day.value)}
-                        onChange={() => handleToggleDay(day.value)}
-                        className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-500"
-                      />
-                      {day.label}
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className={fieldLabelClass}>
-                  Repetir hasta
-                </label>
-                <input
-                  type="date"
-                  value={repeatUntil}
-                  onChange={(e) => setRepeatUntil(e.target.value)}
-                  min={formData.fecha || new Date().toISOString().split("T")[0]}
-                  className={`${controlClass} bg-white`}
-                />
-              </div>
-
-              <div className={`rounded border border-gray-200 bg-white ${useCompactView ? "p-2 text-[11px]" : "p-2 text-xs"} text-gray-700`}>
-                Se crearán <span className="font-semibold">{bloqueoRecurrenteEstimado}</span> bloqueos entre{" "}
-                <span className="font-semibold">{formData.fecha || "fecha inicial"}</span> y{" "}
-                <span className="font-semibold">{repeatUntil || "fecha final"}</span>.
-              </div>
-            </>
-          )}
         </div>
 
         {/* Horas */}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className={fieldLabelClass}>
+            <label className="block text-sm font-medium text-gray-800 mb-1">
               Hora inicio
             </label>
             <input
@@ -611,11 +453,11 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
               value={formData.hora_inicio}
               onChange={(e) => handleInputChange('hora_inicio', e.target.value)}
               required
-              className={controlClass}
+              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-gray-500 transition-colors"
             />
           </div>
           <div>
-            <label className={fieldLabelClass}>
+            <label className="block text-sm font-medium text-gray-800 mb-1">
               Hora fin
             </label>
             <input
@@ -624,14 +466,14 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
               onChange={(e) => handleInputChange('hora_fin', e.target.value)}
               required
               min={minHoraFin}
-              className={controlClass}
+              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-gray-500 transition-colors"
             />
           </div>
         </div>
 
         {/* Mensaje */}
         {mensaje && (
-          <div className={`${useCompactView ? "p-2.5 text-xs rounded-md" : "p-3 text-sm rounded-lg"} text-center font-medium border ${
+          <div className={`p-3 rounded-lg text-center text-sm font-medium border ${
             mensaje.includes("✅") ? "bg-gray-100 text-gray-900 border-gray-300" : "bg-gray-100 text-gray-900 border-gray-300"
           }`}>
             {mensaje}
@@ -639,11 +481,11 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
         )}
 
         {/* Botones */}
-        <div className={`flex justify-end ${useCompactView ? "space-x-2 mt-4 pt-3" : "space-x-3 mt-6 pt-4"} border-t border-gray-300`}>
+        <div className="flex justify-end space-x-3 mt-6 pt-4 border-t border-gray-300">
           <button
             type="button"
             onClick={onClose}
-            className={`${useCompactView ? "px-4 py-2 text-sm rounded-md" : "px-6 py-2.5 rounded-lg"} border border-gray-300 text-gray-800 font-medium hover:bg-gray-100 transition-colors`}
+            className="px-6 py-2.5 rounded-lg border border-gray-300 text-gray-800 font-medium hover:bg-gray-100 transition-colors"
             disabled={loading}
           >
             Cancelar
@@ -651,9 +493,9 @@ const Bloqueos: React.FC<BloqueosProps> = ({ onClose, estilistaId, fecha, horaIn
           <button
             type="submit"
             disabled={loading || loadingSedes || loadingEstilistas}
-            className={`${useCompactView ? "px-4 py-2 text-sm rounded-md" : "px-6 py-2.5 rounded-lg"} bg-black text-white font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors`}
+            className="px-6 py-2.5 rounded-lg bg-black text-white font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {loading ? "Creando bloqueo..." : isRecurrent ? "Crear bloqueos" : "Crear bloqueo"}
+            {loading ? "Creando bloqueo..." : "Crear bloqueo"}
           </button>
         </div>
       </form>

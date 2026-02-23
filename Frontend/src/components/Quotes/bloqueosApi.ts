@@ -9,26 +9,8 @@ export interface Bloqueo {
   hora_inicio: string;
   hora_fin: string;
   motivo: string;
-  recurrente?: boolean;
-  serie_id?: string | null;
-  dias_semana?: number[];
-  fecha_inicio_regla?: string | null;
-  fecha_fin_regla?: string | null;
   creado_por?: string;
   fecha_creacion?: string;
-}
-
-export interface BloqueoCreatePayload {
-  profesional_id: string;
-  sede_id: string;
-  hora_inicio: string;
-  hora_fin: string;
-  motivo: string;
-  fecha?: string;
-  recurrente?: boolean;
-  dias_semana?: number[];
-  fecha_inicio?: string;
-  fecha_fin?: string;
 }
 
 // Obtener bloqueos de un profesional específico - CAMBIÉ EL NOMBRE DEL PARÁMETRO
@@ -102,7 +84,7 @@ export async function getBloqueos(filtros: {
   }
 }
 
-export async function createBloqueo(data: BloqueoCreatePayload, token: string) {
+export async function createBloqueo(data: Bloqueo, token: string) {
   const res = await fetch(`${API_BASE_URL}scheduling/block/`, {
     method: "POST",
     headers: {
