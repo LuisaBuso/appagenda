@@ -16,7 +16,6 @@ import SuperClients from "./pages/PageSuperAdmin/Clients/Clients";
 import SuperSystemUsers from "./pages/PageSuperAdmin/SystemUsers/SystemUsers";
 import SuperPay from "./pages/PageSuperAdmin/Appoinment/PaymentMethods/PaymentMethods"
 import SuperInvoices from "./pages/PageSuperAdmin/Sales-invoiced/Sales-invoiced"
-import GiftCardsPage from "./pages/GiftCards/GiftCardsPage";
 
 /* --- Sede Pages --- */
 import SedeDashboard from "./pages/PageSede/Dashboard/Dashboard";
@@ -191,14 +190,6 @@ function App() {
                 </PrivateRoute>
               }
             />
-            <Route
-              path="/superadmin/gift-cards"
-              element={
-                <PrivateRoute allowedRoles={["super_admin", "superadmin"]}>
-                  <GiftCardsPage />
-                </PrivateRoute>
-              }
-            />
 
 
             {/* --- ADMIN SEDE --- */}
@@ -239,14 +230,6 @@ function App() {
               element={
                 <PrivateRoute allowedRoles={["admin_sede"]}>
                   <SedeBilling />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/sede/gift-cards"
-              element={
-                <PrivateRoute allowedRoles={["admin_sede"]}>
-                  <GiftCardsPage />
                 </PrivateRoute>
               }
             />

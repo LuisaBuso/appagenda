@@ -80,7 +80,6 @@ export default function PagosPage() {
     const [selectedProcessType, setSelectedProcessType] = useState<"reserva" | "pago">("pago")
     const [selectedPaymentType, setSelectedPaymentType] = useState<"deposit" | "full">("full")
     const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>("link_pago")
-    const [giftCardCode, setGiftCardCode] = useState("")
     const userCurrency = String(user?.moneda || sessionStorage.getItem("beaux-moneda") || "USD").toUpperCase()
     const isCopCurrency = userCurrency === "COP"
     const sanitizePaymentMethod = (method: string): string => {
@@ -135,12 +134,6 @@ export default function PagosPage() {
             setSelectedPaymentMethod("efectivo")
         }
     }, [isCopCurrency, selectedPaymentMethod]);
-
-    useEffect(() => {
-        if (selectedPaymentMethod !== "giftcard" && giftCardCode) {
-            setGiftCardCode("")
-        }
-    }, [selectedPaymentMethod, giftCardCode]);
 
     // 🔥 FUNCIÓN PARA CREAR CITA DIRECTA (SIN PAGO)
     const handleCreateAppointment = async () => {
@@ -207,11 +200,6 @@ export default function PagosPage() {
         try {
             const citaData = location.state.cita;
             const fechaFormateada = formatearFechaParaBackend(citaData.fecha);
-            const metodoPagoSeguro = sanitizePaymentMethod(selectedPaymentMethod)
-            const codigoGiftcard = giftCardCode.trim()
-            if (metodoPagoSeguro === "giftcard" && !codigoGiftcard) {
-                throw new Error("Debes ingresar el codigo de la Gift Card.")
-            }
             
             // 🔥 DETERMINAR MONTO A PAGAR Y ESTADO
             let montoPagado = 0;
@@ -243,10 +231,7 @@ export default function PagosPage() {
                 tipo_pago: tipoPago,
                 monto_abonado: montoPagado,
                 monto_total: citaData.monto_total,
-                metodo_pago: metodoPagoSeguro,
-                ...(metodoPagoSeguro === "giftcard" && codigoGiftcard
-                    ? { codigo_giftcard: codigoGiftcard }
-                    : {})
+                metodo_pago: sanitizePaymentMethod(selectedPaymentMethod) // 🔥 GUARDAR MÉTODO DE PAGO
             };
 
             console.log('📤 Creando cita con pago:', citaParaCrear);
@@ -283,11 +268,6 @@ export default function PagosPage() {
 
     // 🔥 FUNCIÓN PRINCIPAL PARA CONFIRMAR
     const handleConfirm = () => {
-        if (selectedProcessType === "pago" && selectedPaymentMethod === "giftcard" && !giftCardCode.trim()) {
-            setError("Debes ingresar el codigo de la Gift Card para continuar.")
-            return
-        }
-
         if (selectedProcessType === "reserva") {
             handleCreateAppointment();
         } else {
@@ -409,42 +389,24 @@ export default function PagosPage() {
 
                         {/* 🔥 OPCIONES DE PAGO (SOLO SI SE SELECCIONÓ PAGO) */}
                         {selectedProcessType === "pago" && (
-                            <div className="space-y-4">
-                                <div className="grid gap-6 lg:grid-cols-2">
-                                    <PaymentOptions
-                                        selectedType={selectedPaymentType}
-                                        onTypeChange={setSelectedPaymentType}
-                                        depositAmount={FIXED_DEPOSIT.toString()}
-                                        onDepositAmountChange={() => {}} // 🔥 No editable
-                                        totalAmount={appointment.totalAmount}
-                                        fixedDeposit={canHaveDeposit ? FIXED_DEPOSIT : undefined}
-                                        canHaveDeposit={canHaveDeposit}
-                                    />
+                            <div className="grid gap-6 lg:grid-cols-2">
+                                <PaymentOptions
+                                    selectedType={selectedPaymentType}
+                                    onTypeChange={setSelectedPaymentType}
+                                    depositAmount={FIXED_DEPOSIT.toString()}
+                                    onDepositAmountChange={() => {}} // 🔥 No editable
+                                    totalAmount={appointment.totalAmount}
+                                    fixedDeposit={canHaveDeposit ? FIXED_DEPOSIT : undefined}
+                                    canHaveDeposit={canHaveDeposit}
+                                />
 
-                                    <PaymentMethodSelector
-                                        selectedMethod={selectedPaymentMethod}
-                                        onMethodChange={setSelectedPaymentMethod}
-                                        amount={getDisplayAmount().toString()}
-                                        paymentType={getPaymentTypeText()}
-                                        currency={userCurrency}
-                                    />
-                                </div>
-
-                                {selectedPaymentMethod === "giftcard" && (
-                                    <div className="max-w-md">
-                                        <label className="mb-1 block text-sm font-semibold text-gray-700">
-                                            Codigo Gift Card *
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={giftCardCode}
-                                            onChange={(event) => setGiftCardCode(event.target.value)}
-                                            placeholder="Ej: RFC-GCP-1234"
-                                            className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm focus:border-blue-500 focus:outline-none"
-                                            disabled={loading}
-                                        />
-                                    </div>
-                                )}
+                                <PaymentMethodSelector
+                                    selectedMethod={selectedPaymentMethod}
+                                    onMethodChange={setSelectedPaymentMethod}
+                                    amount={getDisplayAmount().toString()}
+                                    paymentType={getPaymentTypeText()}
+                                    currency={userCurrency}
+                                />
                             </div>
                         )}
 
@@ -493,12 +455,7 @@ export default function PagosPage() {
                                 size="lg"
                                 className="bg-[oklch(0.55_0.25_280)] hover:bg-[oklch(0.50_0.25_280)]"
                                 onClick={handleConfirm}
-                                disabled={
-                                    loading ||
-                                    (selectedProcessType === "pago" &&
-                                        selectedPaymentMethod === "giftcard" &&
-                                        !giftCardCode.trim())
-                                }
+                                disabled={loading}
                             >
                                 {loading ? (
                                     <>

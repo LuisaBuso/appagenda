@@ -28,10 +28,6 @@ export async function getCitas(params?: { sede_id?: string; profesional_id?: str
 }
 
 export async function crearCita(data: any, token: string) {
-  const codigoGiftcard = typeof data.codigo_giftcard === 'string'
-    ? data.codigo_giftcard.trim()
-    : '';
-
   // ⭐ PREPARAR DATOS SEGÚN EL NUEVO FORMATO DEL BACKEND
   const citaData = {
     // IDs principales
@@ -52,13 +48,8 @@ export async function crearCita(data: any, token: string) {
     abono: Number(data.abono) || 0,
     
     // Opcional
-    notas: data.notas || "",
-    ...(codigoGiftcard ? { codigo_giftcard: codigoGiftcard } : {})
+    notas: data.notas || ""
   };
-
-  if (citaData.metodo_pago_inicial === 'giftcard' && !codigoGiftcard) {
-    throw new Error('Debes ingresar el codigo de la Gift Card para continuar');
-  }
 
   // 🔥 VALIDACIÓN - VERIFICAR QUE SERVICIOS NO ESTÉ VACÍO
   if (!citaData.servicios || citaData.servicios.length === 0) {
