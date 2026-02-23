@@ -26,8 +26,10 @@ export interface GiftCard {
   moneda: string;
   comprador_cliente_id?: string | null;
   comprador_nombre?: string | null;
+  comprador_email?: string | null;
   beneficiario_cliente_id?: string | null;
   beneficiario_nombre?: string | null;
+  beneficiario_email?: string | null;
   valor: number;
   saldo_disponible: number;
   saldo_reservado?: number;

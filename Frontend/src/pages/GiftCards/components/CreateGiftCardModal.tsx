@@ -1,5 +1,5 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Loader2, Search } from "lucide-react";
+import { FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { CheckCircle2, CreditCard, Landmark, Loader2, Search, Wallet } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import {
   Dialog,
@@ -10,25 +10,21 @@ import {
   DialogTitle,
 } from "../../../components/ui/dialog";
 import { Input } from "../../../components/ui/input";
-import { Switch } from "../../../components/ui/switch";
-import { Textarea } from "../../../components/ui/textarea";
 import { giftcardsService } from "../giftcardsService";
 import type { GiftCardClientOption, GiftCardCreatePayload } from "../types";
 import { formatMoney, toPositiveNumber } from "./utils";
 
 const PRESET_AMOUNTS = [50000, 100000, 150000, 200000, 300000];
 
-type AmountMode = "preset" | "free";
-type BuyerMode = "client" | "manual";
-type BeneficiaryMode = "client" | "manual";
+type AmountMode = "free" | "preset";
 type ValidityMode = "annual" | "custom";
 type PaymentMethod = "efectivo" | "transferencia" | "tarjeta_credito" | "tarjeta_debito";
 
-const PAYMENT_OPTIONS: Array<{ label: string; value: PaymentMethod }> = [
-  { label: "Efectivo", value: "efectivo" },
-  { label: "Transferencia", value: "transferencia" },
-  { label: "Tarjeta Crédito", value: "tarjeta_credito" },
-  { label: "Tarjeta Débito", value: "tarjeta_debito" },
+const PAYMENT_OPTIONS: Array<{ label: string; value: PaymentMethod; icon: ReactNode }> = [
+  { label: "Efectivo", value: "efectivo", icon: <Wallet className="h-4 w-4" /> },
+  { label: "Transferencia", value: "transferencia", icon: <Landmark className="h-4 w-4" /> },
+  { label: "Tarjeta-Crédito", value: "tarjeta_credito", icon: <CreditCard className="h-4 w-4" /> },
+  { label: "Tarjeta-Débito", value: "tarjeta_debito", icon: <CreditCard className="h-4 w-4" /> },
 ];
 
 export interface CreateGiftCardSubmission {
@@ -70,9 +66,13 @@ function calculateDaysBetweenToday(endDate: string): number {
   const today = new Date(getTodayDateInput());
   const target = new Date(endDate);
   if (Number.isNaN(target.getTime())) return 0;
-
   const milliseconds = target.getTime() - today.getTime();
   return Math.ceil(milliseconds / (1000 * 60 * 60 * 24));
+}
+
+function formatAmountInput(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  return Math.round(value).toLocaleString("es-CO");
 }
 
 export function CreateGiftCardModal({
@@ -90,28 +90,23 @@ export function CreateGiftCardModal({
   const [clientsError, setClientsError] = useState<string | null>(null);
   const [hasLoadedClients, setHasLoadedClients] = useState(false);
 
-  const [amountMode, setAmountMode] = useState<AmountMode>("preset");
-  const [presetAmount, setPresetAmount] = useState<number>(PRESET_AMOUNTS[1]);
-  const [freeAmountInput, setFreeAmountInput] = useState<string>("");
+  const [amountMode, setAmountMode] = useState<AmountMode>("free");
+  const [presetAmount, setPresetAmount] = useState<number>(150000);
+  const [freeAmountInput, setFreeAmountInput] = useState<string>("150000");
 
-  const [buyerMode, setBuyerMode] = useState<BuyerMode>("client");
   const [buyerSearch, setBuyerSearch] = useState("");
   const [selectedBuyerId, setSelectedBuyerId] = useState("");
-  const [buyerManualName, setBuyerManualName] = useState("");
 
   const [isForAnotherPerson, setIsForAnotherPerson] = useState(false);
-  const [beneficiaryMode, setBeneficiaryMode] = useState<BeneficiaryMode>("manual");
-  const [beneficiarySearch, setBeneficiarySearch] = useState("");
-  const [selectedBeneficiaryId, setSelectedBeneficiaryId] = useState("");
   const [beneficiaryName, setBeneficiaryName] = useState("");
   const [beneficiaryPhone, setBeneficiaryPhone] = useState("");
   const [beneficiaryEmail, setBeneficiaryEmail] = useState("");
+  const [optionalMessage, setOptionalMessage] = useState("");
 
   const [validityMode, setValidityMode] = useState<ValidityMode>("annual");
   const [customExpiryDate, setCustomExpiryDate] = useState(getDateInputFromToday(365));
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("efectivo");
-  const [optionalMessage, setOptionalMessage] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
   const selectedBuyer = useMemo(
@@ -119,34 +114,16 @@ export function CreateGiftCardModal({
     [clients, selectedBuyerId]
   );
 
-  const selectedBeneficiary = useMemo(
-    () => clients.find((client) => client.id === selectedBeneficiaryId) ?? null,
-    [clients, selectedBeneficiaryId]
-  );
-
   const buyerOptions = useMemo(() => {
     const term = buyerSearch.trim().toLowerCase();
-    if (!term) return clients.slice(0, 60);
+    if (!term) return clients.slice(0, 80);
 
     return clients
       .filter((client) => {
         const value = `${client.nombre} ${client.email ?? ""} ${client.id}`.toLowerCase();
         return value.includes(term);
-      })
-      .slice(0, 60);
+      });
   }, [buyerSearch, clients]);
-
-  const beneficiaryOptions = useMemo(() => {
-    const term = beneficiarySearch.trim().toLowerCase();
-    if (!term) return clients.slice(0, 60);
-
-    return clients
-      .filter((client) => {
-        const value = `${client.nombre} ${client.email ?? ""} ${client.id}`.toLowerCase();
-        return value.includes(term);
-      })
-      .slice(0, 60);
-  }, [beneficiarySearch, clients]);
 
   const totalAmount = amountMode === "preset" ? presetAmount : toPositiveNumber(freeAmountInput);
 
@@ -173,7 +150,7 @@ export function CreateGiftCardModal({
       }
     };
 
-    loadClients();
+    void loadClients();
 
     return () => {
       isMounted = false;
@@ -181,87 +158,67 @@ export function CreateGiftCardModal({
   }, [open, token, hasLoadedClients]);
 
   useEffect(() => {
-    if (open) return;
+    if (!open) {
+      setFormError(null);
+      setAmountMode("free");
+      setPresetAmount(150000);
+      setFreeAmountInput("150000");
+      setBuyerSearch("");
+      setSelectedBuyerId("");
+      setIsForAnotherPerson(false);
+      setBeneficiaryName("");
+      setBeneficiaryPhone("");
+      setBeneficiaryEmail("");
+      setOptionalMessage("");
+      setValidityMode("annual");
+      setCustomExpiryDate(getDateInputFromToday(365));
+      setPaymentMethod("efectivo");
+      return;
+    }
 
-    setFormError(null);
-    setAmountMode("preset");
-    setPresetAmount(PRESET_AMOUNTS[1]);
-    setFreeAmountInput("");
-    setBuyerMode("client");
-    setBuyerSearch("");
-    setSelectedBuyerId("");
-    setBuyerManualName("");
-    setIsForAnotherPerson(false);
-    setBeneficiaryMode("manual");
-    setBeneficiarySearch("");
-    setSelectedBeneficiaryId("");
-    setBeneficiaryName("");
-    setBeneficiaryPhone("");
-    setBeneficiaryEmail("");
-    setValidityMode("annual");
-    setCustomExpiryDate(getDateInputFromToday(365));
-    setPaymentMethod("efectivo");
-    setOptionalMessage("");
-  }, [open]);
+    if (!isForAnotherPerson && selectedBuyer) {
+      setBeneficiaryName(selectedBuyer.nombre || "");
+      setBeneficiaryPhone(selectedBuyer.telefono || "");
+      setBeneficiaryEmail(selectedBuyer.email || "");
+    }
+  }, [open, isForAnotherPerson, selectedBuyer]);
 
   const submitCreateGiftCard = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-
     setFormError(null);
 
     if (!sedeId) {
-      setFormError("No se encontró la sede para crear la Gift Card");
+      setFormError("No se encontró la sede para crear la Gift Card.");
       return;
     }
 
     if (!totalAmount || totalAmount <= 0) {
-      setFormError("El valor de la Gift Card debe ser mayor a 0");
+      setFormError("El valor de la Gift Card debe ser mayor a 0.");
       return;
     }
 
-    const buyerName = buyerMode === "client" ? selectedBuyer?.nombre?.trim() : buyerManualName.trim();
-    if (!buyerName) {
-      setFormError("Debes seleccionar o escribir el comprador");
+    if (!selectedBuyer) {
+      setFormError("Debes seleccionar el cliente comprador.");
       return;
     }
 
     const customDays = validityMode === "custom" ? calculateDaysBetweenToday(customExpiryDate) : 365;
     if (validityMode === "custom" && customDays <= 0) {
-      setFormError("La fecha de vigencia personalizada debe ser posterior a hoy");
+      setFormError("La fecha de vigencia personalizada debe ser posterior a hoy.");
       return;
     }
 
-    let finalBeneficiaryId: string | undefined;
-    let finalBeneficiaryName = "";
-    let finalBeneficiaryEmail = "";
-    let finalBeneficiaryPhone = "";
+    const finalBeneficiaryName = isForAnotherPerson ? beneficiaryName.trim() : selectedBuyer.nombre;
+    const finalBeneficiaryPhone = isForAnotherPerson
+      ? beneficiaryPhone.trim()
+      : String(selectedBuyer.telefono || "").trim();
+    const finalBeneficiaryEmail = isForAnotherPerson
+      ? beneficiaryEmail.trim()
+      : String(selectedBuyer.email || "").trim();
 
-    if (isForAnotherPerson) {
-      if (beneficiaryMode === "client") {
-        if (!selectedBeneficiary?.id) {
-          setFormError("Selecciona el cliente beneficiario");
-          return;
-        }
-
-        finalBeneficiaryId = selectedBeneficiary.id;
-        finalBeneficiaryName = selectedBeneficiary.nombre;
-        finalBeneficiaryEmail = selectedBeneficiary.email ?? "";
-        finalBeneficiaryPhone = selectedBeneficiary.telefono ?? "";
-      } else {
-        finalBeneficiaryName = beneficiaryName.trim();
-        finalBeneficiaryEmail = beneficiaryEmail.trim();
-        finalBeneficiaryPhone = beneficiaryPhone.trim();
-
-        if (!finalBeneficiaryName) {
-          setFormError("El nombre del beneficiario es obligatorio");
-          return;
-        }
-      }
-    } else {
-      finalBeneficiaryId = buyerMode === "client" ? selectedBuyer?.id : undefined;
-      finalBeneficiaryName = buyerName;
-      finalBeneficiaryEmail = selectedBuyer?.email ?? "";
-      finalBeneficiaryPhone = selectedBuyer?.telefono ?? "";
+    if (!finalBeneficiaryName) {
+      setFormError("Debes ingresar el nombre del beneficiario.");
+      return;
     }
 
     const notesParts: string[] = [];
@@ -281,9 +238,9 @@ export function CreateGiftCardModal({
       valor: totalAmount,
       moneda: currency,
       dias_vigencia: validityMode === "custom" ? customDays : 365,
-      comprador_cliente_id: buyerMode === "client" ? selectedBuyer?.id : undefined,
-      comprador_nombre: buyerName,
-      beneficiario_cliente_id: finalBeneficiaryId,
+      comprador_cliente_id: selectedBuyer.id,
+      comprador_nombre: selectedBuyer.nombre,
+      beneficiario_cliente_id: isForAnotherPerson ? undefined : selectedBuyer.id,
       beneficiario_nombre: finalBeneficiaryName,
       notas: notesParts.join(" | "),
     };
@@ -296,64 +253,79 @@ export function CreateGiftCardModal({
         beneficiaryPhone: finalBeneficiaryPhone || undefined,
       });
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : "No se pudo crear la Gift Card");
+      setFormError(error instanceof Error ? error.message : "No se pudo crear la Gift Card.");
     }
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto border-0 bg-white p-0 shadow-2xl">
-        <div className="bg-gradient-to-r from-indigo-700 via-indigo-600 to-blue-600 px-7 py-6 text-white">
+      <DialogContent className="max-h-[92vh] max-w-[780px] overflow-y-auto rounded-2xl border border-gray-200 bg-white p-0 shadow-2xl">
+        <div className="border-b border-gray-200 px-6 py-5">
           <DialogHeader className="text-left">
-            <DialogTitle className="text-2xl font-semibold">Crear Gift Card</DialogTitle>
-            <DialogDescription className="text-indigo-100">
-              Configura el valor, comprador, beneficiario y vigencia para emitir la Gift Card.
+            <DialogTitle className="text-3xl font-semibold text-gray-900">Crear Gift Card</DialogTitle>
+            <DialogDescription className="mt-1 text-sm text-gray-500">
+              Emite una tarjeta regalo y asigna su beneficiario.
             </DialogDescription>
           </DialogHeader>
         </div>
 
-        <form onSubmit={submitCreateGiftCard} className="space-y-6 px-7 py-6">
-          <section className="space-y-4 rounded-xl border border-gray-200 bg-gray-50/50 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold text-gray-900">Valor de la Gift Card</h3>
-              <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">
-                {formatMoney(totalAmount, currency)}
+        <form onSubmit={submitCreateGiftCard} className="space-y-5 px-6 py-5">
+          <section className="space-y-3">
+            <h3 className="text-base font-semibold text-gray-900">Valor de la Gift Card</h3>
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">
+                $
               </span>
+              <Input
+                inputMode="numeric"
+                value={
+                  amountMode === "preset"
+                    ? formatAmountInput(presetAmount)
+                    : freeAmountInput.replace(/[^\d]/g, "")
+                }
+                onChange={(event) => {
+                  if (amountMode !== "free") return;
+                  setFreeAmountInput(event.target.value.replace(/[^\d]/g, ""));
+                }}
+                className="h-11 pl-8 text-base"
+                placeholder="150000"
+                readOnly={amountMode === "preset"}
+              />
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setAmountMode("preset")}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                  amountMode === "preset"
-                    ? "bg-indigo-600 text-white"
-                    : "border border-gray-200 bg-white text-gray-700"
-                }`}
-              >
-                Monto predefinido
-              </button>
-              <button
-                type="button"
-                onClick={() => setAmountMode("free")}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                  amountMode === "free"
-                    ? "bg-indigo-600 text-white"
-                    : "border border-gray-200 bg-white text-gray-700"
-                }`}
-              >
+            <div className="flex flex-wrap gap-5">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="radio"
+                  name="amount-mode"
+                  value="free"
+                  checked={amountMode === "free"}
+                  onChange={() => setAmountMode("free")}
+                  className="h-4 w-4 accent-indigo-600"
+                />
                 Monto libre
-              </button>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="radio"
+                  name="amount-mode"
+                  value="preset"
+                  checked={amountMode === "preset"}
+                  onChange={() => setAmountMode("preset")}
+                  className="h-4 w-4 accent-indigo-600"
+                />
+                Monto predefinido
+              </label>
             </div>
 
             {amountMode === "preset" ? (
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                 {PRESET_AMOUNTS.map((value) => (
                   <button
                     key={value}
                     type="button"
                     onClick={() => setPresetAmount(value)}
-                    className={`rounded-lg border px-3 py-2 text-sm font-medium ${
+                    className={`rounded-lg border px-3 py-2 text-xs font-medium ${
                       presetAmount === value
                         ? "border-indigo-500 bg-indigo-50 text-indigo-700"
                         : "border-gray-200 bg-white text-gray-700 hover:border-indigo-300"
@@ -363,262 +335,166 @@ export function CreateGiftCardModal({
                   </button>
                 ))}
               </div>
-            ) : (
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-gray-600">Monto libre</label>
-                <Input
-                  inputMode="numeric"
-                  placeholder="Ej: 150000"
-                  value={freeAmountInput}
-                  onChange={(event) => setFreeAmountInput(event.target.value)}
-                />
-              </div>
-            )}
+            ) : null}
           </section>
 
-          <section className="space-y-4 rounded-xl border border-gray-200 bg-white p-4">
-            <h3 className="text-sm font-semibold text-gray-900">Comprador</h3>
+          <section className="space-y-3">
+            <h3 className="text-base font-semibold text-gray-900">Comprador</h3>
 
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setBuyerMode("client")}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                  buyerMode === "client"
-                    ? "bg-blue-600 text-white"
-                    : "border border-gray-200 bg-white text-gray-700"
-                }`}
-              >
-                Cliente registrado
-              </button>
-              <button
-                type="button"
-                onClick={() => setBuyerMode("manual")}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                  buyerMode === "manual"
-                    ? "bg-blue-600 text-white"
-                    : "border border-gray-200 bg-white text-gray-700"
-                }`}
-              >
-                Nombre manual
-              </button>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <Input
+                value={buyerSearch}
+                onChange={(event) => setBuyerSearch(event.target.value)}
+                placeholder="Buscar cliente"
+                className="h-11 pl-9"
+              />
             </div>
 
-            {buyerMode === "client" ? (
-              <div className="grid grid-cols-1 gap-3">
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                  <Input
-                    value={buyerSearch}
-                    onChange={(event) => setBuyerSearch(event.target.value)}
-                    placeholder="Buscar por nombre, correo o ID"
-                    className="pl-9"
+            <select
+              value={selectedBuyerId}
+              onChange={(event) => setSelectedBuyerId(event.target.value)}
+              className="h-11 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700"
+              disabled={isLoadingClients}
+            >
+              <option value="">Selecciona cliente comprador</option>
+              {buyerOptions.map((client) => (
+                <option key={client.id} value={client.id}>
+                  {client.nombre} {client.email ? `(${client.email})` : ""}
+                </option>
+              ))}
+            </select>
+
+            {isLoadingClients ? (
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Cargando clientes...
+              </div>
+            ) : null}
+            {clientsError ? <p className="text-xs text-amber-700">{clientsError}</p> : null}
+          </section>
+
+          <section className="space-y-3">
+            <h3 className="text-base font-semibold text-gray-900">Beneficiario</h3>
+
+            <div className="flex flex-wrap gap-5">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="radio"
+                  name="beneficiary-mode"
+                  checked={isForAnotherPerson}
+                  onChange={() => setIsForAnotherPerson(true)}
+                  className="h-4 w-4 accent-indigo-600"
+                />
+                Es para otra persona
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="radio"
+                  name="beneficiary-mode"
+                  checked={!isForAnotherPerson}
+                  onChange={() => setIsForAnotherPerson(false)}
+                  className="h-4 w-4 accent-indigo-600"
+                />
+                Es para el comprador
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <Input
+                value={beneficiaryName}
+                onChange={(event) => setBeneficiaryName(event.target.value)}
+                placeholder="Nombre beneficiario"
+                disabled={!isForAnotherPerson}
+                className="h-11"
+              />
+              <Input
+                value={beneficiaryPhone}
+                onChange={(event) => setBeneficiaryPhone(event.target.value)}
+                placeholder="Teléfono"
+                disabled={!isForAnotherPerson}
+                className="h-11"
+              />
+              <Input
+                value={beneficiaryEmail}
+                onChange={(event) => setBeneficiaryEmail(event.target.value)}
+                placeholder="Email"
+                disabled={!isForAnotherPerson}
+                className="h-11"
+              />
+              <Input
+                value={optionalMessage}
+                onChange={(event) => setOptionalMessage(event.target.value)}
+                placeholder="Mensaje (opcional)"
+                className="h-11"
+              />
+            </div>
+          </section>
+
+          <section className="grid grid-cols-1 gap-5 md:grid-cols-2">
+            <div className="space-y-3">
+              <h3 className="text-base font-semibold text-gray-900">Vigencia</h3>
+              <div className="space-y-2">
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="radio"
+                    name="validity-mode"
+                    checked={validityMode === "annual"}
+                    onChange={() => setValidityMode("annual")}
+                    className="h-4 w-4 accent-indigo-600"
                   />
-                </div>
-
-                <select
-                  value={selectedBuyerId}
-                  onChange={(event) => setSelectedBuyerId(event.target.value)}
-                  className="h-10 rounded-md border border-gray-200 bg-white px-3 text-sm text-gray-700"
-                  disabled={isLoadingClients}
-                >
-                  <option value="">Selecciona un comprador</option>
-                  {buyerOptions.map((client) => (
-                    <option key={client.id} value={client.id}>
-                      {client.nombre} {client.email ? `(${client.email})` : ""}
-                    </option>
-                  ))}
-                </select>
-
-                {isLoadingClients ? (
-                  <div className="flex items-center gap-2 text-xs text-gray-500">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Cargando clientes...
-                  </div>
-                ) : null}
-                {clientsError ? <p className="text-xs text-amber-700">{clientsError}</p> : null}
-              </div>
-            ) : (
-              <div>
-                <label className="text-xs font-medium text-gray-600">Nombre comprador</label>
-                <Input
-                  value={buyerManualName}
-                  onChange={(event) => setBuyerManualName(event.target.value)}
-                  placeholder="Nombre completo del comprador"
-                />
-              </div>
-            )}
-          </section>
-
-          <section className="space-y-4 rounded-xl border border-gray-200 bg-white p-4">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold text-gray-900">Beneficiario</h3>
-              <div className="flex items-center gap-2 text-sm text-gray-600">
-                <Switch checked={isForAnotherPerson} onCheckedChange={setIsForAnotherPerson} />
-                <span>Es para otra persona</span>
-              </div>
-            </div>
-
-            {!isForAnotherPerson ? (
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                La Gift Card quedará a nombre del comprador.
-              </div>
-            ) : (
-              <>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setBeneficiaryMode("manual")}
-                    className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                      beneficiaryMode === "manual"
-                        ? "bg-emerald-600 text-white"
-                        : "border border-gray-200 bg-white text-gray-700"
-                    }`}
-                  >
-                    Datos manuales
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBeneficiaryMode("client")}
-                    className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                      beneficiaryMode === "client"
-                        ? "bg-emerald-600 text-white"
-                        : "border border-gray-200 bg-white text-gray-700"
-                    }`}
-                  >
-                    Cliente registrado
-                  </button>
-                </div>
-
-                {beneficiaryMode === "client" ? (
-                  <div className="grid grid-cols-1 gap-3">
-                    <div className="relative">
-                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                      <Input
-                        value={beneficiarySearch}
-                        onChange={(event) => setBeneficiarySearch(event.target.value)}
-                        placeholder="Buscar beneficiario"
-                        className="pl-9"
-                      />
-                    </div>
-                    <select
-                      value={selectedBeneficiaryId}
-                      onChange={(event) => setSelectedBeneficiaryId(event.target.value)}
-                      className="h-10 rounded-md border border-gray-200 bg-white px-3 text-sm text-gray-700"
-                      disabled={isLoadingClients}
-                    >
-                      <option value="">Selecciona beneficiario</option>
-                      {beneficiaryOptions.map((client) => (
-                        <option key={client.id} value={client.id}>
-                          {client.nombre} {client.email ? `(${client.email})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                    <div>
-                      <label className="text-xs font-medium text-gray-600">Nombre</label>
-                      <Input
-                        value={beneficiaryName}
-                        onChange={(event) => setBeneficiaryName(event.target.value)}
-                        placeholder="Nombre beneficiario"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-gray-600">Teléfono</label>
-                      <Input
-                        value={beneficiaryPhone}
-                        onChange={(event) => setBeneficiaryPhone(event.target.value)}
-                        placeholder="Opcional"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-gray-600">Email</label>
-                      <Input
-                        value={beneficiaryEmail}
-                        onChange={(event) => setBeneficiaryEmail(event.target.value)}
-                        placeholder="Opcional"
-                      />
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </section>
-
-          <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-4">
-              <h3 className="text-sm font-semibold text-gray-900">Vigencia</h3>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setValidityMode("annual")}
-                  className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                    validityMode === "annual"
-                      ? "bg-indigo-600 text-white"
-                      : "border border-gray-200 bg-white text-gray-700"
-                  }`}
-                >
                   12 meses
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setValidityMode("custom")}
-                  className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                    validityMode === "custom"
-                      ? "bg-indigo-600 text-white"
-                      : "border border-gray-200 bg-white text-gray-700"
-                  }`}
-                >
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="radio"
+                    name="validity-mode"
+                    checked={validityMode === "custom"}
+                    onChange={() => setValidityMode("custom")}
+                    className="h-4 w-4 accent-indigo-600"
+                  />
                   Personalizada
-                </button>
+                </label>
               </div>
 
               {validityMode === "custom" ? (
-                <div>
-                  <label className="text-xs font-medium text-gray-600">Repetir hasta</label>
-                  <Input
-                    type="date"
-                    value={customExpiryDate}
-                    min={getTodayDateInput()}
-                    onChange={(event) => setCustomExpiryDate(event.target.value)}
-                  />
-                </div>
-              ) : (
-                <p className="text-xs text-gray-500">Vencimiento automático a 365 días desde emisión.</p>
-              )}
+                <Input
+                  type="date"
+                  value={customExpiryDate}
+                  min={getTodayDateInput()}
+                  onChange={(event) => setCustomExpiryDate(event.target.value)}
+                  className="h-11"
+                />
+              ) : null}
             </div>
 
-            <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-4">
-              <h3 className="text-sm font-semibold text-gray-900">Método de pago</h3>
-              <select
-                value={paymentMethod}
-                onChange={(event) => setPaymentMethod(event.target.value as PaymentMethod)}
-                className="h-10 w-full rounded-md border border-gray-200 bg-white px-3 text-sm text-gray-700"
-              >
-                {PAYMENT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-
-              <div>
-                <label className="text-xs font-medium text-gray-600">Sede</label>
-                <Input value={sedeName?.trim() || sedeId} readOnly className="bg-gray-50" />
-              </div>
+            <div className="space-y-3">
+              <h3 className="text-base font-semibold text-gray-900">Sede</h3>
+              <Input value={sedeName?.trim() || sedeId} readOnly className="h-11 bg-gray-50" />
+              <p className="text-xs text-gray-500">Total a emitir: {formatMoney(totalAmount, currency)}</p>
             </div>
           </section>
 
-          <section className="space-y-2 rounded-xl border border-gray-200 bg-white p-4">
-            <h3 className="text-sm font-semibold text-gray-900">Mensaje opcional</h3>
-            <Textarea
-              value={optionalMessage}
-              onChange={(event) => setOptionalMessage(event.target.value)}
-              placeholder="Mensaje que aparecerá en la gift card"
-              rows={3}
-            />
+          <section className="space-y-3">
+            <h3 className="text-base font-semibold text-gray-900">Método de pago</h3>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {PAYMENT_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setPaymentMethod(option.value)}
+                  className={`flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium ${
+                    paymentMethod === option.value
+                      ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                      : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"
+                  }`}
+                >
+                  {option.icon}
+                  {option.label}
+                  {paymentMethod === option.value ? <CheckCircle2 className="h-4 w-4" /> : null}
+                </button>
+              ))}
+            </div>
           </section>
 
           {formError ? (
@@ -627,15 +503,11 @@ export function CreateGiftCardModal({
             </div>
           ) : null}
 
-          <DialogFooter className="border-t border-gray-100 pt-4">
+          <DialogFooter className="border-t border-gray-200 pt-4">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
-            <Button
-              type="submit"
-              disabled={isSubmitting}
-              className="bg-indigo-600 text-white hover:bg-indigo-500"
-            >
+            <Button type="submit" disabled={isSubmitting} className="bg-indigo-600 text-white hover:bg-indigo-500">
               {isSubmitting ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

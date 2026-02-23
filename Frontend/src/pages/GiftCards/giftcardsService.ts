@@ -22,7 +22,28 @@ interface ApiErrorBody {
 interface ClientsResponse {
   clientes?: Array<Record<string, unknown>>;
   data?: Array<Record<string, unknown>>;
+  metadata?: {
+    total_paginas?: number;
+    total_pages?: number;
+    tiene_siguiente?: boolean;
+    has_next?: boolean;
+  };
+  pagination?: {
+    total_paginas?: number;
+    total_pages?: number;
+    tiene_siguiente?: boolean;
+    has_next?: boolean;
+  };
 }
+
+type GiftCardClientSelectorOption = { id: string; nombre: string; email?: string; telefono?: string };
+
+const CLIENTS_PAGE_LIMIT = 100;
+const CLIENTS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+let clientsCache: GiftCardClientSelectorOption[] | null = null;
+let clientsCacheAt = 0;
+let clientsInflightPromise: Promise<GiftCardClientSelectorOption[]> | null = null;
 
 function buildHeaders(token: string, hasJsonBody = false): HeadersInit {
   return {
@@ -76,6 +97,108 @@ function normalizeCode(code: string): string {
 
 function buildGiftcardsUrl(path: string): string {
   return `${API_BASE_URL}api/giftcards${path}`;
+}
+
+function getClientRecords(
+  payload: ClientsResponse | Array<Record<string, unknown>> | null
+): Array<Record<string, unknown>> {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  if (Array.isArray(payload?.clientes)) {
+    return payload.clientes;
+  }
+
+  if (Array.isArray(payload?.data)) {
+    return payload.data;
+  }
+
+  return [];
+}
+
+function getPaginationInfo(payload: ClientsResponse | Array<Record<string, unknown>> | null): {
+  totalPages: number | null;
+  hasNext: boolean | null;
+} {
+  if (!payload || Array.isArray(payload)) {
+    return { totalPages: null, hasNext: null };
+  }
+
+  const source = payload.metadata ?? payload.pagination;
+  if (!source) {
+    return { totalPages: null, hasNext: null };
+  }
+
+  const totalPagesRaw = source.total_paginas ?? source.total_pages;
+  const totalPages =
+    typeof totalPagesRaw === "number" && Number.isFinite(totalPagesRaw) && totalPagesRaw > 0
+      ? Math.floor(totalPagesRaw)
+      : null;
+
+  const hasNextRaw = source.tiene_siguiente ?? source.has_next;
+  const hasNext = typeof hasNextRaw === "boolean" ? hasNextRaw : null;
+
+  return { totalPages, hasNext };
+}
+
+function normalizeClientOptions(
+  records: Array<Record<string, unknown>>
+): GiftCardClientSelectorOption[] {
+  const clientMap = new Map<string, GiftCardClientSelectorOption>();
+
+  for (const item of records) {
+    const id = String(item.cliente_id ?? item.id ?? item._id ?? "").trim();
+    const nombre = String(item.nombre ?? "").trim();
+
+    if (!id || !nombre) {
+      continue;
+    }
+
+    const email = String(item.correo ?? item.email ?? "").trim() || undefined;
+    const telefono = String(item.telefono ?? "").trim() || undefined;
+    const existing = clientMap.get(id);
+
+    if (!existing) {
+      clientMap.set(id, { id, nombre, email, telefono });
+      continue;
+    }
+
+    clientMap.set(id, {
+      id,
+      nombre: existing.nombre || nombre,
+      email: existing.email || email,
+      telefono: existing.telefono || telefono,
+    });
+  }
+
+  return Array.from(clientMap.values()).sort((a, b) => a.nombre.localeCompare(b.nombre));
+}
+
+async function fetchClientsPage(token: string, page: number): Promise<{
+  records: Array<Record<string, unknown>>;
+  totalPages: number | null;
+}> {
+  const response = await fetch(
+    `${API_BASE_URL}clientes/todos?pagina=${page}&limite=${CLIENTS_PAGE_LIMIT}`,
+    {
+      method: "GET",
+      headers: buildHeaders(token),
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(await parseApiError(response));
+  }
+
+  const payload = await parseJsonSafely<ClientsResponse | Array<Record<string, unknown>>>(response);
+  const records = getClientRecords(payload);
+  const pageInfo = getPaginationInfo(payload);
+
+  return {
+    records,
+    totalPages: pageInfo.totalPages,
+  };
 }
 
 export const giftcardsService = {
@@ -306,47 +429,60 @@ export const giftcardsService = {
     return result;
   },
 
-  async fetchClientsForSelector(token: string): Promise<Array<{ id: string; nombre: string; email?: string; telefono?: string }>> {
-    const response = await fetch(`${API_BASE_URL}clientes/todos?pagina=1&limite=200`, {
-      method: "GET",
-      headers: buildHeaders(token),
-    });
-
-    if (!response.ok) {
-      throw new Error(await parseApiError(response));
+  async fetchClientsForSelector(token: string): Promise<GiftCardClientSelectorOption[]> {
+    const now = Date.now();
+    if (clientsCache && now - clientsCacheAt < CLIENTS_CACHE_TTL_MS) {
+      return clientsCache;
     }
 
-    const payload = await parseJsonSafely<ClientsResponse | Array<Record<string, unknown>>>(response);
-    const records = Array.isArray(payload)
-      ? payload
-      : Array.isArray(payload?.clientes)
-        ? payload.clientes
-        : Array.isArray(payload?.data)
-          ? payload.data
-          : [];
+    if (clientsInflightPromise) {
+      return clientsInflightPromise;
+    }
 
-    const clientOptions: Array<{ id: string; nombre: string; email?: string; telefono?: string }> = [];
+    clientsInflightPromise = (async () => {
+      const firstPage = await fetchClientsPage(token, 1);
+      const firstRecords = firstPage.records;
+      const totalPages = firstPage.totalPages ?? (firstRecords.length < CLIENTS_PAGE_LIMIT ? 1 : null);
 
-    for (const item of records) {
-      const id = String(item.cliente_id ?? item.id ?? item._id ?? "").trim();
-      const nombre = String(item.nombre ?? "").trim();
+      let allRecords = [...firstRecords];
 
-      if (!id || !nombre) {
-        continue;
+      if (totalPages && totalPages > 1) {
+        const requests: Array<Promise<{ records: Array<Record<string, unknown>>; totalPages: number | null }>> = [];
+        for (let page = 2; page <= totalPages; page += 1) {
+          requests.push(fetchClientsPage(token, page));
+        }
+
+        const pages = await Promise.all(requests);
+        for (const pageResult of pages) {
+          allRecords = allRecords.concat(pageResult.records);
+        }
+      } else if (!totalPages) {
+        let page = 2;
+        let lastCount = firstRecords.length;
+        while (lastCount === CLIENTS_PAGE_LIMIT && page <= 1000) {
+          const nextPage = await fetchClientsPage(token, page);
+          allRecords = allRecords.concat(nextPage.records);
+          lastCount = nextPage.records.length;
+          page += 1;
+        }
       }
 
-      const email = String(item.correo ?? item.email ?? "").trim();
-      const telefono = String(item.telefono ?? "").trim();
+      const normalized = normalizeClientOptions(allRecords);
+      clientsCache = normalized;
+      clientsCacheAt = Date.now();
+      return normalized;
+    })();
 
-      clientOptions.push({
-        id,
-        nombre,
-        email: email || undefined,
-        telefono: telefono || undefined,
-      });
+    try {
+      return await clientsInflightPromise;
+    } finally {
+      clientsInflightPromise = null;
     }
+  },
 
-    return clientOptions.sort((a, b) => a.nombre.localeCompare(b.nombre));
+  async prefetchClientsForSelector(token: string): Promise<void> {
+    if (!token) return;
+    await this.fetchClientsForSelector(token);
   },
 
   async refreshGiftCardAfterCreate(token: string, codigo: string): Promise<GiftCard> {

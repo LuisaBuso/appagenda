@@ -4,12 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  Gift,
   Loader2,
   Plus,
   Search,
+  SlidersHorizontal,
 } from "lucide-react";
 import { Sidebar } from "../../components/Layout/Sidebar";
 import { Button } from "../../components/ui/button";
@@ -32,9 +30,9 @@ const SUPER_ADMIN_ROLES = new Set(["super_admin", "superadmin"]);
 type StatusFilter = "all" | "activa" | "usada" | "cancelada" | "vencida" | "parcialmente_usada";
 
 const STATUS_OPTIONS: Array<{ label: string; value: StatusFilter }> = [
-  { label: "Todos los estados", value: "all" },
+  { label: "Todos", value: "all" },
   { label: "Activa", value: "activa" },
-  { label: "Parcial", value: "parcialmente_usada" },
+  { label: "Parcialmente usada", value: "parcialmente_usada" },
   { label: "Usada", value: "usada" },
   { label: "Cancelada", value: "cancelada" },
   { label: "Vencida", value: "vencida" },
@@ -58,7 +56,6 @@ export default function GiftCardsPage() {
 
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
-  const [totalItems, setTotalItems] = useState(0);
 
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isFetching, setIsFetching] = useState(false);
@@ -140,13 +137,11 @@ export default function GiftCardsPage() {
         setGiftCards(Array.isArray(response.giftcards) ? response.giftcards : []);
         setCurrentPage(response.pagination?.page ?? page);
         setTotalPages(response.pagination?.total_pages ?? 0);
-        setTotalItems(response.pagination?.total ?? 0);
       } catch (fetchError) {
         if (requestId !== latestRequestIdRef.current) return;
 
         setGiftCards([]);
         setTotalPages(0);
-        setTotalItems(0);
         setError(fetchError instanceof Error ? fetchError.message : "No se pudieron cargar las Gift Cards");
       } finally {
         if (requestId !== latestRequestIdRef.current) return;
@@ -258,15 +253,30 @@ export default function GiftCardsPage() {
     loadGiftCards(page, { preserveInitial: true });
   };
 
-  const paginationRange = useMemo(() => {
-    if (totalItems === 0) {
-      return { from: 0, to: 0 };
+  const paginationItems = useMemo(() => {
+    if (totalPages <= 1) return [] as Array<number | "dots-left" | "dots-right">;
+
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, index) => index + 1) as Array<
+        number | "dots-left" | "dots-right"
+      >;
     }
 
-    const from = (currentPage - 1) * PAGE_SIZE + 1;
-    const to = Math.min(currentPage * PAGE_SIZE, totalItems);
-    return { from, to };
-  }, [currentPage, totalItems]);
+    const pages = new Set<number>([1, currentPage - 1, currentPage, currentPage + 1, totalPages]);
+    const sorted = Array.from(pages).filter((page) => page >= 1 && page <= totalPages).sort((a, b) => a - b);
+
+    const result: Array<number | "dots-left" | "dots-right"> = [];
+    for (let index = 0; index < sorted.length; index += 1) {
+      const value = sorted[index];
+      const previous = sorted[index - 1];
+      if (previous && value - previous > 1) {
+        result.push(previous === 1 ? "dots-left" : "dots-right");
+      }
+      result.push(value);
+    }
+
+    return result;
+  }, [currentPage, totalPages]);
 
   if (authLoading) {
     return (
@@ -281,44 +291,48 @@ export default function GiftCardsPage() {
 
   return (
     <>
-      <div className="flex h-screen bg-gray-50">
+      <div className="flex h-screen bg-[#f4f5f8]">
         <Sidebar />
 
         <main className="flex-1 overflow-auto">
-          <div className="space-y-6 p-6 md:p-8">
-            <header className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-600 via-indigo-600 to-blue-600 p-6 text-white shadow-sm">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mx-auto w-full max-w-[1180px] space-y-4 px-4 py-5 md:px-6 md:py-6">
+            <header className="rounded-xl border border-gray-200 bg-white px-5 py-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-white/20 px-3 py-1 text-xs font-medium">
-                    <Gift className="h-3.5 w-3.5" />
-                    Módulo de facturación prepago
-                  </div>
-                  <h1 className="text-3xl font-bold tracking-tight">Gift Cards</h1>
-                  <p className="mt-1 text-sm text-indigo-100">
-                    Crea, filtra y monitorea el saldo de tarjetas regalo por sede.
+                  <h1 className="text-4xl font-semibold tracking-tight text-gray-900">Gift Cards</h1>
+                  <p className="mt-1 text-base text-gray-500">
+                    Gestión de tarjetas de regalo emitidas y saldo disponible
                   </p>
                 </div>
 
                 <Button
-                  className="bg-white text-indigo-700 shadow hover:bg-indigo-50"
+                  className="h-10 bg-indigo-600 text-white hover:bg-indigo-500"
                   onClick={() => setCreateModalOpen(true)}
                   disabled={!selectedSedeId}
                 >
                   <Plus className="mr-2 h-4 w-4" />
-                  Crear Gift Card
+                  Nuevo
                 </Button>
               </div>
             </header>
 
-            <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
+            <GiftCardsSummaryCards
+              activeCount={summaryMetrics.activeCount}
+              totalIssued={summaryMetrics.totalIssued}
+              pendingBalance={summaryMetrics.pendingBalance}
+              currency={displayCurrency}
+              isRefreshing={isFetching}
+            />
+
+            <section className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
                 {isSuperAdmin ? (
-                  <div className="md:col-span-3">
+                  <div className="lg:col-span-3">
                     <label className="mb-1 block text-xs font-medium text-gray-600">Sede</label>
                     <select
                       value={selectedSedeId}
                       onChange={(event) => setSelectedSedeId(event.target.value)}
-                      className="h-10 w-full rounded-md border border-gray-200 bg-white px-3 text-sm text-gray-700"
+                      className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700"
                       disabled={isLoadingSedes}
                     >
                       <option value="">Selecciona una sede</option>
@@ -330,49 +344,53 @@ export default function GiftCardsPage() {
                     </select>
                   </div>
                 ) : (
-                  <div className="md:col-span-3">
+                  <div className="lg:col-span-3">
                     <label className="mb-1 block text-xs font-medium text-gray-600">Sede</label>
                     <Input value={selectedSedeName || selectedSedeId || "Sin sede"} readOnly className="bg-gray-50" />
                   </div>
                 )}
 
-                <div className="md:col-span-3">
-                  <label className="mb-1 block text-xs font-medium text-gray-600">Estado</label>
-                  <select
-                    value={statusFilter}
-                    onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-                    className="h-10 w-full rounded-md border border-gray-200 bg-white px-3 text-sm text-gray-700"
-                  >
-                    {STATUS_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                <div className="lg:col-span-3">
+                  <label className="mb-1 block text-xs font-medium text-gray-600">Filtrar</label>
+                  <div className="flex h-10 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3">
+                    <span className="text-sm text-gray-500">Todos</span>
+                    <select
+                      value={statusFilter}
+                      onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+                      className="w-full bg-transparent text-sm text-gray-700 outline-none"
+                    >
+                      {STATUS_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
-                <div className="md:col-span-6">
+                <div className="lg:col-span-6">
                   <label className="mb-1 block text-xs font-medium text-gray-600">Buscar</label>
-                  <div className="relative">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                    <Input
-                      value={searchInput}
-                      onChange={(event) => setSearchInput(event.target.value)}
-                      placeholder="Código, comprador o beneficiario"
-                      className="pl-9"
-                    />
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                      <Input
+                        value={searchInput}
+                        onChange={(event) => setSearchInput(event.target.value)}
+                        placeholder="Buscar..."
+                        className="h-10 pl-9"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-600 hover:bg-gray-50"
+                    >
+                      <SlidersHorizontal className="h-4 w-4" />
+                      Filtrar
+                    </button>
                   </div>
                 </div>
               </div>
             </section>
-
-            <GiftCardsSummaryCards
-              activeCount={summaryMetrics.activeCount}
-              totalIssued={summaryMetrics.totalIssued}
-              pendingBalance={summaryMetrics.pendingBalance}
-              currency={displayCurrency}
-              isRefreshing={isFetching}
-            />
 
             {error ? (
               <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -389,7 +407,7 @@ export default function GiftCardsPage() {
             ) : null}
 
             {isInitialLoading && giftCards.length === 0 ? (
-              <div className="flex items-center justify-center rounded-2xl border border-gray-200 bg-white px-4 py-16 text-gray-600 shadow-sm">
+              <div className="flex items-center justify-center rounded-xl border border-gray-200 bg-white px-4 py-16 text-gray-600">
                 <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                 Cargando Gift Cards...
               </div>
@@ -398,46 +416,58 @@ export default function GiftCardsPage() {
             )}
 
             {totalPages > 1 ? (
-              <div className="flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm shadow-sm sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-gray-600">
-                  Mostrando <span className="font-semibold text-gray-900">{paginationRange.from}</span> a{" "}
-                  <span className="font-semibold text-gray-900">{paginationRange.to}</span> de{" "}
-                  <span className="font-semibold text-gray-900">{totalItems}</span> registros
-                </div>
-
-                <div className="flex items-center gap-1">
-                  <Button variant="outline" size="icon" onClick={() => goToPage(1)} disabled={currentPage === 1 || isFetching}>
-                    <ChevronsLeft className="h-4 w-4" />
-                  </Button>
+              <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-end">
+                <div className="flex items-center gap-1.5">
                   <Button
                     variant="outline"
-                    size="icon"
+                    size="sm"
                     onClick={() => goToPage(currentPage - 1)}
                     disabled={currentPage === 1 || isFetching}
+                    className="h-8 px-2"
                   >
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
 
-                  <span className="px-3 text-xs font-medium text-gray-600">
-                    Página {currentPage} de {totalPages}
-                  </span>
+                  {paginationItems.map((item, index) =>
+                    typeof item === "number" ? (
+                      <button
+                        key={`${item}-${index}`}
+                        type="button"
+                        onClick={() => goToPage(item)}
+                        disabled={isFetching}
+                        className={`h-8 min-w-8 rounded-md border px-2 text-xs font-medium transition-colors ${
+                          item === currentPage
+                            ? "border-indigo-600 bg-indigo-600 text-white"
+                            : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"
+                        }`}
+                      >
+                        {item}
+                      </button>
+                    ) : (
+                      <span key={`${item}-${index}`} className="px-1 text-xs text-gray-500">
+                        ...
+                      </span>
+                    )
+                  )}
 
                   <Button
                     variant="outline"
-                    size="icon"
+                    size="sm"
                     onClick={() => goToPage(currentPage + 1)}
                     disabled={currentPage >= totalPages || isFetching}
+                    className="h-8 px-2"
                   >
                     <ChevronRight className="h-4 w-4" />
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => goToPage(totalPages)}
+
+                  <button
+                    type="button"
+                    onClick={() => goToPage(currentPage + 1)}
                     disabled={currentPage >= totalPages || isFetching}
+                    className="ml-2 text-xs font-medium text-gray-600 hover:text-gray-900 disabled:cursor-not-allowed disabled:text-gray-400"
                   >
-                    <ChevronsRight className="h-4 w-4" />
-                  </Button>
+                    Siguiente
+                  </button>
                 </div>
               </div>
             ) : null}
